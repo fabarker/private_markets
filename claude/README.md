@@ -28,11 +28,20 @@ From this directory, with the project's virtual environment:
 ../.venv/bin/python -m examples.basic      # worked example, carry-forward, shortfall
 ../.venv/bin/python -m examples.workbook   # writes a sample workbook, loads it, runs it
 ../.venv/bin/python -m examples.profile_workbook [book.xlsx USD Conservative 1e6]   # the five-sheet portfolio workbook
-../.venv/bin/python -m examples.eur_moderate book.xlsx [out/]   # EUR Moderate from $100, converted at the first EURUSD; CSVs to out/
+../.venv/bin/python -m examples.eur_moderate [book.xlsx [out/]]   # EUR Moderate from $100, converted at the first EURUSD
 ```
 
 Nothing needs installing: `pyproject.toml` puts `.` on the test path, and `examples` is a
 package. Dependencies are NumPy, pandas and openpyxl (for `.xlsx`); pytest for the tests.
+
+**In PyCharm:** select the project's `.venv/bin/python` as the interpreter, open
+`examples/eur_moderate.py`, set `WORKBOOK` at the top to your file (the default is
+`claude/data/portfolio.xlsx`; `claude/data/` is git-ignored), put a breakpoint in `run()`
+and press Debug. The script puts `claude/` on `sys.path` itself, so it runs as a plain file
+with any working directory; if the workbook is missing it generates a sample beside it and
+says so. `run()` is written as numbered steps — repository, starting balance, spec, funds,
+portfolio, policy, result — so each breakpoint shows one object; step into
+`orchestrator.run()` to follow the period loop in `Simulator.run()`.
 
 ## Usage
 

@@ -20,7 +20,7 @@ from ..inputs import PRIVATE_CURRENCY, Fund, Portfolio
 from ..policy import AnnualRatePolicy
 from ..simulator import SimulationResult, Simulator
 from .repository import DataRepository, ExcelRepository, SheetNames
-from .tables import canon
+from .tables import canonical_name
 
 FX_QUOTES = ("base_per_usd", "usd_per_base")
 LIQUID_KINDS = ("levels", "returns")
@@ -75,13 +75,13 @@ def returns_to_levels(returns: pd.Series, initial_value: float) -> pd.Series:
     return is the return into the first observation — before the simulation starts — so it
     is not applied; the engine's first-period factor is 1 either way.
     """
-    factors = 1.0 + returns.to_numpy(dtype=float)
-    if len(factors) == 0:
+    return_factors = 1.0 + returns.to_numpy(dtype=float)
+    if len(return_factors) == 0:
         raise ValueError("returns series is empty")
-    if not np.isfinite(factors).all() or (factors[1:] <= 0).any():
+    if not np.isfinite(return_factors).all() or (return_factors[1:] <= 0).any():
         raise ValueError("returns must be finite and greater than -100%")
-    factors[0] = 1.0
-    return pd.Series(float(initial_value) * np.cumprod(factors), index=returns.index, name=returns.name)
+    return_factors[0] = 1.0
+    return pd.Series(float(initial_value) * np.cumprod(return_factors), index=returns.index, name=returns.name)
 
 
 def build_funds(specs: pd.DataFrame, market: pd.DataFrame, *, calls_are_negative: bool = True) -> list[Fund]:
@@ -117,9 +117,9 @@ def build_funds(specs: pd.DataFrame, market: pd.DataFrame, *, calls_are_negative
     return funds
 
 
-def select_series(market: pd.DataFrame, name: str, *, label: str) -> pd.Series:
+def select_market_series(market: pd.DataFrame, name: str, *, label: str) -> pd.Series:
     """A market_data column by name (case-insensitively), blanks dropped."""
-    matches = [column for column in market.columns if canon(column) == canon(name)]
+    matches = [column for column in market.columns if canonical_name(column) == canonical_name(name)]
     if not matches:
         raise ValueError(f"market_data has no series {name!r} for {label}; series are {list(market.columns)}")
     return market[matches[0]].dropna()
@@ -127,7 +127,7 @@ def select_series(market: pd.DataFrame, name: str, *, label: str) -> pd.Series:
 
 def build_portfolio(market: pd.DataFrame, spec: SimulationSpec, rates: Any) -> Portfolio:
     """The ``Portfolio`` for a spec: liquid index and, unless the base currency is USD, the USD rate."""
-    liquid = select_series(market, spec.liquid_series, label="liquid_series")
+    liquid = select_market_series(market, spec.liquid_series, label="liquid_series")
     if spec.liquid_kind == "returns":
         liquid = returns_to_levels(liquid, spec.initial_value)
     usd_rate = None
@@ -137,7 +137,7 @@ def build_portfolio(market: pd.DataFrame, spec: SimulationSpec, rates: Any) -> P
     else:
         if not spec.fx_series:
             raise ValueError(f"fx_series is required: base_currency {spec.base_currency!r} is not {PRIVATE_CURRENCY}")
-        usd_rate = select_series(market, spec.fx_series, label="fx_series")
+        usd_rate = select_market_series(market, spec.fx_series, label="fx_series")
         if spec.fx_quote == "usd_per_base":
             usd_rate = 1.0 / usd_rate
     return Portfolio(spec.base_currency, liquid, rates, usd_rate=usd_rate)
@@ -173,7 +173,7 @@ class Orchestrator:
     @cached_property
     def policy(self) -> AnnualRatePolicy:
         return AnnualRatePolicy(self.portfolio.commitment_rates, self.funds, self.spec.weights,
-                                carry_forward=self.spec.carry_forward, years=self.portfolio.years)
+                                carry_forward=self.spec.carry_forward, years=self.portfolio.calendar_years)
 
     @cached_property
     def simulator(self) -> Simulator:
@@ -183,12 +183,12 @@ class Orchestrator:
     def run(self) -> SimulationResult:
         return self.simulator.run()
 
-    def event_map(self) -> pd.DataFrame:
-        return self.simulator.event_map()
+    def map_events_to_observations(self) -> pd.DataFrame:
+        return self.simulator.map_events_to_observations()
 
     def fund_summary(self) -> pd.DataFrame:
         """One row per fund: what was loaded for it, and whether it closes inside the horizon."""
-        beyond = set(self.simulator.beyond_horizon)
+        beyond = set(self.simulator.funds_beyond_horizon)
         rows = []
         for fund in self.funds:
             days = fund.unit_calls.index.union(fund.unit_distributions.index).union(fund.unit_nav.index)
@@ -208,9 +208,9 @@ class Orchestrator:
         return frame.set_index("fund_name")
 
 
-def load_workbook(path: Any, spec: SimulationSpec, sheets: SheetNames = SheetNames()) -> Orchestrator:
+def load_tables_workbook(path: Any, spec: SimulationSpec, sheets: SheetNames = SheetNames()) -> Orchestrator:
     return Orchestrator(ExcelRepository(path, sheets), spec)
 
 
-def run_workbook(path: Any, spec: SimulationSpec, sheets: SheetNames = SheetNames()) -> SimulationResult:
-    return load_workbook(path, spec, sheets).run()
+def run_tables_workbook(path: Any, spec: SimulationSpec, sheets: SheetNames = SheetNames()) -> SimulationResult:
+    return load_tables_workbook(path, spec, sheets).run()

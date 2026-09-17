@@ -50,7 +50,7 @@ ALIASES: dict[str, frozenset[str]] = {
 }
 
 
-def canon(name: Any) -> str:
+def canonical_name(name: Any) -> str:
     """Column names compared case-, space- and hyphen-insensitively."""
     return re.sub(r"[\s\-]+", "_", str(name).strip().lower())
 
@@ -68,7 +68,7 @@ def find_column(frame: pd.DataFrame, wanted: str, *, table: str, required: bool 
     """The frame column that ALIASES says is ``wanted``; None when absent and not required."""
     by_canon: dict[str, Any] = {}
     for column in frame.columns:
-        key = canon(column)
+        key = canonical_name(column)
         if key in by_canon:
             raise ValueError(f"{table}: columns {by_canon[key]!r} and {column!r} are the same name")
         by_canon[key] = column
@@ -82,7 +82,7 @@ def find_column(frame: pd.DataFrame, wanted: str, *, table: str, required: bool 
     return matches[0]
 
 
-def _rows(raw: Any, table: str) -> pd.DataFrame:
+def _non_empty_rows(raw: Any, table: str) -> pd.DataFrame:
     if not isinstance(raw, pd.DataFrame):
         raise TypeError(f"{table}: expected a DataFrame, got {type(raw).__name__}")
     return raw.dropna(how="all").reset_index(drop=True)
@@ -152,7 +152,7 @@ def _years(values: Iterable[Any], *, table: str, column: Any) -> list[int]:
 def normalize_fund_specs(raw: Any) -> pd.DataFrame:
     """fund_name, fund_type, closing_date — one row per fund, names unique."""
     table = "fund_spec"
-    frame = _rows(raw, table)
+    frame = _non_empty_rows(raw, table)
     columns = {wanted: find_column(frame, wanted, table=table) for wanted in FUND_SPEC_COLUMNS}
     out = pd.DataFrame({
         "fund_name": _texts(frame[columns["fund_name"]], table=table, column="fund_name"),
@@ -168,11 +168,11 @@ def normalize_fund_specs(raw: Any) -> pd.DataFrame:
 def normalize_fund_market_data(raw: Any) -> pd.DataFrame:
     """fund_name, kind, date, value, scale, unit — one row per fund event; unit = value / scale."""
     table = "fund_market_data"
-    frame = _rows(raw, table)
+    frame = _non_empty_rows(raw, table)
     columns = {wanted: find_column(frame, wanted, table=table) for wanted in FUND_MARKET_COLUMNS}
     kinds = []
     for i, value in enumerate(frame[columns["kind"]]):
-        key = "" if _is_missing(value) else canon(value)
+        key = "" if _is_missing(value) else canonical_name(value)
         if key not in KINDS:
             raise ValueError(f"{table}: row {i + 1} has type {value!r}; expected Flow, NAV, Call or Distribution")
         kinds.append(KINDS[key])
@@ -190,7 +190,7 @@ def normalize_fund_market_data(raw: Any) -> pd.DataFrame:
 def normalize_market_data(raw: Any) -> pd.DataFrame:
     """One float column per series, indexed by date. Blank cells stay NaN (sparse series are fine)."""
     table = "market_data"
-    frame = _rows(raw, table)
+    frame = _non_empty_rows(raw, table)
     date_column = find_column(frame, "date", table=table)
     value_column = find_column(frame, "value", table=table, required=False)
     series_column = find_column(frame, "series", table=table, required=False)
@@ -226,7 +226,7 @@ def normalize_market_data(raw: Any) -> pd.DataFrame:
 def normalize_commitment_rates(raw: Any) -> pd.DataFrame:
     """Calendar year (index) × fund type (columns). Every cell must be given; use 0 for no target."""
     table = "commitment_rates"
-    frame = _rows(raw, table)
+    frame = _non_empty_rows(raw, table)
     year_column = find_column(frame, "year", table=table)
     type_column = find_column(frame, "fund_type", table=table, required=False)
     rate_column = find_column(frame, "rate", table=table, required=False)

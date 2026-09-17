@@ -20,8 +20,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
-from .dates import as_date, dated_series
-from .timeline import FundPath, Timeline
+from .dates import as_date, coerce_dated_series
+from .timeline import AlignedFundHistory, Timeline
 
 PRIVATE_CURRENCY = "USD"  # fund flows and NAV marks are always in dollars
 UNIT_NAV_TOLERANCE = 1e-12  # floating-point slack before a negative unit NAV is a data error
@@ -62,7 +62,7 @@ class Fund:
             raise ValueError(f"Fund {self.name!r}: closing_date: {exc}") from None
         closing = pd.Timestamp(self.closing_date)
         for label, sum_same_day in (("unit_calls", True), ("unit_distributions", True), ("unit_nav", False)):
-            series = dated_series(getattr(self, label), name=f"{self.name} {label}", sum_same_day=sum_same_day)
+            series = coerce_dated_series(getattr(self, label), name=f"{self.name} {label}", sum_same_day=sum_same_day)
             if (series < 0).any():
                 first = series.index[series < 0][0].date()
                 raise ValueError(f"Fund {self.name!r}: {label} on {first} is negative; supply gross magnitudes")
@@ -77,7 +77,7 @@ class Fund:
     def closing_year(self) -> int:
         return self.closing_date.year
 
-    def events(self) -> list[tuple[pd.Timestamp, float, float, float | None]]:
+    def events_by_day(self) -> list[tuple[pd.Timestamp, float, float, float | None]]:
         """``(day, call, distribution, mark or None)`` for every day with activity, in date order."""
         days = self.unit_calls.index.union(self.unit_distributions.index).union(self.unit_nav.index)
         return [
@@ -90,7 +90,7 @@ class Fund:
             for day in days
         ]
 
-    def on(self, timeline: Timeline) -> FundPath:
+    def align_history(self, timeline: Timeline) -> AlignedFundHistory:
         """Bucket this fund's dated history onto ``timeline`` and rebuild its unit NAV.
 
         Flows dated in ``(dates[t-1], dates[t]]`` are summed into period ``t``; the first
@@ -102,8 +102,8 @@ class Fund:
         Events after the last observation are ignored. A negative running value is a data
         error naming the fund and the day.
         """
-        events = self.events()
-        n = timeline.n
+        events = self.events_by_day()
+        n = timeline.n_observations
         calls, distributions, nav = np.zeros(n), np.zeros(n), np.zeros(n)
         j, running = 0, 0.0
         for t, observation in enumerate(timeline.dates):
@@ -119,7 +119,7 @@ class Fund:
                 distributions[t] += distribution
                 j += 1
             nav[t] = max(running, 0.0)
-        return FundPath(calls, distributions, nav, timeline.index_of(self.closing_date))
+        return AlignedFundHistory(calls, distributions, nav, timeline.first_observation_on_or_after(self.closing_date))
 
     def __repr__(self) -> str:
         return (
@@ -128,7 +128,7 @@ class Fund:
         )
 
 
-def rate_table(value: Any) -> pd.DataFrame:
+def coerce_rate_table(value: Any) -> pd.DataFrame:
     """Coerce commitment rates to a DataFrame indexed by contiguous calendar years, fund types as columns.
 
     Accepts a DataFrame or anything ``pd.DataFrame`` accepts, e.g. ``{"BUYOUT": {2027: 0.10}}``.
@@ -190,13 +190,13 @@ class Portfolio:
         if not isinstance(self.base_currency, str) or not self.base_currency.strip():
             raise ValueError("base_currency must be a currency code such as 'USD' or 'GBP'")
         _set(self, "base_currency", self.base_currency.strip().upper())
-        levels = dated_series(self.liquid_levels, name="liquid_levels", sum_same_day=False)
+        levels = coerce_dated_series(self.liquid_levels, name="liquid_levels", sum_same_day=False)
         if levels.empty:
             raise ValueError("liquid_levels needs at least one observation")
         if (levels <= 0).any():
             raise ValueError("liquid_levels must be strictly positive")
         _set(self, "liquid_levels", levels)
-        _set(self, "commitment_rates", rate_table(self.commitment_rates))
+        _set(self, "commitment_rates", coerce_rate_table(self.commitment_rates))
         if self.base_currency == PRIVATE_CURRENCY:
             if self.usd_rate is not None:
                 raise ValueError("usd_rate must be omitted when base_currency is USD")
@@ -205,13 +205,13 @@ class Portfolio:
                 raise ValueError(
                     f"usd_rate is required: base_currency {self.base_currency!r} is not {PRIVATE_CURRENCY}"
                 )
-            rate = dated_series(self.usd_rate, name="usd_rate", sum_same_day=False)
+            rate = coerce_dated_series(self.usd_rate, name="usd_rate", sum_same_day=False)
             if rate.empty or (rate <= 0).any():
                 raise ValueError("usd_rate must contain strictly positive rates")
             _set(self, "usd_rate", rate)
 
     @property
-    def converts_currency(self) -> bool:
+    def requires_fx_conversion(self) -> bool:
         return self.base_currency != PRIVATE_CURRENCY
 
     @property
@@ -223,7 +223,7 @@ class Portfolio:
         return self.liquid_levels.index[-1].date()
 
     @property
-    def years(self) -> range:
+    def calendar_years(self) -> range:
         return range(self.first_date.year, self.last_date.year + 1)
 
     def __repr__(self) -> str:

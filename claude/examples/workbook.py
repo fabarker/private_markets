@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from pmsim.data import SimulationSpec, load_workbook
+from pmsim.data import SimulationSpec, load_tables_workbook
 
 SPEC = SimulationSpec(
     base_currency="GBP",
@@ -68,12 +68,12 @@ if __name__ == "__main__":
         write_sample_workbook(path)
         print(f"Wrote sample workbook to {path}")
 
-    orchestrator = load_workbook(path, SPEC)
+    orchestrator = load_tables_workbook(path, SPEC)
     print(f"\nSheets: {orchestrator.repository.sheet_names}")
     print("\nFunds loaded:")
     print(orchestrator.fund_summary())
     print("\nWhere each fund event pooled:")
-    print(orchestrator.event_map())
+    print(orchestrator.map_events_to_observations())
 
     result = orchestrator.run()
     print(f"\nRun ({result.base_currency} base) — {result.status}")

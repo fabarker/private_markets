@@ -14,7 +14,7 @@ from typing import Any, Protocol
 import pandas as pd
 
 from .tables import (
-    canon,
+    canonical_name,
     normalize_commitment_rates,
     normalize_fund_market_data,
     normalize_fund_specs,
@@ -85,26 +85,26 @@ class ExcelRepository:
     def sheet_names(self) -> list[str]:
         return list(self._book)
 
-    def sheet(self, name: str, *, required: bool = True) -> pd.DataFrame | None:
+    def raw_sheet(self, name: str, *, required: bool = True) -> pd.DataFrame | None:
         """A raw sheet by name, or None when absent and not required."""
         for actual, frame in self._book.items():
-            if canon(actual) == canon(name):
+            if canonical_name(actual) == canonical_name(name):
                 return frame.copy()
         if required:
             raise ValueError(f"{self.path.name}: no sheet named {name!r}; sheets are {self.sheet_names}")
         return None
 
     def fund_specs(self) -> pd.DataFrame:
-        return normalize_fund_specs(self.sheet(self.sheets.fund_spec))
+        return normalize_fund_specs(self.raw_sheet(self.sheets.fund_spec))
 
     def fund_market_data(self) -> pd.DataFrame:
-        return normalize_fund_market_data(self.sheet(self.sheets.fund_market_data))
+        return normalize_fund_market_data(self.raw_sheet(self.sheets.fund_market_data))
 
     def market_data(self) -> pd.DataFrame:
-        return normalize_market_data(self.sheet(self.sheets.market_data))
+        return normalize_market_data(self.raw_sheet(self.sheets.market_data))
 
     def commitment_rates(self) -> pd.DataFrame | None:
-        raw = self.sheet(self.sheets.commitment_rates, required=False)
+        raw = self.raw_sheet(self.sheets.commitment_rates, required=False)
         return None if raw is None else normalize_commitment_rates(raw)
 
     def __repr__(self) -> str:

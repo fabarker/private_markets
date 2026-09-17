@@ -13,7 +13,7 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
-from .inputs import Fund, rate_table
+from .inputs import Fund, coerce_rate_table
 
 WEIGHT_TOLERANCE = 1e-9
 
@@ -33,7 +33,7 @@ class SizingBase:
 
 
 class CommitmentPolicy(Protocol):
-    def size(self, cohort: Sequence[Fund], base: SizingBase) -> Mapping[str, float]:
+    def size_commitments(self, cohort: Sequence[Fund], base: SizingBase) -> Mapping[str, float]:
         """Base-currency commitment for each fund in ``cohort``, keyed by fund name."""
 
 
@@ -71,7 +71,7 @@ class AnnualRatePolicy:
         carry_forward: bool = False,
         years: Iterable[int] | None = None,
     ) -> None:
-        self.rates = rate_table(rates)
+        self.rates = coerce_rate_table(rates)
         self.carry_forward = bool(carry_forward)
         funds = list(funds)
         names = [f.name for f in funds]
@@ -125,9 +125,9 @@ class AnnualRatePolicy:
                     self.entitlements[f.name] = Entitlement(int(year), current, carried, pool, weight, pool * weight)
                 carried = pool if (self.carry_forward and not cohort) else 0.0
 
-    def size(self, cohort: Sequence[Fund], base: SizingBase) -> Mapping[str, float]:
+    def size_commitments(self, cohort: Sequence[Fund], base: SizingBase) -> Mapping[str, float]:
         return {f.name: self.entitlements[f.name].effective_rate * base.liquid for f in cohort}
 
-    def explain(self, fund_name: str) -> dict[str, Any]:
+    def explain_rate(self, fund_name: str) -> dict[str, Any]:
         """The entitlement behind a fund's rate, for the commitments table."""
         return self.entitlements[fund_name].as_dict()

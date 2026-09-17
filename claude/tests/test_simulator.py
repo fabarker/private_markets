@@ -20,13 +20,13 @@ def usd(levels_, rates, **kwargs):
 def test_without_funds_the_liquid_balance_is_the_index(currency, rate, identities):
     portfolio = Portfolio(currency, levels(("2027-01-01", 100), ("2027-02-01", 90), ("2027-03-01", 99)), {}, usd_rate=rate)
     result = Simulator(portfolio).run()
-    assert result.status == "completed" and result.shortfall is None and result.beyond_horizon == ()
+    assert result.status == "completed" and result.shortfall is None and result.funds_beyond_horizon == ()
     np.testing.assert_allclose(result.periods["liquid_close"], [100, 90, 99])
     np.testing.assert_allclose(result.periods["return_factor"], [1.0, 0.9, 1.1])
     assert (result.periods[["private_close", "calls", "distributions", "commitments"]] == 0).all().all()
-    assert result.funds.empty and result.commitments.empty and result.by_type().empty
+    assert result.funds.empty and result.commitments.empty and result.totals_by_fund_type().empty
     assert list(result.funds.index.names) == ["date", "fund"] and "nav_base" in result.funds.columns
-    assert result.exposures().shape == (3, 0)
+    assert result.nav_by_fund().shape == (3, 0)
     identities(result)
 
 
@@ -87,7 +87,7 @@ def test_carry_forward_example(identities):
     portfolio = usd(levels(("2027-01-01", 1e6), ("2028-12-31", 1e6), ("2029-03-31", 1e6), ("2029-06-30", 1.2e6)),
                     {"BUYOUT": {2027: 0.10, 2028: 0.08, 2029: 0.12}})
     funds = [Fund("C", "BUYOUT", "2029-03-01"), Fund("D", "BUYOUT", "2029-06-01")]
-    policy = AnnualRatePolicy(portfolio.commitment_rates, funds, {"C": 0.6, "D": 0.4}, carry_forward=True, years=portfolio.years)
+    policy = AnnualRatePolicy(portfolio.commitment_rates, funds, {"C": 0.6, "D": 0.4}, carry_forward=True, years=portfolio.calendar_years)
     result = Simulator(portfolio, funds, policy).run()
     c = result.commitments
     assert c["commitment_usd"].tolist() == pytest.approx([180_000, 144_000])
@@ -178,7 +178,7 @@ def test_shortfall_stops_at_the_failed_observation_and_reports_the_gap():
     result = Simulator(portfolio, [fund]).run()
     assert result.status == "shortfall"
     s = result.shortfall
-    assert (s.t, s.date, s.calls, s.available, s.deficit) == (1, date(2027, 2, 1), 120, 100, pytest.approx(20))
+    assert (s.t, s.date, s.calls_due, s.cash_available, s.deficit) == (1, date(2027, 2, 1), 120, 100, pytest.approx(20))
     assert s.calls_by_fund.to_dict() == {"S": 120.0} and s.calls_by_fund.index.name == "fund"
     assert "shortfall of 20.00 on 2027-02-01" in str(s)
     assert len(result.periods) == 2  # the failed period is recorded, nothing after it
@@ -251,11 +251,11 @@ def test_bad_policy_output_is_rejected():
     fund = Fund("A", "VC", "2027-01-01")
 
     class Negative:
-        def size(self, cohort, base):
+        def size_commitments(self, cohort, base):
             return {"A": -1.0}
 
     class Stranger:
-        def size(self, cohort, base):
+        def size_commitments(self, cohort, base):
             return {"A": 1.0, "Z": 1.0}
 
     with pytest.raises(ValueError, match="invalid commitment"):
@@ -268,7 +268,7 @@ def test_custom_policy_without_explain_still_reports_rate(identities):
     portfolio = usd(levels(("2027-01-01", 200), ("2027-02-01", 200)), {"VC": {2027: 0.0}})
 
     class FlatDollars:
-        def size(self, cohort, base):
+        def size_commitments(self, cohort, base):
             return {f.name: 50.0 for f in cohort}
 
     result = Simulator(portfolio, [Fund("A", "VC", "2027-01-15")], FlatDollars()).run()
@@ -283,7 +283,7 @@ def test_funds_beyond_the_horizon_keep_their_weight_but_are_never_committed(iden
     funds = [Fund("A", "BUYOUT", "2027-03-01"), Fund("B", "BUYOUT", "2027-09-01")]
     policy = AnnualRatePolicy(portfolio.commitment_rates, funds, {"A": 0.6, "B": 0.4})
     result = Simulator(portfolio, funds, policy).run()
-    assert result.beyond_horizon == ("B",)
+    assert result.funds_beyond_horizon == ("B",)
     assert result.commitments["commitment_usd"].tolist() == pytest.approx([6.0])  # A keeps 60% of 10%, not 100%
     assert "B" not in result.funds.index.get_level_values("fund")
     identities(result)
@@ -292,10 +292,10 @@ def test_funds_beyond_the_horizon_keep_their_weight_but_are_never_committed(iden
 def test_exposures_and_by_type(gbp_portfolio, worked_funds):
     policy = AnnualRatePolicy(gbp_portfolio.commitment_rates, worked_funds, {"A": 0.6, "B": 0.4})
     result = Simulator(gbp_portfolio, worked_funds, policy).run()
-    exposures = result.exposures()
+    exposures = result.nav_by_fund()
     assert list(exposures.columns) == ["A", "B"] and exposures.index.equals(result.periods.index)
     np.testing.assert_allclose(exposures["B"], [0, 0, 11_949.4375])
-    by_type = result.by_type()
+    by_type = result.totals_by_fund_type()
     assert list(by_type.index.names) == ["date", "fund_type"]
     assert by_type.loc[(D("2027-06-30"), "BUYOUT"), "nav_base"] == pytest.approx(24_324.4375)
     assert by_type.loc[(D("2027-06-30"), "BUYOUT"), "commitment_usd"] == pytest.approx(82_500 + 47_797.75 / 0.75)

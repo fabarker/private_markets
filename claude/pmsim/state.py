@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .inputs import Fund
-from .timeline import FundPath
+from .timeline import AlignedFundHistory
 
 
 @dataclass
@@ -15,11 +15,11 @@ class LiquidAccount:
     """The liquid pot, in base currency. The only balance that changes during a run."""
 
     balance: float
-    factors: np.ndarray  # level[t] / level[t-1]; factors[0] == 1
+    return_factors: np.ndarray  # level[t] / level[t-1]; return_factors[0] == 1
 
-    def grow(self, t: int) -> float:
+    def apply_return(self, t: int) -> float:
         """Apply period ``t``'s return and report the P&L."""
-        pnl = self.balance * (float(self.factors[t]) - 1.0)
+        pnl = self.balance * (float(self.return_factors[t]) - 1.0)
         self.balance += pnl
         return pnl
 
@@ -38,25 +38,25 @@ class Commitment:
     """A fixed dollar commitment to a fund, made at its closing. Every figure here is USD."""
 
     fund: Fund
-    path: FundPath
+    path: AlignedFundHistory
     usd: float
 
     @property
-    def start(self) -> int:
-        return self.path.closing_index
+    def closing_period(self) -> int:
+        return self.path.closing_period
 
-    def calls(self, t: int) -> float:
-        return self.usd * float(self.path.calls[t])
+    def calls_in_period(self, t: int) -> float:
+        return self.usd * float(self.path.unit_calls[t])
 
-    def distributions(self, t: int) -> float:
-        return self.usd * float(self.path.distributions[t])
+    def distributions_in_period(self, t: int) -> float:
+        return self.usd * float(self.path.unit_distributions[t])
 
-    def nav(self, t: int) -> float:
-        return self.usd * float(self.path.nav[t]) if t >= 0 else 0.0
+    def nav_at(self, t: int) -> float:
+        return self.usd * float(self.path.unit_nav[t]) if t >= 0 else 0.0
 
 
 @dataclass
-class PrivateBook:
+class CommitmentBook:
     """The book of live commitments. Sums are exact (``math.fsum``), so fund order cannot matter."""
 
     commitments: list[Commitment] = field(default_factory=list)
@@ -64,17 +64,17 @@ class PrivateBook:
     def add(self, commitment: Commitment) -> None:
         self.commitments.append(commitment)
 
-    def calls(self, t: int) -> float:
-        return math.fsum(c.calls(t) for c in self.commitments)
+    def calls_in_period(self, t: int) -> float:
+        return math.fsum(c.calls_in_period(t) for c in self.commitments)
 
-    def distributions(self, t: int) -> float:
-        return math.fsum(c.distributions(t) for c in self.commitments)
+    def distributions_in_period(self, t: int) -> float:
+        return math.fsum(c.distributions_in_period(t) for c in self.commitments)
 
-    def nav(self, t: int) -> float:
-        return math.fsum(c.nav(t) for c in self.commitments)
+    def nav_at(self, t: int) -> float:
+        return math.fsum(c.nav_at(t) for c in self.commitments)
 
-    def closed_at(self, t: int) -> list[Commitment]:
-        return [c for c in self.commitments if c.start == t]
+    def commitments_closing_in(self, t: int) -> list[Commitment]:
+        return [c for c in self.commitments if c.closing_period == t]
 
     def __len__(self) -> int:
         return len(self.commitments)

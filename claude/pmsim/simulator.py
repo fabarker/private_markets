@@ -25,8 +25,8 @@ import pandas as pd
 
 from .inputs import Fund, Portfolio
 from .policy import AnnualRatePolicy, CommitmentPolicy, SizingBase
-from .state import Commitment, LiquidAccount, PrivateBook
-from .timeline import FundPath, Timeline
+from .state import Commitment, LiquidAccount, CommitmentBook
+from .timeline import AlignedFundHistory, Timeline
 
 PERIOD_COLUMNS = [
     "liquid_open", "private_open", "total_open", "return_factor", "usd_rate",
@@ -47,7 +47,7 @@ _DATE_COLUMNS = {"date", "closing_date", "event_date", "observation_date"}
 _INT_COLUMNS = {"policy_year", "period"}
 
 
-def _frame(rows: list[dict[str, Any]], columns: list[str], index: list[str]) -> pd.DataFrame:
+def _build_table(rows: list[dict[str, Any]], columns: list[str], index: list[str]) -> pd.DataFrame:
     """Build a table with fixed columns and dtypes, correct even when ``rows`` is empty."""
     frame = pd.DataFrame(rows, columns=index + columns)
     for column in frame.columns:
@@ -66,18 +66,18 @@ class Shortfall:
 
     t: int
     date: date
-    available: float
-    calls: float
+    cash_available: float
+    calls_due: float
     calls_by_fund: pd.Series
 
     @property
     def deficit(self) -> float:
-        return self.calls - self.available
+        return self.calls_due - self.cash_available
 
     def __str__(self) -> str:
         return (
-            f"shortfall of {self.deficit:,.2f} on {self.date}: calls of {self.calls:,.2f} "
-            f"against {self.available:,.2f} available"
+            f"shortfall of {self.deficit:,.2f} on {self.date}: calls of {self.calls_due:,.2f} "
+            f"against {self.cash_available:,.2f} available"
         )
 
 
@@ -98,13 +98,13 @@ class SimulationResult:
     funds: pd.DataFrame
     commitments: pd.DataFrame
     shortfall: Shortfall | None
-    beyond_horizon: tuple[str, ...]
+    funds_beyond_horizon: tuple[str, ...]
 
     @property
     def status(self) -> str:
         return "shortfall" if self.shortfall is not None else "completed"
 
-    def by_type(self) -> pd.DataFrame:
+    def totals_by_fund_type(self) -> pd.DataFrame:
         """Fund-level figures summed by date and fund type."""
         columns = [c for c in FUND_COLUMNS if c != "fund_type"]
         if self.funds.empty:
@@ -112,7 +112,7 @@ class SimulationResult:
             return pd.DataFrame(columns=columns, index=index, dtype=float)
         return self.funds.reset_index().groupby(["date", "fund_type"])[columns].sum()
 
-    def exposures(self) -> pd.DataFrame:
+    def nav_by_fund(self) -> pd.DataFrame:
         """Private NAV in base currency by date (rows) and fund (columns); zero before a fund closes."""
         if self.funds.empty:
             return pd.DataFrame(index=self.periods.index, dtype=float)
@@ -147,7 +147,7 @@ class Simulator:
         self.portfolio = portfolio
         self.funds: tuple[Fund, ...] = tuple(funds)
         self.timeline = Timeline(portfolio.liquid_levels.index)
-        first = self.timeline.date_at(0)
+        first = self.timeline.observation_date(0)
         for fund in funds:
             if fund.closing_date < first:
                 raise ValueError(
@@ -155,70 +155,70 @@ class Simulator:
                     f"{first}; there are no pre-existing commitments"
                 )
         levels = portfolio.liquid_levels.to_numpy(dtype=float)
-        self.factors: np.ndarray = np.concatenate([[1.0], levels[1:] / levels[:-1]])
+        self.return_factors: np.ndarray = np.concatenate([[1.0], levels[1:] / levels[:-1]])
         self.fx: np.ndarray = (
-            self.timeline.asof(portfolio.usd_rate, name="usd_rate")
-            if portfolio.converts_currency
-            else np.ones(self.timeline.n)
+            self.timeline.last_value_on_or_before(portfolio.usd_rate, name="usd_rate")
+            if portfolio.requires_fx_conversion
+            else np.ones(self.timeline.n_observations)
         )
-        self.paths: dict[str, FundPath] = {f.name: f.on(self.timeline) for f in funds}
+        self.aligned_histories: dict[str, AlignedFundHistory] = {f.name: f.align_history(self.timeline) for f in funds}
         self.policy: CommitmentPolicy = (
             policy if policy is not None
-            else AnnualRatePolicy(portfolio.commitment_rates, funds, years=self.timeline.years)
+            else AnnualRatePolicy(portfolio.commitment_rates, funds, years=self.timeline.calendar_years)
         )
         self.stop_on_shortfall = bool(stop_on_shortfall)
         self.cash_tolerance = float(cash_tolerance)
-        self.beyond_horizon: tuple[str, ...] = tuple(f.name for f in funds if self.paths[f.name].beyond_horizon)
-        self._cohorts: dict[int, list[Fund]] = {}
+        self.funds_beyond_horizon: tuple[str, ...] = tuple(f.name for f in funds if self.aligned_histories[f.name].closes_beyond_horizon)
+        self._closings_by_period: dict[int, list[Fund]] = {}
         for fund in funds:
-            path = self.paths[fund.name]
-            if not path.beyond_horizon:
-                self._cohorts.setdefault(path.closing_index, []).append(fund)
+            path = self.aligned_histories[fund.name]
+            if not path.closes_beyond_horizon:
+                self._closings_by_period.setdefault(path.closing_period, []).append(fund)
 
     # ------------------------------------------------------------------ run
     def run(self) -> SimulationResult:
-        timeline, fx, factors = self.timeline, self.fx, self.factors
-        liquid = LiquidAccount(float(self.portfolio.liquid_levels.iloc[0]), factors)
-        book = PrivateBook()
+        timeline, fx, return_factors = self.timeline, self.fx, self.return_factors
+        liquid = LiquidAccount(float(self.portfolio.liquid_levels.iloc[0]), return_factors)
+        book = CommitmentBook()
         period_rows: list[dict[str, Any]] = []
         fund_rows: list[dict[str, Any]] = []
         commitment_rows: list[dict[str, Any]] = []
         shortfall: Shortfall | None = None
         private_open = 0.0
 
-        for t in range(timeline.n):
-            day = timeline.date_at(t)
+        for t in range(timeline.n_observations):
+            day = timeline.observation_date(t)
             stamp = pd.Timestamp(day)
 
             liquid_open = liquid.balance                                          # 1
-            nav_usd_open = book.nav(t - 1)
+            nav_usd_open = book.nav_at(t - 1)
 
-            pnl = liquid.grow(t)                                                  # 2
+            pnl = liquid.apply_return(t)                                                  # 2
 
-            distributions_existing = book.distributions(t) * fx[t]                # 3
+            distributions_existing = book.distributions_in_period(t) * fx[t]                # 3
             liquid.deposit(distributions_existing)
 
-            cohort = self._cohorts.get(t, [])                                     # 4
+            cohort = self._closings_by_period.get(t, [])                                     # 4
             base = SizingBase(t, day, liquid.balance, nav_usd_open * fx[t])
-            amounts = self._size(cohort, base)
+            amounts = self._size_commitments(cohort, base)
             for fund in cohort:
-                commitment = Commitment(fund, self.paths[fund.name], amounts[fund.name] / fx[t])
+                commitment = Commitment(fund, self.aligned_histories[fund.name], amounts[fund.name] / fx[t])
                 book.add(commitment)
                 commitment_rows.append(self._commitment_row(stamp, fund, base, amounts[fund.name], fx[t], commitment.usd))
 
-            new = book.closed_at(t)                                               # 5
-            distributions_new = math.fsum(c.distributions(t) for c in new) * fx[t]
+            new = book.commitments_closing_in(t)                                               # 5
+            distributions_new = math.fsum(c.distributions_in_period(t) for c in new) * fx[t]
             liquid.deposit(distributions_new)
-            calls = book.calls(t) * fx[t]
+            calls = book.calls_in_period(t) * fx[t]
             missing = liquid.withdraw(calls)
 
-            private_close = book.nav(t) * fx[t]                                   # 6
+            private_close = book.nav_at(t) * fx[t]                                   # 6
             distributions = distributions_existing + distributions_new
             fx_translation = nav_usd_open * (fx[t] - fx[t - 1]) if t > 0 else 0.0
             period_rows.append({
                 "date": stamp,
                 "liquid_open": liquid_open, "private_open": private_open, "total_open": liquid_open + private_open,
-                "return_factor": float(factors[t]), "usd_rate": float(fx[t]),
+                "return_factor": float(return_factors[t]), "usd_rate": float(fx[t]),
                 "liquid_pnl": pnl, "distributions": distributions, "sizing_base": base.liquid,
                 "commitments": math.fsum(amounts.values()), "commitments_usd": math.fsum(c.usd for c in new),
                 "calls": calls, "liquid_close": liquid.balance, "private_close": private_close,
@@ -229,15 +229,15 @@ class Simulator:
             for c in book.commitments:
                 fund_rows.append({
                     "date": stamp, "fund": c.fund.name, "fund_type": c.fund.fund_type,
-                    "commitment_usd": c.usd, "calls_usd": c.calls(t), "distributions_usd": c.distributions(t),
-                    "nav_usd": c.nav(t), "calls_base": c.calls(t) * fx[t],
-                    "distributions_base": c.distributions(t) * fx[t], "nav_base": c.nav(t) * fx[t],
+                    "commitment_usd": c.usd, "calls_usd": c.calls_in_period(t), "distributions_usd": c.distributions_in_period(t),
+                    "nav_usd": c.nav_at(t), "calls_base": c.calls_in_period(t) * fx[t],
+                    "distributions_base": c.distributions_in_period(t) * fx[t], "nav_base": c.nav_at(t) * fx[t],
                 })
             private_open = private_close
 
             if missing > self.cash_tolerance and shortfall is None:
                 by_fund = pd.Series(
-                    {c.fund.name: c.calls(t) * fx[t] for c in book.commitments},
+                    {c.fund.name: c.calls_in_period(t) * fx[t] for c in book.commitments},
                     dtype=float, name="calls_base",
                 )
                 by_fund.index.name = "fund"
@@ -247,15 +247,15 @@ class Simulator:
 
         return SimulationResult(
             self.portfolio.base_currency,
-            _frame(period_rows, PERIOD_COLUMNS, ["date"]),
-            _frame(fund_rows, FUND_COLUMNS, ["date", "fund"]),
-            _frame(commitment_rows, COMMITMENT_COLUMNS, ["date", "fund"]),
+            _build_table(period_rows, PERIOD_COLUMNS, ["date"]),
+            _build_table(fund_rows, FUND_COLUMNS, ["date", "fund"]),
+            _build_table(commitment_rows, COMMITMENT_COLUMNS, ["date", "fund"]),
             shortfall,
-            self.beyond_horizon,
+            self.funds_beyond_horizon,
         )
 
     # ---------------------------------------------------------------- audit
-    def event_map(self) -> pd.DataFrame:
+    def map_events_to_observations(self) -> pd.DataFrame:
         """Where every fund event lands: one row per fund and event day.
 
         The liquid index sets the observation frequency; a flow or mark dated on any day
@@ -266,23 +266,23 @@ class Simulator:
         """
         rows: list[dict[str, Any]] = []
         for fund in self.funds:
-            events = fund.events()
-            periods = self.timeline.assign([day for day, *_ in events])
+            events = fund.events_by_day()
+            periods = self.timeline.first_observations_on_or_after([day for day, *_ in events])
             for (day, call, distribution, mark), t in zip(events, periods):
                 rows.append({
                     "fund": fund.name, "event_date": day,
-                    "observation_date": self.timeline.dates[t] if t < self.timeline.n else pd.NaT,
+                    "observation_date": self.timeline.dates[t] if t < self.timeline.n_observations else pd.NaT,
                     "period": int(t), "unit_call": call, "unit_distribution": distribution,
                     "unit_nav_mark": float("nan") if mark is None else mark,
                 })
-        return _frame(rows, EVENT_COLUMNS, ["fund", "event_date"])
+        return _build_table(rows, EVENT_COLUMNS, ["fund", "event_date"])
 
     # -------------------------------------------------------------- helpers
-    def _size(self, cohort: Sequence[Fund], base: SizingBase) -> dict[str, float]:
+    def _size_commitments(self, cohort: Sequence[Fund], base: SizingBase) -> dict[str, float]:
         if not cohort:
             return {}
         try:
-            sized: Mapping[str, float] = self.policy.size(cohort, base)
+            sized: Mapping[str, float] = self.policy.size_commitments(cohort, base)
         except KeyError as exc:
             raise ValueError(f"policy has no sizing for fund {exc}") from None
         unknown = set(sized) - {f.name for f in cohort}
@@ -307,9 +307,9 @@ class Simulator:
             "current_year_rate": float("nan"), "carried_rate": float("nan"),
             "pooled_rate": float("nan"), "weight": float("nan"),
         }
-        explain = getattr(self.policy, "explain", None)
-        if callable(explain):
-            info = explain(fund.name)
+        explain_rate = getattr(self.policy, "explain_rate", None)
+        if callable(explain_rate):
+            info = explain_rate(fund.name)
             for key in ("current_year_rate", "carried_rate", "pooled_rate", "weight"):
                 if key in info:
                     row[key] = float(info[key])

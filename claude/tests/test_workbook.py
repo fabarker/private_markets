@@ -13,7 +13,7 @@ from pmsim.data import (  # noqa: E402
     SheetLayout,
     SimulationSpec,
     WorkbookRepository,
-    commitment_schedule,
+    calendar_rates_for_profile,
     load_profile_workbook,
     returns_to_levels,
     run_profile_workbook,
@@ -78,15 +78,15 @@ def test_commitment_schedule_maps_relative_years_onto_the_calendar(usd, eur):
     assert rates.loc[2009].tolist() == [0.0, 0.0]  # relative year 0 = inception year 2009
     assert rates.loc[2010, "BUYOUT"] == 0.022 and rates.loc[2019, "SECONDARIES"] == 0.008
     assert eur.commitment_rates().loc[2010, "BUYOUT"] == 0.020  # a different profile, different rates
-    raw = usd.sheet("Commitments")
+    raw = usd.raw_sheet("Commitments")
     with pytest.raises(ValueError, match=r"no rows for profile 'USD' 'Wild'; profiles are \['EUR Conservative', 'EUR Moderate', 'USD Conservative', 'USD Moderate'\]"):
-        commitment_schedule(raw, currency="USD", risk="Wild", inception_year=2009)
+        calendar_rates_for_profile(raw, currency="USD", risk="Wild", inception_year=2009)
     doubled = pd.concat([raw, raw.iloc[[1]]])
     with pytest.raises(ValueError, match="more than one rate for 'SECONDARIES' in relative year 1"):
-        commitment_schedule(doubled, currency="USD", risk="Conservative", inception_year=2009)
+        calendar_rates_for_profile(doubled, currency="USD", risk="Conservative", inception_year=2009)
     gap = raw[~((raw["Type"] == "BUYOUT") & (raw["Year"] == 3) & (raw["Currency"] == "USD") & (raw["Risk"] == "Conservative"))]
     with pytest.raises(ValueError, match=r"no rate for relative year\(s\) \[\(3, 'BUYOUT'\)\]"):
-        commitment_schedule(gap, currency="USD", risk="Conservative", inception_year=2009)
+        calendar_rates_for_profile(gap, currency="USD", risk="Conservative", inception_year=2009)
 
 
 # ------------------------------------------------------- returns and levels
@@ -104,7 +104,7 @@ def test_returns_to_levels_compounds_from_the_initial_value():
 
 
 def test_profile_spec_builds_levels_and_inverts_fx(usd, eur):
-    spec = usd.spec(1_000_000)
+    spec = usd.simulation_spec(1_000_000)
     assert (spec.base_currency, spec.liquid_series, spec.liquid_kind, spec.initial_value, spec.fx_series) == \
         ("USD", "USD Conservative", "returns", 1_000_000, None)
     portfolio = Orchestrator(usd, spec).portfolio
@@ -112,10 +112,10 @@ def test_profile_spec_builds_levels_and_inverts_fx(usd, eur):
     np.testing.assert_allclose(portfolio.liquid_levels.to_numpy(),
                                1_000_000 * np.cumprod(np.r_[1.0, 1.0 + returns.to_numpy()[1:]]))
     assert portfolio.usd_rate is None
-    eur_portfolio = Orchestrator(eur, eur.spec(2_000_000)).portfolio
+    eur_portfolio = Orchestrator(eur, eur.simulation_spec(2_000_000)).portfolio
     np.testing.assert_allclose(eur_portfolio.usd_rate.to_numpy(), 1.0 / eur.market_data()["EURUSD"].to_numpy())
     assert eur_portfolio.base_currency == "EUR" and eur_portfolio.liquid_levels.iloc[0] == 2_000_000
-    overridden = usd.spec(1_000_000, carry_forward=True, stop_on_shortfall=False)
+    overridden = usd.simulation_spec(1_000_000, carry_forward=True, stop_on_shortfall=False)
     assert overridden.carry_forward and not overridden.stop_on_shortfall
 
 
@@ -124,7 +124,7 @@ def test_usd_conservative_runs_end_to_end(workbook):
     orchestrator = load_profile_workbook(workbook, "USD", "Conservative", 1_000_000)
     result = orchestrator.run()
     assert result.status == "completed" and result.base_currency == "USD"
-    assert result.beyond_horizon == ("SEC_VII",)
+    assert result.funds_beyond_horizon == ("SEC_VII",)
     c = result.commitments
     assert [fund for _, fund in c.index] == ["PEM2011", "SEC_VI", "PEM2012", "PEM2013"]
     pem2011 = c.loc[(pd.Timestamp("2010-12-31"), "PEM2011")]
@@ -161,7 +161,7 @@ def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(wor
     assert result.base_currency == "EUR" and result.status == "completed"
     assert result.periods["liquid_open"].iloc[0] == pytest.approx(100.0 / eurusd)
     assert orchestrator.policy.entitlements["PEM2011"].effective_rate == 0.026  # EUR Moderate's BUYOUT rate
-    assert {p.name for p in (tmp_path / "out").iterdir()} == {"periods.csv", "funds.csv", "commitments.csv", "event_map.csv", "fund_summary.csv"}
+    assert {p.name for p in (tmp_path / "out").iterdir()} == {"periods.csv", "funds.csv", "commitments.csv", "map_events_to_observations.csv", "fund_summary.csv"}
     assert "Starting balance: USD 100.00 = EUR" in capsys.readouterr().out
     _, in_euros = eur_moderate.run(workbook, start_usd=100.0, start_in_base_currency=True)
     assert in_euros.periods["liquid_open"].iloc[0] == 100.0

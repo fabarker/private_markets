@@ -67,7 +67,7 @@ def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_curre
     else:
         initial_value, rate, first_date = starting_balance(repository, start_usd)
 
-    spec = repository.spec(initial_value)                                       # 3. base currency, series, fx quote, returns→levels
+    spec = repository.simulation_spec(initial_value)                                       # 3. base currency, series, fx quote, returns→levels
     orchestrator = Orchestrator(repository, spec)
 
     funds = orchestrator.funds                                                  # 4. one Fund per Spec row, unit histories from Flows
@@ -97,8 +97,8 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, fir
     print(repository.commitment_rates().T)
     print("\nFunds loaded:")
     print(orchestrator.fund_summary())
-    print("\nWhere fund events pooled (first 12 rows; the full table is orchestrator.event_map()):")
-    print(orchestrator.event_map().head(12))
+    print("\nWhere fund events pooled (first 12 rows; the full table is orchestrator.map_events_to_observations()):")
+    print(orchestrator.map_events_to_observations().head(12))
 
     print(f"\nRun: {result.base_currency} base · {len(result.periods)} observations "
           f"{result.periods.index[0].date()} → {result.periods.index[-1].date()} · {result.status}")
@@ -110,11 +110,11 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, fir
     print(result.periods[PERIOD_COLUMNS].head(3))
     print(f"\nLast observations ({result.base_currency}):")
     print(result.periods[PERIOD_COLUMNS].tail(6))
-    by_type = result.by_type()
+    by_type = result.totals_by_fund_type()
     if not by_type.empty:
         print(f"\nBy fund type at {result.periods.index[-1].date()}:")
         print(by_type.xs(result.periods.index[-1], level="date")[["commitment_usd", "calls_base", "distributions_base", "nav_base"]])
-    print(f"\nFunds beyond the horizon (never committed): {result.beyond_horizon or 'none'}")
+    print(f"\nFunds beyond the horizon (never committed): {result.funds_beyond_horizon or 'none'}")
 
 
 def write_csvs(orchestrator, result, out: Path) -> None:
@@ -122,9 +122,9 @@ def write_csvs(orchestrator, result, out: Path) -> None:
     result.periods.to_csv(out / "periods.csv")
     result.funds.to_csv(out / "funds.csv")
     result.commitments.to_csv(out / "commitments.csv")
-    orchestrator.event_map().to_csv(out / "event_map.csv")
+    orchestrator.map_events_to_observations().to_csv(out / "map_events_to_observations.csv")
     orchestrator.fund_summary().to_csv(out / "fund_summary.csv")
-    print(f"\nWrote periods.csv, funds.csv, commitments.csv, event_map.csv, fund_summary.csv to {out}")
+    print(f"\nWrote periods.csv, funds.csv, commitments.csv, map_events_to_observations.csv, fund_summary.csv to {out}")
 
 
 def resolve_workbook(path: Path) -> Path:

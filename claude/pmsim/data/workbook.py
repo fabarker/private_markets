@@ -13,7 +13,7 @@
 A *profile* is a (currency, risk) pair. It selects the Liquid return column, the
 Commitments rows, and — when the currency is not USD — the FX column to invert. The
 result is the same four normalized tables every repository delivers, so the orchestrator
-is unchanged; ``WorkbookRepository.spec()`` builds the matching ``SimulationSpec``.
+is unchanged; ``WorkbookRepository.simulation_spec()`` builds the matching ``SimulationSpec``.
 """
 from __future__ import annotations
 
@@ -29,10 +29,10 @@ from .orchestrator import Orchestrator, SimulationSpec
 from .tables import (
     _dates,
     _numbers,
-    _rows,
+    _non_empty_rows,
     _texts,
     _years,
-    canon,
+    canonical_name,
     find_column,
     normalize_fund_market_data,
     normalize_fund_specs,
@@ -52,24 +52,24 @@ class SheetLayout:
 
 
 def _column_named(frame: pd.DataFrame, name: str, *, table: str) -> Any:
-    matches = [column for column in frame.columns if canon(column) == canon(name)]
+    matches = [column for column in frame.columns if canonical_name(column) == canonical_name(name)]
     if not matches:
         raise ValueError(f"{table}: no column {name!r}; columns are {list(frame.columns)}")
     return matches[0]
 
 
-def commitment_schedule(raw: Any, *, currency: str, risk: str, inception_year: int) -> pd.DataFrame:
+def calendar_rates_for_profile(raw: Any, *, currency: str, risk: str, inception_year: int) -> pd.DataFrame:
     """Calendar year × fund type for one profile, from a schedule keyed by years since inception."""
     table = "Commitments"
-    frame = _rows(raw, table)
+    frame = _non_empty_rows(raw, table)
     type_column = find_column(frame, "fund_type", table=table)
     year_column = find_column(frame, "year", table=table)
     rate_column = find_column(frame, "rate", table=table)
     currency_column = _column_named(frame, "currency", table=table)
     risk_column = _column_named(frame, "risk", table=table)
-    currencies = frame[currency_column].map(canon)
-    risks = frame[risk_column].map(canon)
-    rows = frame[(currencies == canon(currency)) & (risks == canon(risk))]
+    currencies = frame[currency_column].map(canonical_name)
+    risks = frame[risk_column].map(canonical_name)
+    rows = frame[(currencies == canonical_name(currency)) & (risks == canonical_name(risk))]
     if rows.empty:
         profiles = sorted({f"{c} {r}" for c, r in zip(frame[currency_column], frame[risk_column])})
         raise ValueError(f"{table}: no rows for profile {currency!r} {risk!r}; profiles are {profiles}")
@@ -121,17 +121,17 @@ class WorkbookRepository:
     def sheet_names(self) -> list[str]:
         return list(self._book)
 
-    def sheet(self, name: str, *, required: bool = True) -> pd.DataFrame | None:
+    def raw_sheet(self, name: str, *, required: bool = True) -> pd.DataFrame | None:
         for actual, frame in self._book.items():
-            if canon(actual) == canon(name):
+            if canonical_name(actual) == canonical_name(name):
                 return frame.copy()
         if required:
             raise ValueError(f"{self.path.name}: no sheet named {name!r}; sheets are {self.sheet_names}")
         return None
 
-    def _dated_sheet(self, name: str, *, required: bool = True) -> pd.DataFrame | None:
+    def _time_series_sheet(self, name: str, *, required: bool = True) -> pd.DataFrame | None:
         """A time-series sheet with its date column named ``date``; a blank first header counts as the date."""
-        raw = self.sheet(name, required=required)
+        raw = self.raw_sheet(name, required=required)
         if raw is None:
             return None
         frame = raw.dropna(how="all").dropna(axis=1, how="all").reset_index(drop=True)
@@ -147,11 +147,11 @@ class WorkbookRepository:
 
     @cached_property
     def _liquid(self) -> pd.DataFrame:
-        return self._dated_sheet(self.layout.liquid)
+        return self._time_series_sheet(self.layout.liquid)
 
     @cached_property
     def _fx(self) -> pd.DataFrame | None:
-        return self._dated_sheet(self.layout.fx, required=False)
+        return self._time_series_sheet(self.layout.fx, required=False)
 
     # ---------------------------------------------------------------- profile
     @property
@@ -161,31 +161,31 @@ class WorkbookRepository:
     @cached_property
     def liquid_column(self) -> str:
         columns = [c for c in self._liquid.columns if c != "date"]
-        matches = [c for c in columns if canon(c) == canon(self.profile)]
+        matches = [c for c in columns if canonical_name(c) == canonical_name(self.profile)]
         if not matches:
             raise ValueError(f"{self.layout.liquid}: no column for profile {self.profile!r}; profiles are {columns}")
         return matches[0]
 
     @cached_property
-    def _fx_selection(self) -> tuple[str | None, str]:
+    def _fx_column_and_quote(self) -> tuple[str | None, str]:
         if self.currency == PRIVATE_CURRENCY:
             return None, "base_per_usd"
         if self._fx is None:
             raise ValueError(f"{self.layout.fx}: sheet is required for the non-USD profile {self.profile!r}")
         columns = [c for c in self._fx.columns if c != "date"]
         for name, quote in ((f"{self.currency}USD", "usd_per_base"), (f"USD{self.currency}", "base_per_usd")):
-            matches = [c for c in columns if canon(c) == canon(name)]
+            matches = [c for c in columns if canonical_name(c) == canonical_name(name)]
             if matches:
                 return matches[0], quote
         raise ValueError(f"{self.layout.fx}: no column {self.currency}USD or USD{self.currency}; columns are {columns}")
 
     @property
     def fx_column(self) -> str | None:
-        return self._fx_selection[0]
+        return self._fx_column_and_quote[0]
 
     @property
     def fx_quote(self) -> str:
-        return self._fx_selection[1]
+        return self._fx_column_and_quote[1]
 
     @cached_property
     def inception_year(self) -> int:
@@ -195,7 +195,7 @@ class WorkbookRepository:
     # --------------------------------------------------------- DataRepository
     def fund_specs(self) -> pd.DataFrame:
         table = self.layout.spec
-        frame = _rows(self.sheet(table), table)
+        frame = _non_empty_rows(self.raw_sheet(table), table)
         name_column = find_column(frame, "fund_name", table=table)
         type_column = find_column(frame, "fund_type", table=table)
         closing_column = find_column(frame, "closing_date", table=table, required=False)
@@ -209,7 +209,7 @@ class WorkbookRepository:
         }))
 
     def fund_market_data(self) -> pd.DataFrame:
-        return normalize_fund_market_data(self.sheet(self.layout.flows))
+        return normalize_fund_market_data(self.raw_sheet(self.layout.flows))
 
     def market_data(self) -> pd.DataFrame:
         frame = self._liquid
@@ -218,11 +218,11 @@ class WorkbookRepository:
         return normalize_market_data(frame)
 
     def commitment_rates(self) -> pd.DataFrame:
-        return commitment_schedule(self.sheet(self.layout.commitments), currency=self.currency, risk=self.risk,
+        return calendar_rates_for_profile(self.raw_sheet(self.layout.commitments), currency=self.currency, risk=self.risk,
                                    inception_year=self.inception_year)
 
     # ------------------------------------------------------------------- spec
-    def spec(self, initial_value: float, **overrides: Any) -> SimulationSpec:
+    def simulation_spec(self, initial_value: float, **overrides: Any) -> SimulationSpec:
         """The ``SimulationSpec`` for this profile: returns compounded from ``initial_value``, FX inverted as needed."""
         settings: dict[str, Any] = dict(
             base_currency=self.currency, liquid_series=self.liquid_column, liquid_kind="returns",
@@ -239,7 +239,7 @@ def load_profile_workbook(path: Any, currency: str, risk: str, initial_value: fl
                           layout: SheetLayout = SheetLayout(), **overrides: Any) -> Orchestrator:
     """An ``Orchestrator`` for one profile of the five-sheet workbook."""
     repository = WorkbookRepository(path, currency, risk, layout)
-    return Orchestrator(repository, repository.spec(initial_value, **overrides))
+    return Orchestrator(repository, repository.simulation_spec(initial_value, **overrides))
 
 
 def run_profile_workbook(path: Any, currency: str, risk: str, initial_value: float, *,

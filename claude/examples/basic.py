@@ -36,7 +36,7 @@ def carry_forward_example():
         commitment_rates={"BUYOUT": {2027: 0.10, 2028: 0.08, 2029: 0.12}},
     )
     policy = AnnualRatePolicy(portfolio.commitment_rates, funds, weights={"C": 0.6, "D": 0.4},
-                              carry_forward=True, years=portfolio.years)
+                              carry_forward=True, years=portfolio.calendar_years)
     return Simulator(portfolio, funds, policy).run()
 
 

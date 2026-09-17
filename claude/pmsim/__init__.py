@@ -10,13 +10,13 @@ the one loop; a CommitmentPolicy decides how much to commit when funds close.
 from .inputs import PRIVATE_CURRENCY, Fund, Portfolio
 from .policy import AnnualRatePolicy, CommitmentPolicy, Entitlement, SizingBase
 from .simulator import Shortfall, SimulationResult, Simulator
-from .state import Commitment, LiquidAccount, PrivateBook
-from .timeline import FundPath, Timeline
+from .state import Commitment, LiquidAccount, CommitmentBook
+from .timeline import AlignedFundHistory, Timeline
 
 __all__ = [
     "PRIVATE_CURRENCY", "Fund", "Portfolio",
-    "Timeline", "FundPath",
-    "LiquidAccount", "Commitment", "PrivateBook",
+    "Timeline", "AlignedFundHistory",
+    "LiquidAccount", "Commitment", "CommitmentBook",
     "SizingBase", "CommitmentPolicy", "AnnualRatePolicy", "Entitlement",
     "Simulator", "SimulationResult", "Shortfall",
 ]

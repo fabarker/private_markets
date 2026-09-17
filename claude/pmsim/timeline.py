@@ -7,7 +7,7 @@ period indices ``t``.
 The liquid index sets the observation frequency — month ends, quarter ends, business
 days, or any irregular dates — and fund events are dated on whatever day they happened.
 One rule covers every mismatch: an event on any day pools onto the first observation on
-or after that day (``index_of`` / ``assign``). Exchange rates go the other way, because a
+or after that day (``first_observation_on_or_after`` / ``assign``). Exchange rates go the other way, because a
 rate is a state rather than an event: each observation uses the last rate on or before
 it (``asof``).
 """
@@ -41,69 +41,69 @@ class Timeline:
         object.__setattr__(self, "dates", dates)
 
     @property
-    def n(self) -> int:
+    def n_observations(self) -> int:
         return len(self.dates)
 
-    def date_at(self, t: int) -> date:
+    def observation_date(self, t: int) -> date:
         return self.dates[t].date()
 
     @property
-    def years(self) -> range:
+    def calendar_years(self) -> range:
         """Every calendar year the timeline touches, first to last inclusive."""
         return range(self.dates[0].year, self.dates[-1].year + 1)
 
-    def index_of(self, day: Any) -> int:
+    def first_observation_on_or_after(self, day: Any) -> int:
         """Index of the first observation on or after ``day``; ``n`` when ``day`` is past the last one."""
         return int(self.dates.searchsorted(pd.Timestamp(as_date(day)), side="left"))
 
-    def assign(self, days: Any) -> np.ndarray:
-        """``index_of`` for many days at once: the period each day pools onto (``n`` when beyond the last)."""
+    def first_observations_on_or_after(self, days: Any) -> np.ndarray:
+        """``first_observation_on_or_after`` for many days at once: the period each day pools onto (``n`` when beyond the last)."""
         stamps = pd.DatetimeIndex([pd.Timestamp(as_date(d)) for d in days])
         return np.asarray(self.dates.searchsorted(stamps, side="left"), dtype=int)
 
-    def asof(self, series: pd.Series, *, name: str = "series") -> np.ndarray:
+    def last_value_on_or_before(self, series: pd.Series, *, name: str = "series") -> np.ndarray:
         """The last value on or before each observation, as an array aligned to the timeline."""
         aligned = series.sort_index().reindex(self.dates, method="ffill")
         if aligned.isna().any():
-            raise ValueError(f"{name} has no value on or before the first observation {self.date_at(0)}")
+            raise ValueError(f"{name} has no value on or before the first observation {self.observation_date(0)}")
         return aligned.to_numpy(dtype=float)
 
 
 @dataclass(frozen=True)
-class FundPath:
-    """A fund's unit history on a timeline.
+class AlignedFundHistory:
+    """A fund's unit history aligned to a timeline, one entry per observation.
 
-    ``calls[t]`` and ``distributions[t]`` are the gross unit flows dated in
+    ``unit_calls[t]`` and ``unit_distributions[t]`` are the gross unit flows dated in
     ``(dates[t-1], dates[t]]`` (the first period takes everything on or before ``dates[0]``).
-    ``nav[t]`` is the unit NAV after the last event on or before ``dates[t]``.
-    ``closing_index`` is the period the fund is committed in, or ``n`` when its closing
-    lies beyond the last observation. Arrays are read-only.
+    ``unit_nav[t]`` is the unit NAV after the last event on or before ``dates[t]``.
+    ``closing_period`` is the period the fund is committed in, or ``n_observations`` when
+    its closing lies beyond the last observation. Arrays are read-only.
     """
 
-    calls: np.ndarray
-    distributions: np.ndarray
-    nav: np.ndarray
-    closing_index: int
+    unit_calls: np.ndarray
+    unit_distributions: np.ndarray
+    unit_nav: np.ndarray
+    closing_period: int
 
     def __post_init__(self) -> None:
         arrays = {}
-        for label in ("calls", "distributions", "nav"):
+        for label in ("unit_calls", "unit_distributions", "unit_nav"):
             array = np.array(getattr(self, label), dtype=float)  # a copy
             array.flags.writeable = False
             arrays[label] = array
         if any(a.ndim != 1 for a in arrays.values()) or len({a.shape for a in arrays.values()}) != 1:
-            raise ValueError("calls, distributions and nav must be 1-D arrays of one length")
+            raise ValueError("unit_calls, unit_distributions and unit_nav must be 1-D arrays of one length")
         for label, array in arrays.items():
             object.__setattr__(self, label, array)
-        closing_index = int(self.closing_index)
-        if not 0 <= closing_index <= self.n:
-            raise ValueError(f"closing_index {closing_index} is outside 0..{self.n}")
-        object.__setattr__(self, "closing_index", closing_index)
+        closing_period = int(self.closing_period)
+        if not 0 <= closing_period <= self.n_observations:
+            raise ValueError(f"closing_period {closing_period} is outside 0..{self.n_observations}")
+        object.__setattr__(self, "closing_period", closing_period)
 
     @property
-    def n(self) -> int:
-        return len(self.nav)
+    def n_observations(self) -> int:
+        return len(self.unit_nav)
 
     @property
-    def beyond_horizon(self) -> bool:
-        return self.closing_index >= self.n
+    def closes_beyond_horizon(self) -> bool:
+        return self.closing_period >= self.n_observations

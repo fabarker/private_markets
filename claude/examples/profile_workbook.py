@@ -106,4 +106,4 @@ if __name__ == "__main__":
     print("\nLast observations:")
     print(result.periods[["liquid_open", "liquid_pnl", "distributions", "commitments", "calls",
                           "liquid_close", "private_close", "total_close"]].tail(6))
-    print(f"\nFunds beyond the horizon (never committed): {result.beyond_horizon}")
+    print(f"\nFunds beyond the horizon (never committed): {result.funds_beyond_horizon}")

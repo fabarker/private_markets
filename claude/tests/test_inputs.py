@@ -5,7 +5,7 @@ import pandas as pd
 import pytest
 
 from pmsim import Fund, Portfolio
-from pmsim.inputs import rate_table
+from pmsim.inputs import coerce_rate_table
 
 D = pd.Timestamp
 
@@ -74,7 +74,7 @@ def test_fund_requires_names(name, fund_type):
 def test_fund_events_merge_flows_and_marks_by_day():
     fund = Fund("A", "BUYOUT", "2027-01-01", unit_calls=[("2027-02-01", 0.2)],
                 unit_distributions=[("2027-02-01", 0.05), ("2027-03-01", 0.1)], unit_nav=[("2027-03-01", 0.4)])
-    assert fund.events() == [(D("2027-02-01"), 0.2, 0.05, None), (D("2027-03-01"), 0.0, 0.1, 0.4)]
+    assert fund.events_by_day() == [(D("2027-02-01"), 0.2, 0.05, None), (D("2027-03-01"), 0.0, 0.1, 0.4)]
 
 
 # --------------------------------------------------------------- Portfolio
@@ -84,9 +84,9 @@ RATES = {"BUYOUT": {2027: 0.1}}
 
 def test_base_currency_decides_whether_a_rate_is_needed():
     usd = Portfolio("usd", LEVELS, RATES)
-    assert usd.base_currency == "USD" and usd.usd_rate is None and not usd.converts_currency
+    assert usd.base_currency == "USD" and usd.usd_rate is None and not usd.requires_fx_conversion
     gbp = Portfolio("GBP", LEVELS, RATES, usd_rate=[("2027-01-01", 0.8)])
-    assert gbp.converts_currency and gbp.usd_rate.tolist() == [0.8]
+    assert gbp.requires_fx_conversion and gbp.usd_rate.tolist() == [0.8]
     with pytest.raises(ValueError, match="usd_rate is required: base_currency 'GBP' is not USD"):
         Portfolio("GBP", LEVELS, RATES)
     with pytest.raises(ValueError, match="usd_rate must be omitted when base_currency is USD"):
@@ -113,7 +113,7 @@ def test_liquid_levels_validation(levels, message):
 def test_portfolio_dates_and_years():
     portfolio = Portfolio("USD", [("2027-06-30", 100.0), ("2027-01-01", 90.0), ("2029-01-31", 120.0)], {"BUYOUT": {2027: 0, 2028: 0, 2029: 0.1}})
     assert portfolio.first_date == date(2027, 1, 1) and portfolio.last_date == date(2029, 1, 31)
-    assert list(portfolio.years) == [2027, 2028, 2029]
+    assert list(portfolio.calendar_years) == [2027, 2028, 2029]
     assert portfolio.liquid_levels.tolist() == [90.0, 100.0, 120.0]
 
 
@@ -124,13 +124,13 @@ def test_base_currency_must_be_a_code():
 
 # -------------------------------------------------------------- rate table
 def test_rate_table_from_mapping_and_frame():
-    table = rate_table({"BUYOUT": {2028: 0.08, 2027: 0.1}, "VC": {2027: 0.0, 2028: 0.02}})
+    table = coerce_rate_table({"BUYOUT": {2028: 0.08, 2027: 0.1}, "VC": {2027: 0.0, 2028: 0.02}})
     assert list(table.index) == [2027, 2028] and list(table.columns) == ["BUYOUT", "VC"]
     assert table.index.name == "year" and table.columns.name == "fund_type"
     assert table.at[2028, "BUYOUT"] == 0.08 and table.dtypes.eq(float).all()
     frame = pd.DataFrame({"BUYOUT": [0.1]}, index=[np.int64(2027)])
-    assert rate_table(frame).at[2027, "BUYOUT"] == 0.1
-    assert rate_table(pd.DataFrame()).empty
+    assert coerce_rate_table(frame).at[2027, "BUYOUT"] == 0.1
+    assert coerce_rate_table(pd.DataFrame()).empty
 
 
 @pytest.mark.parametrize("value, message", [
@@ -144,4 +144,4 @@ def test_rate_table_from_mapping_and_frame():
 ])
 def test_rate_table_validation(value, message):
     with pytest.raises(ValueError, match=message):
-        rate_table(value)
+        coerce_rate_table(value)

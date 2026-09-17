@@ -6,7 +6,7 @@ pytest.importorskip("openpyxl")
 
 from examples.workbook import SPEC, sample_tables, write_sample_workbook  # noqa: E402
 from pmsim.data import (  # noqa: E402
-    ExcelRepository, FrameRepository, Orchestrator, SheetNames, SimulationSpec, load_workbook, run_workbook,
+    ExcelRepository, FrameRepository, Orchestrator, SheetNames, SimulationSpec, load_tables_workbook, run_tables_workbook,
 )
 from tests.conftest import check_identities  # noqa: E402
 
@@ -40,11 +40,11 @@ def test_sheet_lookup_is_forgiving_and_missing_sheets_are_named(tmp_path):
     assert repository.fund_specs()["fund_name"].tolist() == ["A", "B"]
     assert repository.commitment_rates() is None  # optional sheet absent
     spec_with_rates = SimulationSpec(**{**SPEC.__dict__, "commitment_rates": {"BUYOUT": {2027: 0.1}}})
-    assert run_workbook(path, spec_with_rates).status == "completed"
+    assert run_tables_workbook(path, spec_with_rates).status == "completed"
     with pytest.raises(ValueError, match=r"no sheet named 'funds'; sheets are \['Fund Spec', 'FUND-MARKET-DATA', 'Market_Data'\]"):
         ExcelRepository(path, SheetNames(fund_spec="funds")).fund_specs()
     with pytest.raises(ValueError, match="commitment_rates are needed"):
-        load_workbook(path, SPEC).portfolio
+        load_tables_workbook(path, SPEC).portfolio
 
 
 def test_missing_workbook(tmp_path):

@@ -40,7 +40,7 @@ def as_date(value: Any) -> date:
         raise TypeError(f"cannot interpret {value!r} as a date") from None
 
 
-def dated_series(values: Any, *, name: str, sum_same_day: bool) -> pd.Series:
+def coerce_dated_series(values: Any, *, name: str, sum_same_day: bool) -> pd.Series:
     """Coerce dated values to a float Series on a unique, sorted, naive ``DatetimeIndex``.
 
     ``values`` may be a Series indexed by dates, a mapping ``{date: value}``, an iterable of

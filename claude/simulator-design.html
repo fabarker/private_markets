@@ -273,13 +273,13 @@
     <article class="cls private">
       <header>Fund <small>frozen</small></header>
       <div class="fields">name, fund_type: str<br>closing_date: date<br>unit_calls: Series<br>unit_distributions: Series<br>unit_nav: Series</div>
-      <div class="methods">closing_year<br>events() -&gt; [(day, call, dist, mark)]<br>on(timeline) -&gt; FundPath</div>
-      <div class="role">Fund-held data, per $1 committed, in USD. Validates and copies its histories; nothing may precede the closing. <code>on()</code> buckets its own dated history onto a timeline.</div>
+      <div class="methods">closing_year<br>events_by_day() -&gt; [(day, call, dist, mark)]<br>align_history(timeline) -&gt; AlignedFundHistory</div>
+      <div class="role">Fund-held data, per $1 committed, in USD. Validates and copies its histories; nothing may precede the closing. <code>align_history()</code> buckets its own dated history onto a timeline.</div>
     </article>
     <article class="cls liquid">
       <header>Portfolio <small>frozen</small></header>
       <div class="fields">base_currency: str<br>liquid_levels: Series<br>commitment_rates: DataFrame<br>usd_rate: Series | None</div>
-      <div class="methods">converts_currency<br>first_date, last_date, years</div>
+      <div class="methods">requires_fx_conversion<br>first_date, last_date, calendar_years</div>
       <div class="role">Portfolio-held data. Validates itself at construction: liquid dates define the grid, the first level is the starting balance, and <code>base_currency</code> decides whether <code>usd_rate</code> is required (non-USD) or rejected (USD).</div>
     </article>
   </div>
@@ -289,14 +289,14 @@
     <article class="cls engine">
       <header>Timeline <small>frozen</small></header>
       <div class="fields">dates: DatetimeIndex</div>
-      <div class="methods">n, date_at(t), years<br>index_of(date) -&gt; int<br>assign(dates) -&gt; ndarray<br>asof(series) -&gt; ndarray</div>
-      <div class="role">The observation grid. <code>index_of</code> / <code>assign</code> give the first observation on or after a date; <code>asof</code> carries the last known value forward (exchange rates).</div>
+      <div class="methods">n_observations, observation_date(t), calendar_years<br>first_observation_on_or_after(date) -&gt; int<br>first_observations_on_or_after(dates) -&gt; ndarray<br>last_value_on_or_before(series) -&gt; ndarray</div>
+      <div class="role">The observation grid. <code>first_observation_on_or_after</code> / <code>first_observations_on_or_after</code> give the first observation on or after a date; <code>last_value_on_or_before</code> carries the last known value forward (exchange rates).</div>
     </article>
     <article class="cls private">
-      <header>FundPath <small>frozen</small></header>
-      <div class="fields">calls: ndarray<br>distributions: ndarray<br>nav: ndarray<br>closing_index: int</div>
-      <div class="methods">n<br>beyond_horizon</div>
-      <div class="role">A <code>Fund</code> on a <code>Timeline</code>: unit calls and distributions per period, unit NAV at each observation, and the period it closes in (<code>n</code> when beyond the last observation). Arrays are read-only.</div>
+      <header>AlignedFundHistory <small>frozen</small></header>
+      <div class="fields">unit_calls: ndarray<br>unit_distributions: ndarray<br>unit_nav: ndarray<br>closing_period: int</div>
+      <div class="methods">n_observations<br>closes_beyond_horizon</div>
+      <div class="role">A <code>Fund</code> on a <code>Timeline</code>: unit calls and distributions per period, unit NAV at each observation, and the period it closes in (<code>n_observations</code> when beyond the last observation). Arrays are read-only.</div>
     </article>
   </div>
 
@@ -304,20 +304,20 @@
   <div class="classes">
     <article class="cls liquid">
       <header>LiquidAccount</header>
-      <div class="fields">balance: float<br>factors: ndarray</div>
-      <div class="methods">grow(t) -&gt; pnl<br>deposit(amount)<br>withdraw(amount) -&gt; shortfall</div>
+      <div class="fields">balance: float<br>return_factors: ndarray</div>
+      <div class="methods">apply_return(t) -&gt; pnl<br>deposit(amount)<br>withdraw(amount) -&gt; shortfall</div>
       <div class="role">The cash pot, in base currency. The only mutable balance. <code>withdraw</code> reports what it could not cover instead of going quietly negative.</div>
     </article>
     <article class="cls private">
       <header>Commitment <small>frozen</small></header>
-      <div class="fields">fund: Fund<br>path: FundPath<br>usd: float</div>
-      <div class="methods">start<br>calls(t), distributions(t), nav(t)</div>
+      <div class="fields">fund: Fund<br>path: AlignedFundHistory<br>usd: float</div>
+      <div class="methods">closing_period<br>calls_in_period(t), distributions_in_period(t), nav_at(t)</div>
       <div class="role">The engine's decision at a closing: a fixed dollar amount. Returns USD figures: <code>usd × path.x[t]</code>.</div>
     </article>
     <article class="cls private">
-      <header>PrivateBook</header>
+      <header>CommitmentBook</header>
       <div class="fields">commitments: list[Commitment]</div>
-      <div class="methods">add(commitment)<br>calls(t), distributions(t), nav(t)<br>closed_at(t)</div>
+      <div class="methods">add(commitment)<br>calls_in_period(t), distributions_in_period(t), nav_at(t)<br>commitments_closing_in(t)</div>
       <div class="role">The book of live commitments. Sums are exact (<code>math.fsum</code>), so fund order cannot change a result. Replaces the original's <code>initial_vintages</code> / <code>new_vintages</code> pair.</div>
     </article>
   </div>
@@ -327,27 +327,27 @@
     <article class="cls engine">
       <header>CommitmentPolicy <small>protocol</small></header>
       <div class="fields">SizingBase(t, date, liquid, private_nav)<br><span class="m">.total = liquid + private_nav</span></div>
-      <div class="methods">size(cohort, base) -&gt; {fund: base_ccy_amount}<br><span class="m">explain(fund) -&gt; dict  (optional)</span></div>
-      <div class="role">Given the funds closing now and a snapshot of balances, decide base-currency commitments. <code>AnnualRatePolicy(rates, funds, weights, carry_forward, years)</code> is the default; it precomputes an <code>Entitlement</code> per fund and reports it through <code>explain()</code>.</div>
+      <div class="methods">size_commitments(cohort, base) -&gt; {fund: base_ccy_amount}<br><span class="m">explain_rate(fund) -&gt; dict  (optional)</span></div>
+      <div class="role">Given the funds closing now and a snapshot of balances, decide base-currency commitments. <code>AnnualRatePolicy(rates, funds, weights, carry_forward, years)</code> is the default; it precomputes an <code>Entitlement</code> per fund and reports it through <code>explain_rate()</code>.</div>
     </article>
     <article class="cls engine">
       <header>Simulator</header>
       <div class="fields">portfolio: Portfolio<br>funds: tuple[Fund, ...]<br>policy: CommitmentPolicy<br>stop_on_shortfall = True<br>cash_tolerance = 1e-9</div>
-      <div class="methods">run() -&gt; SimulationResult<br>event_map() -&gt; DataFrame</div>
-      <div class="role">Builds the timeline, return factors, exchange-rate array and fund paths at construction; owns the one loop. <code>event_map()</code> shows where every fund event pooled.</div>
+      <div class="methods">run() -&gt; SimulationResult<br>map_events_to_observations() -&gt; DataFrame</div>
+      <div class="role">Builds the timeline, return return_factors, exchange-rate array and fund paths at construction; owns the one loop. <code>map_events_to_observations()</code> shows where every fund event pooled.</div>
     </article>
     <article class="cls engine">
       <header>SimulationResult <small>frozen</small></header>
-      <div class="fields">base_currency: str<br>periods: DataFrame<br>funds: DataFrame<br>commitments: DataFrame<br>shortfall: Shortfall | None<br>beyond_horizon: tuple[str, ...]</div>
-      <div class="methods">status<br>by_type() -&gt; DataFrame<br>exposures() -&gt; DataFrame</div>
+      <div class="fields">base_currency: str<br>periods: DataFrame<br>funds: DataFrame<br>commitments: DataFrame<br>shortfall: Shortfall | None<br>funds_beyond_horizon: tuple[str, ...]</div>
+      <div class="methods">status<br>totals_by_fund_type() -&gt; DataFrame<br>nav_by_fund() -&gt; DataFrame</div>
       <div class="role">Per-period balances in base currency; per-fund rows in both currencies; one row per commitment event with the rate and fx used; and a verdict.</div>
     </article>
   </div>
 
   <h3>Who holds whom</h3>
   <ul>
-    <li><code>Simulator</code> takes one <code>Portfolio</code>, many <code>Fund</code>s and one <code>CommitmentPolicy</code>. From the portfolio it derives a <code>Timeline</code>, return factors and an exchange-rate array; from each fund a <code>FundPath</code>.</li>
-    <li><code>PrivateBook</code> owns many <code>Commitment</code>s; each references its <code>Fund</code> and <code>FundPath</code>. Paths are immutable, prepared once, and shared.</li>
+    <li><code>Simulator</code> takes one <code>Portfolio</code>, many <code>Fund</code>s and one <code>CommitmentPolicy</code>. From the portfolio it derives a <code>Timeline</code>, return return_factors and an exchange-rate array; from each fund a <code>AlignedFundHistory</code>.</li>
+    <li><code>CommitmentBook</code> owns many <code>Commitment</code>s; each references its <code>Fund</code> and <code>AlignedFundHistory</code>. Paths are immutable, prepared once, and shared.</li>
     <li>The policy sees a <code>SizingBase</code> snapshot and the closing cohort, never the portfolios. Sizing is pure and testable without a simulator.</li>
     <li>Nothing references the <code>Simulator</code>. The result is a value; the simulator can be discarded after <code>run()</code>, or run again for an identical result.</li>
   </ul>
@@ -355,15 +355,15 @@
 
 <section id="dates">
   <h2>Dates become periods</h2>
-  <p class="kicker">Three conversions, all done by <code>Timeline</code> and <code>Fund.on()</code> before the loop starts.</p>
+  <p class="kicker">Three conversions, all done by <code>Timeline</code> and <code>Fund.align_history()</code> before the loop starts.</p>
 
-  <div class="rule"><p class="t">Closings</p><p><code>closing_index = timeline.index_of(closing_date)</code> &mdash; the first observation on or after the closing. A fund closing on 15 February is committed at the 31 March observation. Its rate year is still the calendar year of the actual closing date. A closing after the last observation gets <code>closing_index = n</code> and is never committed; it is listed in <code>result.beyond_horizon</code>, not dropped, and still counts in its year's weight split. A closing before the first observation is rejected: there are no pre-existing commitments.</p></div>
+  <div class="rule"><p class="t">Closings</p><p><code>closing_period = timeline.first_observation_on_or_after(closing_date)</code> &mdash; the first observation on or after the closing. A fund closing on 15 February is committed at the 31 March observation. Its rate year is still the calendar year of the actual closing date. A closing after the last observation gets <code>closing_period = n</code> and is never committed; it is listed in <code>result.funds_beyond_horizon</code>, not dropped, and still counts in its year's weight split. A closing before the first observation is rejected: there are no pre-existing commitments.</p></div>
 
   <div class="rule"><p class="t">Flows</p><p>Unit calls and distributions dated in <code>(dates[t−1], dates[t]]</code> are summed into period <code>t</code>. The first period takes everything on or before the first date. Calls and distributions are bucketed separately, so a same-day call and distribution both survive.</p></div>
 
-  <div class="rule"><p class="t">Unit NAV</p><p>Walk the fund's events in date order with a running unit NAV starting at 0: each call adds, each distribution subtracts, and a NAV mark replaces the running value (marks are assumed to include that day's flows). <code>path.nav[t]</code> is the running value after the last event on or before <code>dates[t]</code>. A mark between observations therefore counts; a missing mark just leaves the cash-adjusted estimate in place; a negative running value is a data error raised at preparation, naming the fund and date.</p></div>
+  <div class="rule"><p class="t">Unit NAV</p><p>Walk the fund's events in date order with a running unit NAV starting at 0: each call adds, each distribution subtracts, and a NAV mark replaces the running value (marks are assumed to include that day's flows). <code>path.unit_nav[t]</code> is the running value after the last event on or before <code>dates[t]</code>. A mark between observations therefore counts; a missing mark just leaves the cash-adjusted estimate in place; a negative running value is a data error raised at preparation, naming the fund and date.</p></div>
 
-  <div class="rule"><p class="t">Exchange rates</p><p><code>fx = timeline.asof(portfolio.usd_rate)</code>: the last rate on or before each observation. The rate series may be daily or sparse; it must have a value on or before the first observation.</p></div>
+  <div class="rule"><p class="t">Exchange rates</p><p><code>fx = timeline.last_value_on_or_before(portfolio.usd_rate)</code>: the last rate on or before each observation. The rate series may be daily or sparse; it must have a value on or before the first observation.</p></div>
 </section>
 
 <section id="frequency">
@@ -383,7 +383,7 @@
       <tr><td>Any</td><td>exchange rate</td><td>the other way: the last rate on or before the observation</td></tr>
     </tbody>
   </table></div>
-  <p>Exchange rates go the other way because a rate is a state rather than an event: each observation uses the last rate known on or before it. <code>Simulator.event_map()</code> lists every fund event with the observation it pooled onto, for audit; events after the last observation show no observation and are ignored by the run.</p>
+  <p>Exchange rates go the other way because a rate is a state rather than an event: each observation uses the last rate known on or before it. <code>Simulator.map_events_to_observations()</code> lists every fund event with the observation it pooled onto, for audit; events after the last observation show no observation and are ignored by the run.</p>
   <p>The consequence to be aware of: because flows settle at observations, a call dated the 3rd and one dated the 28th are treated alike within the month. Neither loses nor earns that month's return, and a liquidity shortfall is detected at the month end, not on the day. A finer liquid grid makes the simulation finer; the rule does not change.</p>
 </section>
 
@@ -394,7 +394,7 @@
     <thead><tr><th>Quantity</th><th>Native currency</th><th>Conversion</th></tr></thead>
     <tbody>
       <tr class="rule-liquid"><td>Sizing base, commitment decision</td><td>base</td><td>Policy works in base currency: <code>rate × liquid balance</code>.</td></tr>
-      <tr class="rule-private"><td>Commitment amount</td><td>USD, fixed at closing</td><td><code>commitment_usd = commitment_base ÷ fx[closing_index]</code>. The dollar figure never changes afterwards; its base-currency value floats.</td></tr>
+      <tr class="rule-private"><td>Commitment amount</td><td>USD, fixed at closing</td><td><code>commitment_usd = commitment_base ÷ fx[closing_period]</code>. The dollar figure never changes afterwards; its base-currency value floats.</td></tr>
       <tr class="rule-private"><td>Calls, distributions in a period</td><td>USD</td><td>Multiplied by <code>fx[t]</code> on the observation they settle on, then applied to the liquid pot.</td></tr>
       <tr class="rule-private"><td>Private NAV at an observation</td><td>USD</td><td><code>nav_usd(t) × fx[t]</code>. A move in the rate between observations shows up as private valuation P&amp;L.</td></tr>
       <tr class="rule-engine"><td>FX translation</td><td>base</td><td>Reported separately: <code>nav_usd(t−1) × (fx[t] − fx[t−1])</code> &mdash; the part of private P&amp;L that is purely the currency moving.</td></tr>
@@ -407,12 +407,12 @@
   <h2>The period loop</h2>
   <p class="kicker">The original's cash ordering, kept. Numbered because the order is the contract.</p>
   <ol class="steps">
-    <li><div><div class="what">Snapshot the opening state</div><div class="how">liquid_open = liquid.balance &nbsp;·&nbsp; nav_usd_open = book.nav(t − 1) &nbsp;·&nbsp; private_open = last period's private_close</div><div class="why">Opening private NAV is last period's closing NAV in base currency, at last period's rate. At <code>t = 0</code> both are zero: there are no pre-existing commitments.</div></div></li>
-    <li><div><div class="what">Apply the liquid return</div><div class="how">pnl = liquid.grow(t) &nbsp;·&nbsp; balance × level[t] / level[t − 1]</div><div class="why">The factor at <code>t = 0</code> is 1. Returns are ratios of consecutive levels: no annualising, no assumed periods per year.</div></div></li>
-    <li><div><div class="what">Bank distributions from existing commitments</div><div class="how">distributions = book.distributions(t) × fx[t] &nbsp;·&nbsp; liquid.deposit(distributions)</div><div class="why">Only commitments made before this observation exist yet, so this can never include a fund being sized in step 4.</div></div></li>
-    <li><div><div class="what">Size and fix commitments for the closing cohort</div><div class="how">cohort = funds with closing_index == t &nbsp;·&nbsp; base = SizingBase(t, date, liquid.balance, nav_usd_open × fx[t]) &nbsp;·&nbsp; for fund, amount in policy.size(cohort, base): book.add(Commitment(fund, path, amount ÷ fx[t]))</div><div class="why">All funds closing at this observation are sized from the same base in one call. A commitment creates a book entry; it moves no cash. The policy's output is checked: finite, non-negative, only for funds closing now.</div></div></li>
-    <li><div><div class="what">Bank the new cohort's distributions, then pay this period's calls</div><div class="how">liquid.deposit(Σ new.distributions(t) × fx[t]) &nbsp;·&nbsp; calls = book.calls(t) × fx[t] &nbsp;·&nbsp; missing = liquid.withdraw(calls)</div><div class="why">A fund that distributes inside its own closing period could not be in step 3 (it did not exist yet); its distributions are banked here, after sizing, so they can help pay calls without inflating the base they were sized from. Calls include the cohort's, as in the original. Aggregated before withdrawal, so fund order cannot change the outcome.</div></div></li>
-    <li><div><div class="what">Value, record, and stop if the pot ran dry</div><div class="how">private_close = book.nav(t) × fx[t] &nbsp;·&nbsp; append period, fund and commitment rows &nbsp;·&nbsp; if missing &gt; cash_tolerance and stop_on_shortfall: break</div><div class="why">The failed period is recorded with its negative balance visible and named in <code>result.shortfall</code>. With <code>stop_on_shortfall=False</code> the balance goes negative and the run continues &mdash; the "how much would I have to borrow" view. Exactly zero cash is valid; a zero sizing base gives a zero commitment and still uses the rate.</div></div></li>
+    <li><div><div class="what">Snapshot the opening state</div><div class="how">liquid_open = liquid.balance &nbsp;·&nbsp; nav_usd_open = book.nav_at(t − 1) &nbsp;·&nbsp; private_open = last period's private_close</div><div class="why">Opening private NAV is last period's closing NAV in base currency, at last period's rate. At <code>t = 0</code> both are zero: there are no pre-existing commitments.</div></div></li>
+    <li><div><div class="what">Apply the liquid return</div><div class="how">pnl = liquid.apply_return(t) &nbsp;·&nbsp; balance × level[t] / level[t − 1]</div><div class="why">The factor at <code>t = 0</code> is 1. Returns are ratios of consecutive levels: no annualising, no assumed periods per year.</div></div></li>
+    <li><div><div class="what">Bank distributions from existing commitments</div><div class="how">distributions = book.distributions_in_period(t) × fx[t] &nbsp;·&nbsp; liquid.deposit(distributions)</div><div class="why">Only commitments made before this observation exist yet, so this can never include a fund being sized in step 4.</div></div></li>
+    <li><div><div class="what">Size and fix commitments for the closing cohort</div><div class="how">cohort = funds with closing_period == t &nbsp;·&nbsp; base = SizingBase(t, date, liquid.balance, nav_usd_open × fx[t]) &nbsp;·&nbsp; for fund, amount in policy.size_commitments(cohort, base): book.add(Commitment(fund, path, amount ÷ fx[t]))</div><div class="why">All funds closing at this observation are sized from the same base in one call. A commitment creates a book entry; it moves no cash. The policy's output is checked: finite, non-negative, only for funds closing now.</div></div></li>
+    <li><div><div class="what">Bank the new cohort's distributions, then pay this period's calls</div><div class="how">liquid.deposit(Σ new.distributions_in_period(t) × fx[t]) &nbsp;·&nbsp; calls = book.calls_in_period(t) × fx[t] &nbsp;·&nbsp; missing = liquid.withdraw(calls)</div><div class="why">A fund that distributes inside its own closing period could not be in step 3 (it did not exist yet); its distributions are banked here, after sizing, so they can help pay calls without inflating the base they were sized from. Calls include the cohort's, as in the original. Aggregated before withdrawal, so fund order cannot change the outcome.</div></div></li>
+    <li><div><div class="what">Value, record, and stop if the pot ran dry</div><div class="how">private_close = book.nav_at(t) × fx[t] &nbsp;·&nbsp; append period, fund and commitment rows &nbsp;·&nbsp; if missing &gt; cash_tolerance and stop_on_shortfall: break</div><div class="why">The failed period is recorded with its negative balance visible and named in <code>result.shortfall</code>. With <code>stop_on_shortfall=False</code> the balance goes negative and the run continues &mdash; the "how much would I have to borrow" view. Exactly zero cash is valid; a zero sizing base gives a zero commitment and still uses the rate.</div></div></li>
   </ol>
   <p>Accounting identities, asserted by the tests on every period of every run:</p>
 <pre><code>liquid_close = liquid_open + liquid_pnl + distributions − calls
@@ -486,11 +486,11 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     name: str; fund_type: str; closing_date: date
     unit_calls: Series; unit_distributions: Series; unit_nav: Series    <span class="c"># per $1, USD, dated; coerced and copied</span>
 
-    <span class="k">def</span> events(self) -&gt; list[tuple[Timestamp, float, float, float | None]]:   <span class="c"># (day, call, dist, mark)</span>
+    <span class="k">def</span> events_by_day(self) -&gt; list[tuple[Timestamp, float, float, float | None]]:   <span class="c"># (day, call, dist, mark)</span>
         ...
 
-    <span class="k">def</span> on(self, timeline: Timeline) -&gt; FundPath:
-        events, n = self.events(), timeline.n
+    <span class="k">def</span> align_history(self, timeline: Timeline) -&gt; AlignedFundHistory:
+        events, n = self.events_by_day(), timeline.n_observations
         calls, distributions, nav = np.zeros(n), np.zeros(n), np.zeros(n)
         j, running = 0, 0.0
         <span class="k">for</span> t, observation <span class="k">in</span> enumerate(timeline.dates):
@@ -500,7 +500,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
                 <span class="k">if</span> running &lt; -1e-12: <span class="k">raise</span> ValueError(f"Fund {self.name!r}: unit NAV would be {running:.6g} on {day.date()}")
                 calls[t] += call; distributions[t] += distribution; j += 1
             nav[t] = max(running, 0.0)
-        <span class="k">return</span> FundPath(calls, distributions, nav, timeline.index_of(self.closing_date))
+        <span class="k">return</span> AlignedFundHistory(calls, distributions, nav, timeline.first_observation_on_or_after(self.closing_date))
 
 
 <span class="k">@dataclass</span>(frozen=True, eq=False)
@@ -522,38 +522,38 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
 <span class="k">@dataclass</span>(frozen=True)
 <span class="k">class</span> Timeline:
     dates: DatetimeIndex                 <span class="c"># unique, increasing calendar dates</span>
-    <span class="k">def</span> index_of(self, day) -&gt; int:      <span class="k">return</span> int(self.dates.searchsorted(Timestamp(as_date(day)), side="left"))
-    <span class="k">def</span> assign(self, days) -&gt; ndarray:   <span class="k">return</span> self.dates.searchsorted(DatetimeIndex(days), side="left")
-    <span class="k">def</span> asof(self, series) -&gt; ndarray:   <span class="k">return</span> series.sort_index().reindex(self.dates, method="ffill").to_numpy()
+    <span class="k">def</span> first_observation_on_or_after(self, day) -&gt; int:      <span class="k">return</span> int(self.dates.searchsorted(Timestamp(as_date(day)), side="left"))
+    <span class="k">def</span> first_observations_on_or_after(self, days) -&gt; ndarray:   <span class="k">return</span> self.dates.searchsorted(DatetimeIndex(days), side="left")
+    <span class="k">def</span> last_value_on_or_before(self, series) -&gt; ndarray:   <span class="k">return</span> series.sort_index().reindex(self.dates, method="ffill").to_numpy()
 
 
 <span class="c"># state.py</span>
 <span class="k">@dataclass</span>
 <span class="k">class</span> <span class="l">LiquidAccount</span>:
-    balance: float; factors: ndarray
-    <span class="k">def</span> grow(self, t):     pnl = self.balance * (self.factors[t] - 1); self.balance += pnl; <span class="k">return</span> pnl
+    balance: float; return_factors: ndarray
+    <span class="k">def</span> apply_return(self, t):     pnl = self.balance * (self.return_factors[t] - 1); self.balance += pnl; <span class="k">return</span> pnl
     <span class="k">def</span> deposit(self, x):  self.balance += x
     <span class="k">def</span> withdraw(self, x): short = max(0.0, x - self.balance); self.balance -= x; <span class="k">return</span> short
 
 <span class="k">@dataclass</span>(frozen=True, eq=False)
 <span class="k">class</span> <span class="p">Commitment</span>:
-    fund: Fund; path: FundPath; usd: float
-    <span class="k">def</span> calls(self, t):         <span class="k">return</span> self.usd * self.path.calls[t]
-    <span class="k">def</span> distributions(self, t): <span class="k">return</span> self.usd * self.path.distributions[t]
-    <span class="k">def</span> nav(self, t):           <span class="k">return</span> self.usd * self.path.nav[t] <span class="k">if</span> t &gt;= 0 <span class="k">else</span> 0.0
+    fund: Fund; path: AlignedFundHistory; usd: float
+    <span class="k">def</span> calls_in_period(self, t):         <span class="k">return</span> self.usd * self.path.unit_calls[t]
+    <span class="k">def</span> distributions_in_period(self, t): <span class="k">return</span> self.usd * self.path.unit_distributions[t]
+    <span class="k">def</span> nav_at(self, t):           <span class="k">return</span> self.usd * self.path.unit_nav[t] <span class="k">if</span> t &gt;= 0 <span class="k">else</span> 0.0
 
 <span class="k">@dataclass</span>
-<span class="k">class</span> <span class="p">PrivateBook</span>:
+<span class="k">class</span> <span class="p">CommitmentBook</span>:
     commitments: list[Commitment]
-    <span class="k">def</span> calls(self, t):         <span class="k">return</span> math.fsum(c.calls(t) <span class="k">for</span> c <span class="k">in</span> self.commitments)
-    <span class="k">def</span> distributions(self, t): <span class="k">return</span> math.fsum(c.distributions(t) <span class="k">for</span> c <span class="k">in</span> self.commitments)
-    <span class="k">def</span> nav(self, t):           <span class="k">return</span> math.fsum(c.nav(t) <span class="k">for</span> c <span class="k">in</span> self.commitments)
-    <span class="k">def</span> closed_at(self, t):     <span class="k">return</span> [c <span class="k">for</span> c <span class="k">in</span> self.commitments <span class="k">if</span> c.start == t]
+    <span class="k">def</span> calls_in_period(self, t):         <span class="k">return</span> math.fsum(c.calls_in_period(t) <span class="k">for</span> c <span class="k">in</span> self.commitments)
+    <span class="k">def</span> distributions_in_period(self, t): <span class="k">return</span> math.fsum(c.distributions_in_period(t) <span class="k">for</span> c <span class="k">in</span> self.commitments)
+    <span class="k">def</span> nav_at(self, t):           <span class="k">return</span> math.fsum(c.nav_at(t) <span class="k">for</span> c <span class="k">in</span> self.commitments)
+    <span class="k">def</span> commitments_closing_in(self, t):     <span class="k">return</span> [c <span class="k">for</span> c <span class="k">in</span> self.commitments <span class="k">if</span> c.closing_period == t]
 
 
 <span class="c"># policy.py</span>
 <span class="k">class</span> CommitmentPolicy(Protocol):
-    <span class="k">def</span> size(self, cohort: Sequence[Fund], base: SizingBase) -&gt; Mapping[str, float]: ...
+    <span class="k">def</span> size_commitments(self, cohort: Sequence[Fund], base: SizingBase) -&gt; Mapping[str, float]: ...
 
 <span class="k">class</span> AnnualRatePolicy:
     <span class="k">def</span> __init__(self, rates, funds, weights=None, *, carry_forward=False, years=None):
@@ -567,8 +567,8 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
                 <span class="k">for</span> f <span class="k">in</span> cohort: self.entitlements[f.name] = Entitlement(year, rate, carried, pool, w[f], pool * w[f])
                 carried = pool <span class="k">if</span> (self.carry_forward <span class="k">and not</span> cohort) <span class="k">else</span> 0.0
 
-    <span class="k">def</span> size(self, cohort, base): <span class="k">return</span> {f.name: self.entitlements[f.name].effective_rate * base.liquid <span class="k">for</span> f <span class="k">in</span> cohort}
-    <span class="k">def</span> explain(self, fund_name): <span class="k">return</span> self.entitlements[fund_name].as_dict()
+    <span class="k">def</span> size_commitments(self, cohort, base): <span class="k">return</span> {f.name: self.entitlements[f.name].effective_rate * base.liquid <span class="k">for</span> f <span class="k">in</span> cohort}
+    <span class="k">def</span> explain_rate(self, fund_name): <span class="k">return</span> self.entitlements[fund_name].as_dict()
 
 
 <span class="c"># simulator.py</span>
@@ -576,41 +576,41 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     <span class="k">def</span> __init__(self, portfolio, funds=(), policy=None, *, stop_on_shortfall=True, cash_tolerance=1e-9):
         self.timeline = Timeline(portfolio.liquid_levels.index)
         levels = portfolio.liquid_levels.to_numpy()
-        self.factors = np.concatenate([[1.0], levels[1:] / levels[:-1]])
-        self.fx = self.timeline.asof(portfolio.usd_rate) <span class="k">if</span> portfolio.converts_currency <span class="k">else</span> np.ones(self.timeline.n)
-        self.paths = {f.name: f.on(self.timeline) <span class="k">for</span> f <span class="k">in</span> funds}
-        self.policy = policy <span class="k">or</span> AnnualRatePolicy(portfolio.commitment_rates, funds, years=self.timeline.years)
-        self.beyond_horizon = tuple(f.name <span class="k">for</span> f <span class="k">in</span> funds <span class="k">if</span> self.paths[f.name].beyond_horizon)
+        self.return_factors = np.concatenate([[1.0], levels[1:] / levels[:-1]])
+        self.fx = self.timeline.last_value_on_or_before(portfolio.usd_rate) <span class="k">if</span> portfolio.requires_fx_conversion <span class="k">else</span> np.ones(self.timeline.n_observations)
+        self.aligned_histories = {f.name: f.align_history(self.timeline) <span class="k">for</span> f <span class="k">in</span> funds}
+        self.policy = policy <span class="k">or</span> AnnualRatePolicy(portfolio.commitment_rates, funds, years=self.timeline.calendar_years)
+        self.funds_beyond_horizon = tuple(f.name <span class="k">for</span> f <span class="k">in</span> funds <span class="k">if</span> self.aligned_histories[f.name].closes_beyond_horizon)
         ...
 
     <span class="k">def</span> run(self) -&gt; SimulationResult:
-        liquid = LiquidAccount(float(self.portfolio.liquid_levels.iloc[0]), self.factors)
-        book, fx, private_open, shortfall = PrivateBook(), self.fx, 0.0, None
-        <span class="k">for</span> t <span class="k">in</span> range(self.timeline.n):
-            liquid_open, nav_usd_open = liquid.balance, book.nav(t - 1)                    <span class="c"># 1</span>
-            pnl = liquid.grow(t)                                                           <span class="c"># 2</span>
-            distributions = book.distributions(t) * fx[t]                                  <span class="c"># 3</span>
+        liquid = LiquidAccount(float(self.portfolio.liquid_levels.iloc[0]), self.return_factors)
+        book, fx, private_open, shortfall = CommitmentBook(), self.fx, 0.0, None
+        <span class="k">for</span> t <span class="k">in</span> range(self.timeline.n_observations):
+            liquid_open, nav_usd_open = liquid.balance, book.nav_at(t - 1)                    <span class="c"># 1</span>
+            pnl = liquid.apply_return(t)                                                           <span class="c"># 2</span>
+            distributions = book.distributions_in_period(t) * fx[t]                                  <span class="c"># 3</span>
             liquid.deposit(distributions)
-            cohort = self._cohorts.get(t, [])                                              <span class="c"># 4</span>
-            base = SizingBase(t, self.timeline.date_at(t), liquid.balance, nav_usd_open * fx[t])
-            <span class="k">for</span> name, amount <span class="k">in</span> self._size(cohort, base).items():
-                book.add(Commitment(self._fund[name], self.paths[name], amount / fx[t]))
-            new = book.closed_at(t)                                                        <span class="c"># 5</span>
-            distributions += math.fsum(c.distributions(t) <span class="k">for</span> c <span class="k">in</span> new) * fx[t]
-            liquid.deposit(math.fsum(c.distributions(t) <span class="k">for</span> c <span class="k">in</span> new) * fx[t])
-            calls = book.calls(t) * fx[t]
+            cohort = self._closings_by_period.get(t, [])                                              <span class="c"># 4</span>
+            base = SizingBase(t, self.timeline.observation_date(t), liquid.balance, nav_usd_open * fx[t])
+            <span class="k">for</span> name, amount <span class="k">in</span> self._size_commitments(cohort, base).items():
+                book.add(Commitment(self._fund[name], self.aligned_histories[name], amount / fx[t]))
+            new = book.commitments_closing_in(t)                                                        <span class="c"># 5</span>
+            distributions += math.fsum(c.distributions_in_period(t) <span class="k">for</span> c <span class="k">in</span> new) * fx[t]
+            liquid.deposit(math.fsum(c.distributions_in_period(t) <span class="k">for</span> c <span class="k">in</span> new) * fx[t])
+            calls = book.calls_in_period(t) * fx[t]
             missing = liquid.withdraw(calls)
-            private_close = book.nav(t) * fx[t]                                            <span class="c"># 6</span>
+            private_close = book.nav_at(t) * fx[t]                                            <span class="c"># 6</span>
             fx_translation = nav_usd_open * (fx[t] - fx[t - 1]) <span class="k">if</span> t <span class="k">else</span> 0.0
             self._record(t, liquid_open, private_open, pnl, distributions, base, calls, liquid.balance, private_close, fx_translation, book)
             private_open = private_close
             <span class="k">if</span> missing &gt; self.cash_tolerance <span class="k">and</span> shortfall <span class="k">is</span> None:
-                shortfall = Shortfall(t, self.timeline.date_at(t), calls - missing, calls, calls_by_fund)
+                shortfall = Shortfall(t, self.timeline.observation_date(t), calls - missing, calls, calls_by_fund)
                 <span class="k">if</span> self.stop_on_shortfall: <span class="k">break</span>
-        <span class="k">return</span> SimulationResult(self.portfolio.base_currency, periods, funds, commitments, shortfall, self.beyond_horizon)
+        <span class="k">return</span> SimulationResult(self.portfolio.base_currency, periods, funds, commitments, shortfall, self.funds_beyond_horizon)
 
-    <span class="k">def</span> event_map(self) -&gt; DataFrame: ...     <span class="c"># every fund event and the observation it pooled onto</span></code></pre>
-  <p>If performance ever matters, <code>PrivateBook</code> is the one place to vectorise: stack the paths into <code>(n, funds)</code> arrays and keep <code>usd</code> as a vector. The interface does not change.</p>
+    <span class="k">def</span> map_events_to_observations(self) -&gt; DataFrame: ...     <span class="c"># every fund event and the observation it pooled onto</span></code></pre>
+  <p>If performance ever matters, <code>CommitmentBook</code> is the one place to vectorise: stack the paths into <code>(n, funds)</code> arrays and keep <code>usd</code> as a vector. The interface does not change.</p>
 </section>
 
 <section id="mapping">
@@ -620,7 +620,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     <thead><tr><th>Original</th><th>Becomes</th><th>Note</th></tr></thead>
     <tbody>
       <tr><td><code>current_total_liquid_assets</code></td><td><code>Portfolio.liquid_levels.iloc[0]</code></td><td>The first level is the starting balance; no separate parameter.</td></tr>
-      <tr><td><code>liquid_portfolio_yearly_returns</code>, <code>num_years</code></td><td><code>Portfolio.liquid_levels</code> → <code>Timeline</code> + factors</td><td>Dated levels replace annual returns. Their dates are the grid; ratios are the returns.</td></tr>
+      <tr><td><code>liquid_portfolio_yearly_returns</code>, <code>num_years</code></td><td><code>Portfolio.liquid_levels</code> → <code>Timeline</code> + return_factors</td><td>Dated levels replace annual returns. Their dates are the grid; ratios are the returns.</td></tr>
       <tr><td><code>initial_vintages</code> (dict class → [Vintage])</td><td>&mdash;</td><td>Not an input in this system: there are no pre-existing commitments at inception; a fund closing before the first observation is rejected.</td></tr>
       <tr><td><code>self._schema</code> / <code>Vintage(type, schema, commitment)</code></td><td><code>Fund</code> (unit history) + <code>Commitment</code> (dollars)</td><td>Same split, made explicit: the fund holds the unit data, the engine holds the dollars.</td></tr>
       <tr><td><code>annual_commitments[class, year]</code></td><td><code>Portfolio.commitment_rates[year, type]</code> via <code>AnnualRatePolicy</code></td><td>Same table, indexed by calendar year and type string. Applied at each fund's closing, not every year.</td></tr>
@@ -628,9 +628,9 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
       <tr><td><code>inflation_paths</code>, <code>wealth_flows</code></td><td>&mdash;</td><td>Not among the inputs. External flows would be one <code>deposit</code> in step 3 if ever wanted.</td></tr>
       <tr><td>(no currency handling)</td><td><code>Portfolio.base_currency</code> + <code>usd_rate</code> → <code>fx[t]</code></td><td>New. The base-currency setting decides whether conversion applies; four multiplications in the loop and an <code>fx_translation</code> column.</td></tr>
       <tr><td><code>total_MV</code>, <code>pe_alloc</code></td><td><code>periods.total_open</code>, <code>periods.private_open</code></td><td>Columns in base currency.</td></tr>
-      <tr><td><code>distributions[i, year]</code>, <code>capital_calls[i, year]</code></td><td><code>result.by_type()</code></td><td>Groupby of the per-fund table.</td></tr>
-      <tr><td><code>vintage_exposures[start, year, class]</code></td><td><code>result.exposures()</code></td><td>Private NAV in base currency by date × fund; sum by closing year or type as needed.</td></tr>
-      <tr><td><code>PrivateAssetProjections(…)</code></td><td><code>SimulationResult</code></td><td>Plus <code>commitments</code> (one row per closing with the rate and fx used), <code>beyond_horizon</code> and a <code>shortfall</code>.</td></tr>
+      <tr><td><code>distributions[i, year]</code>, <code>capital_calls[i, year]</code></td><td><code>result.totals_by_fund_type()</code></td><td>Groupby of the per-fund table.</td></tr>
+      <tr><td><code>vintage_exposures[start, year, class]</code></td><td><code>result.nav_by_fund()</code></td><td>Private NAV in base currency by date × fund; sum by closing year or type as needed.</td></tr>
+      <tr><td><code>PrivateAssetProjections(…)</code></td><td><code>SimulationResult</code></td><td>Plus <code>commitments</code> (one row per closing with the rate and fx used), <code>funds_beyond_horizon</code> and a <code>shortfall</code>.</td></tr>
     </tbody>
   </table></div>
 
@@ -654,7 +654,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
       <tr><td>Carry unspent rates forward to the next year with a fund of that type</td><td><code>AnnualRatePolicy(carry_forward=True)</code></td><td>Built and tested: missed years pool into the next closing year, split by weight. The engine is unaware. 10% + 8% + 12% with 60/40 weights gives 180,000 and 144,000.</td></tr>
       <tr><td>Two funds of one type in one year</td><td><code>AnnualRatePolicy(weights={…})</code></td><td>Built: explicit weights summing to 1 within the year × type group; default is an equal split.</td></tr>
       <tr><td>Pacing to a target private allocation</td><td>A policy: <code>TargetAllocation(target=0.25)</code></td><td>Sizes from the gap between <code>base.private_nav / base.total</code> and the target. Not built.</td></tr>
-      <tr><td>Funds closing after the last observation</td><td><code>result.beyond_horizon</code></td><td>Built: never committed, listed so the pipeline is visible, still counted in the weight split.</td></tr>
+      <tr><td>Funds closing after the last observation</td><td><code>result.funds_beyond_horizon</code></td><td>Built: never committed, listed so the pipeline is visible, still counted in the weight split.</td></tr>
       <tr><td>Monte Carlo over liquid or FX paths</td><td>A loop outside the engine</td><td>One <code>Portfolio</code> per path; funds shared. The engine stays single-path and pure.</td></tr>
       <tr><td>A fund whose data is not in USD</td><td>Closed by rule</td><td>Private data is always USD (<code>PRIVATE_CURRENCY</code>). Supporting a non-dollar fund would mean a currency on <code>Fund</code> and a rate series per currency; the seam exists but is deliberately closed.</td></tr>
       <tr><td>Already-netted fund histories</td><td>Input contract</td><td>Gross calls and distributions must be supplied separately; a netted series cannot be decomposed and the design does not try.</td></tr>
@@ -668,19 +668,19 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
   <p class="kicker">The <code>pmsim</code> package in this folder, its examples, and the 123 tests that pin the contract.</p>
 <pre><code>claude/
   pmsim/
-    dates.py        as_date, dated_series           date coercion shared by the rest
-    inputs.py       Fund, Portfolio, PRIVATE_CURRENCY, rate_table
-    timeline.py     Timeline, FundPath
-    state.py        LiquidAccount, Commitment, PrivateBook
+    dates.py        as_date, coerce_dated_series           date coercion shared by the rest
+    inputs.py       Fund, Portfolio, PRIVATE_CURRENCY, coerce_rate_table
+    timeline.py     Timeline, AlignedFundHistory
+    state.py        LiquidAccount, Commitment, CommitmentBook
     policy.py       SizingBase, CommitmentPolicy, Entitlement, AnnualRatePolicy
     simulator.py    Simulator, SimulationResult, Shortfall
   examples/basic.py worked GBP example, carry-forward, shortfall
   tests/
     test_inputs.py        Fund and Portfolio validation, the base-currency rule, rate tables
-    test_timeline.py      index_of, asof, FundPath
+    test_timeline.py      first_observation_on_or_after, asof, AlignedFundHistory
     test_fund_path.py     bucketing, unit NAV reconstruction, marks, negative NAV
     test_policy.py        rates, weights, carry-forward, type independence
-    test_periodicity.py   monthly / quarterly / daily / irregular grids, event_map
+    test_periodicity.py   monthly / quarterly / daily / irregular grids, map_events_to_observations
     test_simulator.py     worked examples, timing, currency, shortfall, invariants
   README.md · pyproject.toml · simulator-design.html (this note)
 
@@ -691,7 +691,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     <li><b>Identities:</b> all three accounting identities, opening = previous closing, and fund-table-to-period reconciliation, checked by a shared helper on every run that has one.</li>
     <li><b>Worked examples:</b> the sterling tables above to the penny including <code>fx_translation</code>; the same funds in USD give 66,000 / 47,806 / 1,208,350; carry-forward gives 180,000 / 144,000.</li>
     <li><b>Timing:</b> a closing between observations maps to the next one and keeps its calendar-year rate; a December closing observed in January uses December's rate; a first-date closing and same-day call are processed once; new-cohort distributions are banked after sizing; same-day gross flows both survive; an off-grid mark drives valuation P&amp;L.</li>
-    <li><b>Observation frequency:</b> intramonth flows pool onto the month end; monthly, quarterly and single-date grids agree; weekend flows move to the next pricing day; irregular grids; intramonth closings sized at the month end; <code>event_map</code>.</li>
+    <li><b>Observation frequency:</b> intramonth flows pool onto the month end; monthly, quarterly and single-date grids agree; weekend flows move to the next pricing day; irregular grids; intramonth closings sized at the month end; <code>map_events_to_observations</code>.</li>
     <li><b>Currency:</b> GBP without a rate and USD with one both fail at <code>Portfolio</code> construction; sparse rates carry forward; commitments are fixed in USD at the closing rate.</li>
     <li><b>Failure:</b> a shortfall stops at the failed observation with the exact deficit and per-fund calls, or continues with a negative balance when allowed; a first-date shortfall leaves one recorded period; exactly zero cash is valid; a zero sizing base gives a zero commitment; <code>cash_tolerance</code> absorbs rounding only.</li>
     <li><b>Validation:</b> duplicate names, funds closing before inception, missing rate years or types, bad weights, invalid policy output, negative or non-finite values, intraday dates, history before the closing.</li>

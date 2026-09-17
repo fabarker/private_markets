@@ -27,7 +27,7 @@ def check_identities(result: SimulationResult, atol: float = 1e-6) -> None:
     close(f["calls_base"], p["calls"].reindex(f.index))
     close(f["distributions_base"], p["distributions"].reindex(f.index))
     close(f["nav_base"], p["private_close"].reindex(f.index))
-    close(result.exposures().sum(axis=1), p["private_close"])
+    close(result.nav_by_fund().sum(axis=1), p["private_close"])
     c = result.commitments.groupby(level="date")["commitment_base"].sum()
     close(c, p["commitments"].reindex(c.index))
 

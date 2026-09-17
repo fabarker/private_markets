@@ -9,14 +9,14 @@ This is the implementation of `simulator-design.html` (in this folder). Package 
 | Module | Contents |
 | --- | --- |
 | `pmsim/inputs.py` | `Fund` (fund-held data, USD per $1 committed), `Portfolio` (portfolio-held data, base currency), `PRIVATE_CURRENCY` |
-| `pmsim/timeline.py` | `Timeline` (the observation grid), `FundPath` (a fund's history on it) |
-| `pmsim/state.py` | `LiquidAccount`, `Commitment`, `PrivateBook` — mutable state during a run |
+| `pmsim/timeline.py` | `Timeline` (the observation grid), `AlignedFundHistory` (a fund's history on it) |
+| `pmsim/state.py` | `LiquidAccount`, `Commitment`, `CommitmentBook` — mutable state during a run |
 | `pmsim/policy.py` | `SizingBase`, `CommitmentPolicy` protocol, `AnnualRatePolicy` |
 | `pmsim/simulator.py` | `Simulator`, `SimulationResult`, `Shortfall` — the one loop |
 | `pmsim/dates.py` | date coercion shared by the above |
 | `pmsim/data/tables.py` | the normalized tables a data source must deliver, and the column aliases accepted |
 | `pmsim/data/repository.py` | `DataRepository` protocol, `ExcelRepository`, `FrameRepository`, `SheetNames` |
-| `pmsim/data/orchestrator.py` | `SimulationSpec`, `Orchestrator`, `run_workbook` — tables in, result out |
+| `pmsim/data/orchestrator.py` | `SimulationSpec`, `Orchestrator`, `run_tables_workbook` — tables in, result out |
 | `pmsim/data/workbook.py` | `WorkbookRepository`, `load_profile_workbook` — the five-sheet portfolio workbook, one profile at a time |
 
 ## Run
@@ -106,7 +106,7 @@ and are never changed by a run.
 committed at the first observation on or after its `closing_date`; its rate comes from the
 calendar year of the actual closing (a December closing observed in January uses
 December's rate). Flows dated in `(previous, current]` belong to `current`. A fund closing
-after the last observation is listed in `result.beyond_horizon` and never committed; it
+after the last observation is listed in `result.funds_beyond_horizon` and never committed; it
 still counts in its year's weight split.
 
 **Unit NAV** is rebuilt from a fund's events in date order, starting at zero: a call adds,
@@ -157,7 +157,7 @@ happened and need not line up with it. One rule covers every mismatch:
 - Exchange rates go the other way, because a rate is a state rather than an event: each
   observation uses the last rate on or before it.
 
-`Simulator.event_map()` lists every fund event with the observation it pooled onto, for
+`Simulator.map_events_to_observations()` lists every fund event with the observation it pooled onto, for
 audit. Because flows settle at observations, a call dated the 3rd and one dated the 28th
 are treated alike within the month: neither loses nor earns that month's return, and a
 liquidity shortfall is detected at the month end, not on the day. A finer grid makes the
@@ -178,7 +178,7 @@ simulation finer; the rule does not change.
 `AnnualRatePolicy` the `current_year_rate`, `carried_rate`, `pooled_rate` and `weight`
 behind the rate.
 
-`result.by_type()` sums the fund table by date and fund type; `result.exposures()` is
+`result.totals_by_fund_type()` sums the fund table by date and fund type; `result.nav_by_fund()` is
 private NAV in base currency by date × fund. Every completed period satisfies
 
 ```text
@@ -198,9 +198,9 @@ summing to 1. With `carry_forward=True` a year in which no fund of a type closes
 rate to the next year of that type that has one: 10% + 8% + 12% with 60/40 weights gives
 18% and 12%. Fund types are independent.
 
-Any object with `size(cohort, base) -> {fund name: base-currency amount}` is a policy; the
+Any object with `size_commitments(cohort, base) -> {fund name: base-currency amount}` is a policy; the
 sizing base offers `liquid`, `private_nav` and `total`. If it also has
-`explain(fund_name)`, those figures land in the commitments table.
+`explain_rate(fund_name)`, those figures land in the commitments table.
 
 ## The portfolio workbook
 
@@ -238,7 +238,7 @@ Sheet names can be overridden with `SheetLayout(...)`; any keyword accepted by
 `pmsim.data` also reads a workbook laid out as the normalized tables (a database later):
 
 ```python
-from pmsim.data import SimulationSpec, load_workbook
+from pmsim.data import SimulationSpec, load_tables_workbook
 
 spec = SimulationSpec(
     base_currency="GBP",
@@ -248,9 +248,9 @@ spec = SimulationSpec(
     weights={"A": 0.6, "B": 0.4},    # optional; carry_forward=True also available
     # commitment_rates=...           # optional: overrides the workbook's commitment_rates sheet
 )
-orchestrator = load_workbook("portfolio.xlsx", spec)
+orchestrator = load_tables_workbook("portfolio.xlsx", spec)
 orchestrator.fund_summary()          # what was loaded per fund, and whether it closes in the horizon
-orchestrator.event_map()             # where every fund event pools on the liquid grid
+orchestrator.map_events_to_observations()             # where every fund event pools on the liquid grid
 result = orchestrator.run()
 ```
 

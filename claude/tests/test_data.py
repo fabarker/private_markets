@@ -64,10 +64,10 @@ def test_column_aliases_are_case_and_space_insensitive(gbp_portfolio, worked_fun
 def test_orchestrator_exposes_the_assembled_pieces():
     orchestrator = Orchestrator(FrameRepository(*tables()), SPEC)
     assert [f.name for f in orchestrator.funds] == ["A", "B"]
-    assert orchestrator.portfolio.base_currency == "GBP" and orchestrator.portfolio.converts_currency
+    assert orchestrator.portfolio.base_currency == "GBP" and orchestrator.portfolio.requires_fx_conversion
     assert orchestrator.policy.entitlements["A"].effective_rate == pytest.approx(0.06)
-    assert orchestrator.simulator.timeline.n == 3
-    assert orchestrator.event_map().loc[("A", pd.Timestamp("2027-03-01")), "observation_date"] == pd.Timestamp("2027-03-31")
+    assert orchestrator.simulator.timeline.n_observations == 3
+    assert orchestrator.map_events_to_observations().loc[("A", pd.Timestamp("2027-03-01")), "observation_date"] == pd.Timestamp("2027-03-31")
     with pytest.raises(TypeError, match="SimulationSpec"):
         Orchestrator(FrameRepository(*tables()), {"base_currency": "GBP"})
 

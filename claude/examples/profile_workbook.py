@@ -25,6 +25,7 @@ def sample_tables() -> dict[str, pd.DataFrame]:
         "USD Moderate": 0.006 + 0.016 * np.sin(k / 3.0),
         "USD Aggressive": 0.008 + 0.024 * np.sin(k / 3.0),
         "EUR Conservative": 0.003 + 0.009 * np.cos(k / 4.0),
+        "EUR Moderate": 0.005 + 0.014 * np.cos(k / 4.0),
     }, index=month_ends).round(9)
     fx = pd.DataFrame({
         "EURUSD": (1.35 + 0.10 * np.sin(k / 5.0)).round(4),
@@ -47,6 +48,7 @@ def sample_tables() -> dict[str, pd.DataFrame]:
         ("USD", "Conservative"): {"SECONDARIES": 0.008, "BUYOUT": 0.022},
         ("USD", "Moderate"): {"SECONDARIES": 0.010, "BUYOUT": 0.028},
         ("EUR", "Conservative"): {"SECONDARIES": 0.007, "BUYOUT": 0.020},
+        ("EUR", "Moderate"): {"SECONDARIES": 0.009, "BUYOUT": 0.026},
     }
     commitments = pd.DataFrame([
         (fund_type, year, currency, risk, 0.0 if year == 0 else rate * 100, 0.0 if year == 0 else rate)

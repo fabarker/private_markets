@@ -28,6 +28,7 @@ From this directory, with the project's virtual environment:
 ../.venv/bin/python -m examples.basic      # worked example, carry-forward, shortfall
 ../.venv/bin/python -m examples.workbook   # writes a sample workbook, loads it, runs it
 ../.venv/bin/python -m examples.profile_workbook [book.xlsx USD Conservative 1e6]   # the five-sheet portfolio workbook
+../.venv/bin/python -m examples.eur_moderate book.xlsx [out/]   # EUR Moderate from $100, converted at the first EURUSD; CSVs to out/
 ```
 
 Nothing needs installing: `pyproject.toml` puts `.` on the test path, and `examples` is a

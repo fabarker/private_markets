@@ -65,7 +65,8 @@ def test_flows_sheet_uses_vintage_as_the_fund_name(usd):
 
 def test_market_data_joins_liquid_returns_with_fx(usd):
     market = usd.market_data()
-    assert list(market.columns) == ["USD Conservative", "USD Moderate", "USD Aggressive", "EUR Conservative", "EURUSD", "GBPUSD"]
+    assert list(market.columns) == ["USD Conservative", "USD Moderate", "USD Aggressive", "EUR Conservative",
+                                    "EUR Moderate", "EURUSD", "GBPUSD"]
     assert market.index[0] == pd.Timestamp("2009-04-30") and market.index[-1] == pd.Timestamp("2012-12-31")
     assert len(market) == 45 and market.index.name == "date"
     assert market["USD Conservative"].iloc[0] == pytest.approx(0.004)  # k = 0: sin(0) = 0
@@ -78,7 +79,7 @@ def test_commitment_schedule_maps_relative_years_onto_the_calendar(usd, eur):
     assert rates.loc[2010, "BUYOUT"] == 0.022 and rates.loc[2019, "SECONDARIES"] == 0.008
     assert eur.commitment_rates().loc[2010, "BUYOUT"] == 0.020  # a different profile, different rates
     raw = usd.sheet("Commitments")
-    with pytest.raises(ValueError, match=r"no rows for profile 'USD' 'Wild'; profiles are \['EUR Conservative', 'USD Conservative', 'USD Moderate'\]"):
+    with pytest.raises(ValueError, match=r"no rows for profile 'USD' 'Wild'; profiles are \['EUR Conservative', 'EUR Moderate', 'USD Conservative', 'USD Moderate'\]"):
         commitment_schedule(raw, currency="USD", risk="Wild", inception_year=2009)
     doubled = pd.concat([raw, raw.iloc[[1]]])
     with pytest.raises(ValueError, match="more than one rate for 'SECONDARIES' in relative year 1"):
@@ -148,6 +149,22 @@ def test_eur_conservative_translates_at_the_inverted_rate(workbook):
     assert row["usd_rate"] == pytest.approx(1 / eurusd)
     assert row["commitment_usd"] == pytest.approx(row["commitment_base"] * eurusd)
     assert (result.periods["fx_translation"] != 0).any()
+    check_identities(result)
+
+
+def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(workbook, tmp_path, capsys):
+    from examples import eur_moderate
+    orchestrator, result = eur_moderate.run(workbook, start_usd=100.0, out_dir=tmp_path / "out")
+    eurusd = sample_tables()["FX"].loc["2009-04-30", "EURUSD"]
+    assert orchestrator.repository.profile == "EUR Moderate"
+    assert orchestrator.spec.initial_value == pytest.approx(100.0 / eurusd)
+    assert result.base_currency == "EUR" and result.status == "completed"
+    assert result.periods["liquid_open"].iloc[0] == pytest.approx(100.0 / eurusd)
+    assert orchestrator.policy.entitlements["PEM2011"].effective_rate == 0.026  # EUR Moderate's BUYOUT rate
+    assert {p.name for p in (tmp_path / "out").iterdir()} == {"periods.csv", "funds.csv", "commitments.csv", "event_map.csv", "fund_summary.csv"}
+    assert "Starting balance: USD 100.00 = EUR" in capsys.readouterr().out
+    _, in_euros = eur_moderate.run(workbook, start_usd=100.0, start_in_base_currency=True)
+    assert in_euros.periods["liquid_open"].iloc[0] == 100.0
     check_identities(result)
 
 

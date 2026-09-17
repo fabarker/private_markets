@@ -1,0 +1,168 @@
+# pmsim — private markets simulator
+
+A liquid portfolio in its base currency funds commitments to US-dollar private funds.
+`Simulator(portfolio, funds).run()` walks the liquid index's own dates and reports the liquid
+balance, the private NAV, every flow between the two pots, and whether the pot ever ran dry.
+
+This is the implementation of `../simulator-design.html`. Package modules map to that note:
+
+| Module | Contents |
+| --- | --- |
+| `pmsim/inputs.py` | `Fund` (fund-held data, USD per $1 committed), `Portfolio` (portfolio-held data, base currency), `PRIVATE_CURRENCY` |
+| `pmsim/timeline.py` | `Timeline` (the observation grid), `FundPath` (a fund's history on it) |
+| `pmsim/state.py` | `LiquidAccount`, `Commitment`, `PrivateBook` — mutable state during a run |
+| `pmsim/policy.py` | `SizingBase`, `CommitmentPolicy` protocol, `AnnualRatePolicy` |
+| `pmsim/simulator.py` | `Simulator`, `SimulationResult`, `Shortfall` — the one loop |
+| `pmsim/dates.py` | date coercion shared by the above |
+
+## Run
+
+From this directory, with the project's virtual environment:
+
+```bash
+../.venv/bin/python -m pytest -q        # tests
+../.venv/bin/python -m examples.basic   # worked example, carry-forward, shortfall
+```
+
+Nothing needs installing: `pyproject.toml` puts `.` on the test path, and `examples` is a
+package. Dependencies are NumPy and pandas (pytest for the tests).
+
+## Usage
+
+```python
+from pmsim import AnnualRatePolicy, Fund, Portfolio, Simulator
+
+funds = [
+    Fund("A", "BUYOUT", "2027-02-15",
+         unit_calls=[("2027-03-01", 0.25)],
+         unit_distributions=[("2027-06-01", 0.05)]),
+    Fund("B", "BUYOUT", "2027-05-10",
+         unit_calls=[("2027-05-20", 0.25)]),
+]
+portfolio = Portfolio(
+    base_currency="GBP",
+    liquid_levels=[("2027-01-01", 1_000_000), ("2027-03-31", 1_100_000), ("2027-06-30", 1_210_000)],
+    commitment_rates={"BUYOUT": {2027: 0.10}},
+    usd_rate=[("2027-01-01", 0.80), ("2027-06-30", 0.75)],   # GBP per 1 USD
+)
+policy = AnnualRatePolicy(portfolio.commitment_rates, funds, weights={"A": 0.6, "B": 0.4})
+result = Simulator(portfolio, funds, policy).run()
+
+result.status          # "completed" or "shortfall"
+result.periods         # one row per observation, base currency
+result.funds           # one row per live commitment per observation, USD and base
+result.commitments     # one row per closing: rate, sizing base, exchange rate, dollars
+result.shortfall       # None, or the first failed observation
+```
+
+Leave `policy` out to get `AnnualRatePolicy` with equal weights and no carry-forward.
+
+## Inputs, by who holds them
+
+**`Fund`** — what the fund knows. `name` (unique), `fund_type` (a column of the rate table),
+`closing_date`, and its realized history per $1 committed, in USD: `unit_calls`,
+`unit_distributions` (gross, non-negative; keep them separate even on the same day) and
+`unit_nav` (dated marks, at most one per day). Each history may be a Series indexed by
+dates, a `{date: value}` mapping, an iterable of `(date, value)` pairs, or omitted. Nothing
+may be dated before the closing.
+
+**`Portfolio`** — what the portfolio knows.
+
+- `base_currency` — the currency of the liquid index and of every report. This setting
+  decides whether conversion happens: `"USD"` means none and `usd_rate` must be omitted;
+  anything else requires `usd_rate`.
+- `liquid_levels` — dated total-return levels in base currency. **Their dates are the
+  simulation grid and the first level is the starting balance.** Scale the index before
+  input; later levels only supply returns and never overwrite the simulated balance.
+- `commitment_rates` — calendar year × fund type; `0.10` means commit 10% of the sizing
+  base. List every year from the first to the last observation (0 for no target) and every
+  fund type in the fund list.
+- `usd_rate` — dated price of 1 USD in base currency. Sparse is fine: the last rate on or
+  before each observation is used, and one is required on or before the first.
+
+The dollar commitment to each fund is **not** an input. It is the engine's decision at
+the closing and lives in `result.commitments`. Input objects are frozen, copy their data,
+and are never changed by a run.
+
+## Conventions
+
+**Dates become periods once.** A `Timeline` is built from the liquid dates. A fund is
+committed at the first observation on or after its `closing_date`; its rate comes from the
+calendar year of the actual closing (a December closing observed in January uses
+December's rate). Flows dated in `(previous, current]` belong to `current`. A fund closing
+after the last observation is listed in `result.beyond_horizon` and never committed; it
+still counts in its year's weight split.
+
+**Unit NAV** is rebuilt from a fund's events in date order, starting at zero: a call adds,
+a distribution subtracts, a NAV mark replaces the running value (marks include that day's
+flows). The value at an observation is the running value after the last event on or
+before it, so marks between observations count and a missing mark leaves the
+cash-adjusted estimate. A negative running value is a data error naming the fund and day.
+
+**Each period, in this order:**
+
+1. snapshot opening balances;
+2. apply the liquid return `level[t] / level[t-1]` (1 at the first date);
+3. bank distributions from existing commitments;
+4. size all funds closing at this observation from that same balance, fix each commitment
+   in USD at today's rate;
+5. bank the new cohort's own distributions (kept out of the sizing base), then pay every
+   commitment's calls;
+6. value the book, record the period, stop if the calls exceeded the cash.
+
+**Currency.** Private figures are USD until they touch the liquid pot or a report.
+Commitments are sized in base currency and converted to USD at the closing observation's
+rate, then never change. Calls, distributions and NAV are converted at each observation's
+rate. `fx_translation` isolates `nav_usd(t-1) × (fx[t] − fx[t-1])`, the part of private
+valuation P&L that is purely the currency moving.
+
+**Shortfall.** If calls exceed the cash available (beyond `cash_tolerance`, default 1e-9),
+the failed period is recorded with its negative balance visible, `result.shortfall` names
+it, and the run stops. With `stop_on_shortfall=False` the balance goes negative and the run
+continues — the "how much would I need to borrow" view. Exactly zero cash is valid; a zero
+sizing base gives a zero commitment and still uses the rate.
+
+## Results
+
+`periods` (index `date`, base currency unless noted): `liquid_open`, `private_open`,
+`total_open`, `return_factor`, `usd_rate`, `liquid_pnl`, `distributions`, `sizing_base`,
+`commitments`, `commitments_usd`, `calls`, `liquid_close`, `private_close`, `total_close`,
+`private_valuation_pnl`, `fx_translation`.
+
+`funds` (index `date`, `fund`): `fund_type`, `commitment_usd`, `calls_usd`,
+`distributions_usd`, `nav_usd`, `calls_base`, `distributions_base`, `nav_base`.
+
+`commitments` (index `date`, `fund`): `fund_type`, `closing_date`, `policy_year`,
+`sizing_base`, `rate`, `commitment_base`, `usd_rate`, `commitment_usd`, and from
+`AnnualRatePolicy` the `current_year_rate`, `carried_rate`, `pooled_rate` and `weight`
+behind the rate.
+
+`result.by_type()` sums the fund table by date and fund type; `result.exposures()` is
+private NAV in base currency by date × fund. Every completed period satisfies
+
+```text
+liquid_close  = liquid_open + liquid_pnl + distributions − calls
+private_valuation_pnl = private_close − private_open − calls + distributions
+total_close − total_open = liquid_pnl + private_valuation_pnl
+```
+
+and the tests assert these on every run.
+
+## Policy
+
+`AnnualRatePolicy(rates, funds, weights=None, carry_forward=False, years=None)` gives each
+fund `rate[closing year, type] × weight`. Weights split a year's rate among the funds of
+one type closing that year; give them for all funds of such a group or none (equal split),
+summing to 1. With `carry_forward=True` a year in which no fund of a type closes adds its
+rate to the next year of that type that has one: 10% + 8% + 12% with 60/40 weights gives
+18% and 12%. Fund types are independent.
+
+Any object with `size(cohort, base) -> {fund name: base-currency amount}` is a policy; the
+sizing base offers `liquid`, `private_nav` and `total`. If it also has
+`explain(fund_name)`, those figures land in the commitments table.
+
+## Out of scope
+
+Pre-existing commitments at inception, non-USD funds, external cash flows, fees, taxes,
+recycling, secondary sales and stochastic returns. Monte Carlo is a loop outside the
+engine: one `Portfolio` per liquid or FX path, funds shared.

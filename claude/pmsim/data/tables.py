@@ -37,7 +37,7 @@ KINDS = {
 }
 
 ALIASES: dict[str, frozenset[str]] = {
-    "fund_name": frozenset({"fund_name", "fund", "name", "fundname", "fund_id"}),
+    "fund_name": frozenset({"fund_name", "fund", "name", "fundname", "fund_id", "vintage"}),
     "fund_type": frozenset({"fund_type", "type", "strategy", "fundtype", "asset_class"}),
     "closing_date": frozenset({"closing_date", "closingdate", "close_date", "closing", "commitment_date"}),
     "kind": frozenset({"kind", "type", "entry_type", "record_type", "data_type"}),

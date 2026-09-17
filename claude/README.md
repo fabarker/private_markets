@@ -17,6 +17,7 @@ This is the implementation of `simulator-design.html` (in this folder). Package 
 | `pmsim/data/tables.py` | the normalized tables a data source must deliver, and the column aliases accepted |
 | `pmsim/data/repository.py` | `DataRepository` protocol, `ExcelRepository`, `FrameRepository`, `SheetNames` |
 | `pmsim/data/orchestrator.py` | `SimulationSpec`, `Orchestrator`, `run_workbook` — tables in, result out |
+| `pmsim/data/workbook.py` | `WorkbookRepository`, `load_profile_workbook` — the five-sheet portfolio workbook, one profile at a time |
 
 ## Run
 
@@ -26,6 +27,7 @@ From this directory, with the project's virtual environment:
 ../.venv/bin/python -m pytest -q           # tests
 ../.venv/bin/python -m examples.basic      # worked example, carry-forward, shortfall
 ../.venv/bin/python -m examples.workbook   # writes a sample workbook, loads it, runs it
+../.venv/bin/python -m examples.profile_workbook [book.xlsx USD Conservative 1e6]   # the five-sheet portfolio workbook
 ```
 
 Nothing needs installing: `pyproject.toml` puts `.` on the test path, and `examples` is a
@@ -190,9 +192,40 @@ Any object with `size(cohort, base) -> {fund name: base-currency amount}` is a p
 sizing base offers `liquid`, `private_nav` and `total`. If it also has
 `explain(fund_name)`, those figures land in the commitments table.
 
-## Loading from a workbook
+## The portfolio workbook
 
-`pmsim.data` turns an Excel workbook (a database later) into the engine's inputs:
+The five-sheet workbook — `Liquid`, `FX`, `Flows`, `Commitments`, `Spec` — is loaded one
+*profile* at a time. A profile is a currency and a risk level; it selects the liquid return
+column, the commitment-schedule rows, and (for a non-USD currency) the FX column.
+
+```python
+from pmsim.data import load_profile_workbook
+
+o = load_profile_workbook("portfolio.xlsx", "USD", "Conservative", initial_value=1_000_000)
+o.repository.commitment_rates()   # the schedule for this profile on calendar years
+o.fund_summary()
+result = o.run()
+```
+
+`python -m examples.profile_workbook book.xlsx EUR Conservative 5e6` does the same from
+the command line, and with no arguments writes a sample workbook in this layout to
+compare a real file against.
+
+| Sheet | Layout | How it is read |
+| --- | --- | --- |
+| `Liquid` | blank header, then one column per profile: `USD Conservative`, `EUR Moderate`, … | **monthly returns**; compounded into levels from `initial_value`. The first row's return is the return *into* the first observation and is not applied |
+| `FX` | blank header, then `EURUSD`, `GBPUSD`, … (USD per 1 unit of the currency) | the profile's `<CCY>USD` column, inverted to base-per-USD; `USD<CCY>` is also recognised and used as is |
+| `Flows` | `Vintage`, `Date`, `Value`, `Type` (`Flow`/`NAV`), `Scale` | `Vintage` is the fund name; unit = `Value ÷ Scale`; negative flows are calls |
+| `Commitments` | `Type`, `Year`, `Currency`, `Risk`, `Commitment`, `Rate` | rows of the profile; `Year` is **years since inception** (0 = the year of the first Liquid date) and is mapped onto calendar years; `Rate` is the decimal used |
+| `Spec` | `Name`, `Year`, `Type` | `Year` holds the closing date, read day-first (`31/12/2010`) |
+
+Sheet names can be overridden with `SheetLayout(...)`; any keyword accepted by
+`SimulationSpec` (`weights`, `carry_forward`, `stop_on_shortfall`, …) can be passed to
+`load_profile_workbook` as an override.
+
+## Loading from a one-table-per-sheet workbook
+
+`pmsim.data` also reads a workbook laid out as the normalized tables (a database later):
 
 ```python
 from pmsim.data import SimulationSpec, load_workbook

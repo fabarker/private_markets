@@ -8,10 +8,12 @@ simulator, and runs them.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from functools import cached_property
 from typing import Any, Mapping
 
+import numpy as np
 import pandas as pd
 
 from ..inputs import PRIVATE_CURRENCY, Fund, Portfolio
@@ -21,24 +23,31 @@ from .repository import DataRepository, ExcelRepository, SheetNames
 from .tables import canon
 
 FX_QUOTES = ("base_per_usd", "usd_per_base")
+LIQUID_KINDS = ("levels", "returns")
 
 
 @dataclass(frozen=True)
 class SimulationSpec:
     """Everything a run needs that the tables do not carry.
 
-    ``liquid_series`` and ``fx_series`` name columns of market_data. ``fx_quote`` says how
-    the rate is quoted: ``base_per_usd`` (GBP per 1 USD, used as is) or ``usd_per_base``
-    (USD per 1 GBP, inverted). ``commitment_rates`` overrides the repository's rate table
-    when given. ``calls_are_negative`` is the sign convention of ``Flow`` rows: negative
-    values are calls and positive values distributions (the LP's view); set False for the
-    opposite. ``Call`` and ``Distribution`` rows are read as magnitudes regardless.
+    ``liquid_series`` and ``fx_series`` name columns of market_data. ``liquid_kind`` says
+    what the liquid column holds: ``levels`` (used as is; the first level is the starting
+    balance) or ``returns`` (simple per-period returns, compounded from ``initial_value``;
+    the first row's return is the return *into* the first observation and is not applied).
+    ``fx_quote`` says how the rate is quoted: ``base_per_usd`` (GBP per 1 USD, used as is)
+    or ``usd_per_base`` (USD per 1 GBP, inverted). ``commitment_rates`` overrides the
+    repository's rate table when given. ``calls_are_negative`` is the sign convention of
+    ``Flow`` rows: negative values are calls and positive values distributions (the LP's
+    view); set False for the opposite. ``Call`` and ``Distribution`` rows are read as
+    magnitudes regardless.
     """
 
     base_currency: str
     liquid_series: str
     fx_series: str | None = None
     fx_quote: str = "base_per_usd"
+    liquid_kind: str = "levels"
+    initial_value: float | None = None
     commitment_rates: Any = None
     weights: Mapping[str, float] | None = None
     carry_forward: bool = False
@@ -49,8 +58,30 @@ class SimulationSpec:
     def __post_init__(self) -> None:
         if self.fx_quote not in FX_QUOTES:
             raise ValueError(f"fx_quote must be one of {FX_QUOTES}, got {self.fx_quote!r}")
+        if self.liquid_kind not in LIQUID_KINDS:
+            raise ValueError(f"liquid_kind must be one of {LIQUID_KINDS}, got {self.liquid_kind!r}")
         if not isinstance(self.liquid_series, str) or not self.liquid_series.strip():
             raise ValueError("liquid_series must name a market_data column")
+        if self.liquid_kind == "returns":
+            value = self.initial_value
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+                raise ValueError("initial_value (the starting liquid balance) must be a positive number when liquid_kind is 'returns'")
+
+
+def returns_to_levels(returns: pd.Series, initial_value: float) -> pd.Series:
+    """Total-return levels from simple per-period returns.
+
+    ``level[0] = initial_value`` and ``level[t] = level[t-1] × (1 + returns[t])``. The first
+    return is the return into the first observation — before the simulation starts — so it
+    is not applied; the engine's first-period factor is 1 either way.
+    """
+    factors = 1.0 + returns.to_numpy(dtype=float)
+    if len(factors) == 0:
+        raise ValueError("returns series is empty")
+    if not np.isfinite(factors).all() or (factors[1:] <= 0).any():
+        raise ValueError("returns must be finite and greater than -100%")
+    factors[0] = 1.0
+    return pd.Series(float(initial_value) * np.cumprod(factors), index=returns.index, name=returns.name)
 
 
 def build_funds(specs: pd.DataFrame, market: pd.DataFrame, *, calls_are_negative: bool = True) -> list[Fund]:
@@ -97,6 +128,8 @@ def select_series(market: pd.DataFrame, name: str, *, label: str) -> pd.Series:
 def build_portfolio(market: pd.DataFrame, spec: SimulationSpec, rates: Any) -> Portfolio:
     """The ``Portfolio`` for a spec: liquid index and, unless the base currency is USD, the USD rate."""
     liquid = select_series(market, spec.liquid_series, label="liquid_series")
+    if spec.liquid_kind == "returns":
+        liquid = returns_to_levels(liquid, spec.initial_value)
     usd_rate = None
     if spec.base_currency.strip().upper() == PRIVATE_CURRENCY:
         if spec.fx_series:

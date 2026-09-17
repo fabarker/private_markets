@@ -18,7 +18,7 @@ from typing import Any, Literal, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
-from simulation_events import prepare_fund_events, validate_model_dates
+from .simulation_events import prepare_fund_events, validate_model_dates
 from vintage import FundVintage
 
 __all__ = ["Simulation", "SimulationConfig", "SimulationResult", "LiquidityShortfall",

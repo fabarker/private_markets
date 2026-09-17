@@ -13,9 +13,10 @@ dependencies = ["numpy>=1.26", "pandas>=2.2"]
 test = ["pytest>=8"]
 
 [tool.setuptools]
-py-modules = ["vintage", "simulation", "simulation_events"]
+package-dir = {"" = ".."}
+packages = ["chatgpt", "chatgpt.examples"]
+py-modules = ["vintage"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
-
+pythonpath = [".."]

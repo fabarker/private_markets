@@ -440,7 +440,7 @@ class FundVintage:
         this also reconstructs opening NAV from any preceding history.
         """
         import pandas as pd
-        from simulation_events import prepare_fund_events, validate_model_dates
+        from chatgpt.simulation_events import prepare_fund_events, validate_model_dates
 
         dates = validate_model_dates(model_dates, allow_empty=True)
         path = prepare_fund_events(self, dates)

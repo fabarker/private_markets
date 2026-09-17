@@ -1,7 +1,7 @@
-"""Run from the project root with: python -m examples.basic."""
+"""Run from the repository root with: python -m chatgpt.examples.basic."""
 import pandas as pd
 
-from simulation import Simulation, SimulationConfig
+from chatgpt.simulation import Simulation, SimulationConfig
 from vintage import FundVintage
 
 

@@ -7,53 +7,53 @@ liquid balances on the index's calendar-date grid. The implementation follows
 
 ## Run locally
 
-From this project directory, using its Python 3.11+ environment:
+From the repository root, using its Python 3.11+ environment:
 
 ```bash
-.venv/bin/python -m pip install -e '.[test]'
-.venv/bin/python -m examples.basic
-.venv/bin/python -m pytest -q
+.venv/bin/python -m pip install -e './chatgpt[test]'
+.venv/bin/python -m chatgpt.examples.basic
+.venv/bin/python -m pytest -q chatgpt/tests
 ```
 
 In PyCharm, select this project's `.venv/bin/python` as the interpreter. The
-example also works as the module `examples.basic` with this directory as its
-working directory. Dependencies are declared in `pyproject.toml`.
+example also works as the module `chatgpt.examples.basic` with the repository
+root as its working directory. Dependencies are declared in `chatgpt/pyproject.toml`.
 
 ## Usage
 
 ```python
 import pandas as pd
-from simulation import Simulation, SimulationConfig
+from chatgpt.simulation import Simulation, SimulationConfig
 from vintage import FundVintage
 
 liquid_index = pd.Series(
-    [1_000_000, 1_100_000, 1_210_000],
-    index=pd.to_datetime(["2027-01-01", "2027-03-31", "2027-06-30"]),
+  [1_000_000, 1_100_000, 1_210_000],
+  index=pd.to_datetime(["2027-01-01", "2027-03-31", "2027-06-30"]),
 )
 
 funds = [
-    FundVintage(
-        name="Buyout A",
-        strategy="BUYOUT",
-        commitment_date="2027-02-15",
-        normalized_realized_net_cash_flow=[
-            ("2027-03-01", -0.25),
-            ("2027-06-01", 0.05),
-        ],
-    ),
-    FundVintage(
-        name="Buyout B",
-        strategy="BUYOUT",
-        commitment_date="2027-05-10",
-        normalized_realized_net_cash_flow=[("2027-05-20", -0.25)],
-    ),
+  FundVintage(
+    name="Buyout A",
+    strategy="BUYOUT",
+    commitment_date="2027-02-15",
+    normalized_realized_net_cash_flow=[
+      ("2027-03-01", -0.25),
+      ("2027-06-01", 0.05),
+    ],
+  ),
+  FundVintage(
+    name="Buyout B",
+    strategy="BUYOUT",
+    commitment_date="2027-05-10",
+    normalized_realized_net_cash_flow=[("2027-05-20", -0.25)],
+  ),
 ]
 
 config = SimulationConfig(
-    liquid_total_return_index=liquid_index,
-    funds=funds,
-    annual_commitment_rates=pd.DataFrame({"BUYOUT": [0.10]}, index=[2027]),
-    fund_weights={"Buyout A": 0.60, "Buyout B": 0.40},
+  liquid_total_return_index=liquid_index,
+  funds=funds,
+  annual_commitment_rates=pd.DataFrame({"BUYOUT": [0.10]}, index=[2027]),
+  fund_weights={"Buyout A": 0.60, "Buyout B": 0.40},
 )
 simulation = Simulation(config)
 result = simulation.run()  # simulate() is an equivalent alias.
@@ -61,7 +61,7 @@ result = simulation.run()  # simulate() is an equivalent alias.
 print(result.portfolio)
 print(result.commitment_events)
 if result.shortfall is not None:
-    print(result.shortfall.date, result.shortfall.deficit)
+  print(result.shortfall.date, result.shortfall.deficit)
 ```
 
 The example's commitments are $66,000 and $47,806. Final liquid assets are
@@ -229,6 +229,6 @@ overflow raises an arithmetic error; it is not classified as a liquidity shortfa
 
 - `simulation.py`: config/result types, validation, policy budgets, simulation loop.
 - `simulation_events.py`: generic date alignment and chronological unit NAV sweep.
-- `vintage.py`: fund model and reporting helpers.
+- `../vintage.py`: shared fund model and reporting helpers.
 - `examples/basic.py`: worked example, weighted carryforward and shortfall usage.
 - `tests/`: accounting, policy, timing, validation and fund-helper regression tests.

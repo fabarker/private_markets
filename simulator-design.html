@@ -1,0 +1,665 @@
+<title>Private Markets Simulator Design</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #F5F7F5;
+    --surface: #FFFFFF;
+    --ink: #1A222B;
+    --muted: #5C6873;
+    --line: #D6DCD8;
+    --line-strong: #AEB8B2;
+    --code-bg: #ECF0EC;
+    --liquid: #0E6B66;
+    --liquid-soft: #DDEDEA;
+    --private: #A3621A;
+    --private-soft: #F4E6D4;
+    --engine: #3B4A5A;
+    --engine-soft: #E3E8ED;
+    --bad: #A63A2E;
+    --display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+    --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #121719; --surface: #1A2124; --ink: #E4E8E6; --muted: #98A4A8;
+      --line: #2B3437; --line-strong: #46535A; --code-bg: #1E272A;
+      --liquid: #4DB8AE; --liquid-soft: #173330; --private: #DBA35A; --private-soft: #3A2A16;
+      --engine: #A9B9C8; --engine-soft: #262F37; --bad: #E07A6C;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #121719; --surface: #1A2124; --ink: #E4E8E6; --muted: #98A4A8;
+    --line: #2B3437; --line-strong: #46535A; --code-bg: #1E272A;
+    --liquid: #4DB8AE; --liquid-soft: #173330; --private: #DBA35A; --private-soft: #3A2A16;
+    --engine: #A9B9C8; --engine-soft: #262F37; --bad: #E07A6C;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--body); font-size: 16px; line-height: 1.55;
+    padding-block: 0 96px; padding-inline: 24px;
+  }
+  a { color: inherit; }
+  a:focus-visible { outline: 2px solid var(--liquid); outline-offset: 2px; }
+  .page { max-width: 1080px; margin: 0 auto; }
+
+  header.top { padding-block: 56px 40px; border-bottom: 1px solid var(--line-strong); }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 18px; }
+  header h1 { font-family: var(--display); font-weight: 600; font-size: clamp(38px, 6vw, 60px); line-height: 1.02; letter-spacing: -.01em; margin: 0 0 18px; text-wrap: balance; max-width: 16ch; }
+  header .lede { font-size: 19px; line-height: 1.45; max-width: 60ch; margin: 0; }
+  .keyfacts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin-top: 28px; padding: 0; list-style: none; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .keyfacts b { color: var(--ink); font-weight: 500; }
+
+  .layout { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 48px; }
+  nav.toc { position: sticky; top: 24px; align-self: start; padding-top: 40px; font-size: 13.5px; }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  nav.toc a { text-decoration: none; color: var(--muted); }
+  nav.toc a:hover { color: var(--ink); }
+  nav.toc .toc-label { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+  main { min-width: 0; }
+  @media (max-width: 820px) {
+    .layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    nav.toc { position: static; padding-top: 28px; }
+    nav.toc ol { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+  }
+
+  section { padding-top: 48px; }
+  section + section { border-top: 1px solid var(--line); margin-top: 48px; }
+  h2 { font-family: var(--display); font-weight: 600; font-size: 30px; line-height: 1.1; margin: 0 0 8px; text-wrap: balance; }
+  .kicker { color: var(--muted); margin: 0 0 22px; max-width: 62ch; }
+  h3 { font-family: var(--display); font-weight: 600; font-size: 20px; margin: 32px 0 10px; }
+  p, li { max-width: 66ch; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  li::marker { color: var(--muted); }
+  code { font-family: var(--mono); font-size: .92em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre { font-family: var(--mono); font-size: 13px; line-height: 1.5; background: var(--code-bg); border: 1px solid var(--line); padding: 16px 18px; margin: 12px 0 20px; overflow-x: auto; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre .c { color: var(--muted); }
+  pre .k { color: var(--engine); font-weight: 500; }
+  pre .l { color: var(--liquid); }
+  pre .p { color: var(--private); }
+  .tag-liquid { color: var(--liquid); }
+  .tag-private { color: var(--private); }
+
+  .principles { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px 32px; margin-top: 8px; }
+  .principles div p { margin: 0; font-size: 15px; color: var(--muted); max-width: none; }
+  .principles h3 { margin: 0 0 6px; font-size: 18px; }
+
+  figure { margin: 20px 0 8px; }
+  figure svg { display: block; width: 100%; max-width: 660px; height: auto; }
+  figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; max-width: 66ch; }
+  .sv-text { font-family: var(--body); font-size: 14px; fill: var(--ink); }
+  .sv-mono { font-family: var(--mono); font-size: 12px; fill: var(--muted); }
+  .sv-liquid { fill: var(--liquid-soft); stroke: var(--liquid); }
+  .sv-private { fill: var(--private-soft); stroke: var(--private); }
+  .sv-line { fill: none; stroke: var(--line-strong); stroke-width: 1.5; }
+  .sv-fx { fill: none; stroke: var(--engine); stroke-width: 1.5; stroke-dasharray: 5 4; }
+  .sv-arrow { fill: var(--line-strong); }
+
+  .classes { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 16px; margin: 20px 0 12px; }
+  .cls { background: var(--surface); border: 1px solid var(--line-strong); font-size: 13px; display: flex; flex-direction: column; }
+  .cls header { padding: 8px 12px; font-family: var(--mono); font-weight: 500; font-size: 13px; border-bottom: 1px solid var(--line-strong); display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .cls header small { font-family: var(--body); font-weight: 400; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; white-space: nowrap; }
+  .cls.liquid header { background: var(--liquid-soft); }
+  .cls.private header { background: var(--private-soft); }
+  .cls.engine header { background: var(--engine-soft); }
+  .cls .fields, .cls .methods { padding: 8px 12px; font-family: var(--mono); font-size: 12.5px; line-height: 1.5; }
+  .cls .fields { border-bottom: 1px solid var(--line); }
+  .cls .role { padding: 8px 12px; color: var(--muted); font-size: 13px; border-top: 1px solid var(--line); margin-top: auto; }
+  .cls .m { color: var(--muted); }
+  .stage { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 28px 0 -8px; }
+
+  .tablewrap { overflow-x: auto; margin: 12px 0 20px; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { padding: 8px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+  th { font-family: var(--mono); font-weight: 500; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); background: var(--ground); }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td code { white-space: nowrap; }
+  tr.rule-liquid td:first-child { box-shadow: inset 3px 0 0 var(--liquid); }
+  tr.rule-private td:first-child { box-shadow: inset 3px 0 0 var(--private); }
+  tr.rule-engine td:first-child { box-shadow: inset 3px 0 0 var(--engine); }
+  tr.total td { font-weight: 500; border-top: 1px solid var(--line-strong); }
+  .neg { color: var(--bad); }
+
+  .inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 16px 0 8px; }
+  .inputs article { background: var(--surface); border: 1px solid var(--line-strong); }
+  .inputs h3 { margin: 0; padding: 10px 14px; font-size: 18px; border-bottom: 1px solid var(--line-strong); }
+  .inputs.private-first article:first-child h3 { background: var(--private-soft); }
+  .inputs.private-first article:last-child h3 { background: var(--liquid-soft); }
+  .inputs dl { margin: 0; padding: 6px 14px 10px; display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 14px; font-size: 13.5px; }
+  .inputs dt { font-family: var(--mono); font-size: 12.5px; }
+  .inputs dd { margin: 0; color: var(--muted); }
+
+  .steps { list-style: none; padding: 0; margin: 16px 0 8px; counter-reset: step; display: grid; }
+  .steps li { counter-increment: step; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px solid var(--line); max-width: none; }
+  .steps li:last-child { border-bottom: 1px solid var(--line); }
+  .steps li::before { content: counter(step); font-family: var(--display); font-weight: 600; font-size: 22px; line-height: 1; color: var(--muted); }
+  .steps .what { font-weight: 500; }
+  .steps .how { font-family: var(--mono); font-size: 12.5px; color: var(--muted); margin-top: 4px; overflow-wrap: anywhere; }
+  .steps .why { font-size: 14px; color: var(--muted); margin-top: 4px; max-width: 66ch; }
+
+  .rule { border-left: 3px solid var(--engine); padding: 4px 16px; margin: 16px 0 20px; }
+  .rule p { margin: 0 0 6px; }
+  .rule p:last-child { margin: 0; }
+  .rule .t { font-family: var(--mono); font-size: 12px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+  .footnote { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 20px; margin-top: 48px; max-width: 66ch; }
+</style>
+
+<div class="page">
+<header class="top">
+  <p class="eyebrow">Design note · private_markets · revised 17 September 2026</p>
+  <h1>Private Markets Simulator Design</h1>
+  <p class="lede">A from-scratch object design for the job the original <code>generate_cash_flows_liquid_private</code> did in one function &mdash; now built around the data the system actually receives: a dated liquid index in the portfolio's base currency, a list of specific future funds with closing dates and unit histories in US dollars, annual commitment rates by fund type, and the exchange rates that join the two.</p>
+  <ul class="keyfacts">
+    <li><b>2</b> input objects: <b>Fund</b> and <b>Portfolio</b></li>
+    <li><b>1</b> loop, in <code>Simulator.run()</code></li>
+    <li><b>1</b> currency boundary, crossed in <b>one</b> place</li>
+    <li>dates converted to periods <b>once</b>, by a <code>Timeline</code></li>
+  </ul>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <p class="toc-label">Contents</p>
+  <ol>
+    <li><a href="#job">The job</a></li>
+    <li><a href="#inputs">Inputs and who holds them</a></li>
+    <li><a href="#principles">Principles</a></li>
+    <li><a href="#objects">The objects</a></li>
+    <li><a href="#dates">Dates become periods</a></li>
+    <li><a href="#currency">Currency</a></li>
+    <li><a href="#loop">The period loop</a></li>
+    <li><a href="#example">Worked example</a></li>
+    <li><a href="#code">Code skeleton</a></li>
+    <li><a href="#mapping">From the original function</a></li>
+    <li><a href="#scope">Scope and extension points</a></li>
+    <li><a href="#build">Modules and tests</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="job">
+  <h2>The job</h2>
+  <p class="kicker">Two pots of money in two currencies, one of which feeds the other.</p>
+  <p>An investor holds a <span class="tag-liquid"><b>liquid portfolio</b></span> in a base currency &mdash; sterling, euros, dollars &mdash; whose value is given as a total-return level on a set of dates. They have a pipeline of <span class="tag-private"><b>private funds</b></span>, each with a type, a closing date, and a history of what one dollar committed to it called, distributed and was worth over time. On each fund's closing the investor commits a slice of the liquid pot, sized by that year's rate for that fund type. From then on the fund's unit history, scaled by the dollars committed and translated at the exchange rate of the day, drives cash out of the liquid pot (calls) and back in (distributions), and gives the private NAV in base currency.</p>
+  <p>The simulator projects the liquid balance, the private NAV, and every flow between the pots on the liquid index's own dates, and stops if the pot ever cannot meet a call. The original function had the essential idea &mdash; a unit profile scaled by a commitment &mdash; but ran on annual array positions, in one currency, with all the bookkeeping in three nested loops. The design below keeps the idea and gives each part of the bookkeeping a home.</p>
+
+  <figure>
+    <svg viewBox="0 0 660 250" role="img" aria-label="Cash flows between the liquid portfolio in base currency and private funds in US dollars, crossing an exchange-rate boundary">
+      <defs>
+        <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+          <path d="M0,0 L10,5 L0,10 z" class="sv-arrow"></path>
+        </marker>
+      </defs>
+      <rect x="30" y="66" width="220" height="110" rx="2" class="sv-liquid" stroke-width="1.5"></rect>
+      <text x="140" y="108" text-anchor="middle" class="sv-text" font-weight="500">Liquid portfolio</text>
+      <text x="140" y="130" text-anchor="middle" class="sv-mono">base currency · level[t] / level[t−1]</text>
+      <rect x="410" y="66" width="220" height="110" rx="2" class="sv-private" stroke-width="1.5"></rect>
+      <text x="520" y="108" text-anchor="middle" class="sv-text" font-weight="500">Private funds</text>
+      <text x="520" y="130" text-anchor="middle" class="sv-mono">USD · Σ commitment × unit[t]</text>
+      <path d="M330,40 L330,205" class="sv-fx"></path>
+      <text x="330" y="28" text-anchor="middle" class="sv-mono">× fx[t]  (base per 1 USD)</text>
+      <path d="M140,22 L140,64" class="sv-line" marker-end="url(#arr)"></path>
+      <text x="150" y="36" class="sv-mono">market return</text>
+      <path d="M252,98 L408,98" class="sv-line" marker-end="url(#arr)"></path>
+      <text x="290" y="90" text-anchor="middle" class="sv-mono">calls</text>
+      <path d="M408,144 L252,144" class="sv-line" marker-end="url(#arr)"></path>
+      <text x="290" y="164" text-anchor="middle" class="sv-mono">distributions</text>
+      <path d="M140,178 L140,214 L408,214 L408,180" class="sv-line" stroke-dasharray="4 3" marker-end="url(#arr)"></path>
+      <text x="200" y="234" class="sv-mono">commit: rate[year, type] × sizing base ÷ fx[t]</text>
+    </svg>
+    <figcaption>Every period the liquid pot earns its return and receives distributions; funds closing that period are sized from it and their commitments fixed in dollars; then calls are paid. Everything that crosses the dashed line is multiplied or divided by the exchange rate of that observation date. The policy only reads balances; it never moves cash.</figcaption>
+  </figure>
+</section>
+
+<section id="inputs">
+  <h2>Inputs and who holds them</h2>
+  <p class="kicker">Two input objects, split exactly the way the data arrives. Nothing else enters the system.</p>
+  <div class="inputs private-first">
+    <article>
+      <h3>Fund &nbsp;<small class="stage" style="margin:0">one per fund · USD</small></h3>
+      <dl>
+        <dt>name</dt><dd>Unique identifier.</dd>
+        <dt>fund_type</dt><dd>Matches a column of the portfolio's commitment rates (BUYOUT, SECONDARIES, …).</dd>
+        <dt>closing_date</dt><dd>When the commitment is made. Also selects the rate year.</dd>
+        <dt>unit_calls</dt><dd>Dated series, per $1 committed, non-negative.</dd>
+        <dt>unit_distributions</dt><dd>Dated series, per $1 committed, non-negative. Kept separate from calls so gross figures survive.</dd>
+        <dt>unit_nav</dt><dd>Dated NAV marks, per $1 committed. Sparse; may be empty.</dd>
+      </dl>
+    </article>
+    <article>
+      <h3>Portfolio &nbsp;<small class="stage" style="margin:0">one · base currency</small></h3>
+      <dl>
+        <dt>base_currency</dt><dd>The currency of the liquid index and of every report, e.g. "GBP". This setting decides whether conversion happens: "USD" means none; anything else requires <code>usd_rate</code>.</dd>
+        <dt>liquid_levels</dt><dd>Dated total-return levels in base currency. The dates <em>are</em> the simulation grid; the first level <em>is</em> the starting balance.</dd>
+        <dt>commitment_rates</dt><dd>DataFrame, calendar year × fund_type. Unit commitment per 1 of sizing base: 0.10 means commit 10%.</dd>
+        <dt>usd_rate</dt><dd>Dated price of 1 USD in base currency. Required when <code>base_currency</code> is not USD; rejected when it is.</dd>
+      </dl>
+    </article>
+  </div>
+  <p>The commitment dollars are <em>not</em> an input. They are the engine's decision, made at each closing, and they live in the result &mdash; a <code>Fund</code> is never mutated.</p>
+</section>
+
+<section id="principles">
+  <h2>Principles</h2>
+  <p class="kicker">Six rules that decide most of the design.</p>
+  <div class="principles">
+    <div><h3>Inputs mirror ownership</h3><p>What the fund knows lives on <code>Fund</code>; what the portfolio knows lives on <code>Portfolio</code>. No third bag of parameters.</p></div>
+    <div><h3>Dates in, periods inside</h3><p>A <code>Timeline</code> built from the liquid dates converts every dated input to per-period arrays once. The loop then works on integer <code>t</code> and never touches a date.</p></div>
+    <div><h3>Unit data × a dollar commitment</h3><p>Fund behaviour stays per $1 committed. Dollar figures are always <code>commitment_usd × unit[t]</code>. That was the original's own convention.</p></div>
+    <div><h3>One currency boundary</h3><p>Private figures are always USD; the liquid pot and reports are in <code>base_currency</code>. That setting alone decides whether conversion happens. The rate is applied in the loop, at the observation date, and nowhere else.</p></div>
+    <div><h3>Policy is a plug</h3><p>Sizing is one method: given the funds closing now and the sizing base, return base-currency amounts. Carry-forward, weights, pacing targets are all policies.</p></div>
+    <div><h3>One loop, plain objects</h3><p>Only <code>Simulator.run()</code> steps through time. Frozen dataclasses for data, one <code>Protocol</code>, no inheritance. Results are two pandas tables.</p></div>
+  </div>
+</section>
+
+<section id="objects">
+  <h2>The objects</h2>
+  <p class="kicker">Ten small classes in five stages. Colour marks the currency side: <span class="tag-private">USD / fund</span>, <span class="tag-liquid">base currency / portfolio</span>, and the engine that joins them.</p>
+
+  <p class="stage">Input</p>
+  <div class="classes">
+    <article class="cls private">
+      <header>Fund <small>frozen</small></header>
+      <div class="fields">name, fund_type: str<br>closing_date: date<br>unit_calls: Series<br>unit_distributions: Series<br>unit_nav: Series</div>
+      <div class="methods">on(timeline) -&gt; FundPath</div>
+      <div class="role">Fund-held data, per $1 committed, in USD. <code>on()</code> is the only method: it buckets its own dated history onto a timeline.</div>
+    </article>
+    <article class="cls liquid">
+      <header>Portfolio <small>frozen</small></header>
+      <div class="fields">base_currency: str<br>liquid_levels: Series<br>commitment_rates: DataFrame<br>usd_rate: Series | None</div>
+      <div class="methods"><span class="m">(data only)</span></div>
+      <div class="role">Portfolio-held data. Its liquid dates define the grid, its first level is the starting balance, and its <code>base_currency</code> decides whether exchange rates apply.</div>
+    </article>
+  </div>
+
+  <p class="stage">Prepared once, before the loop</p>
+  <div class="classes">
+    <article class="cls engine">
+      <header>Timeline <small>frozen</small></header>
+      <div class="fields">dates: DatetimeIndex</div>
+      <div class="methods">n -&gt; int<br>index_of(date) -&gt; int<br>asof(series) -&gt; ndarray</div>
+      <div class="role">The observation grid. <code>index_of</code> is the first observation on or after a date; <code>asof</code> carries the last known value forward (used for exchange rates).</div>
+    </article>
+    <article class="cls private">
+      <header>FundPath <small>frozen</small></header>
+      <div class="fields">calls: ndarray<br>distributions: ndarray<br>nav: ndarray<br>closing_index: int</div>
+      <div class="methods"><span class="m">(data only)</span></div>
+      <div class="role">A <code>Fund</code> on a <code>Timeline</code>: unit calls and distributions per period, unit NAV at each observation, and the period it closes in.</div>
+    </article>
+  </div>
+
+  <p class="stage">State during the loop</p>
+  <div class="classes">
+    <article class="cls liquid">
+      <header>LiquidAccount</header>
+      <div class="fields">balance: float<br>factors: ndarray</div>
+      <div class="methods">grow(t) -&gt; pnl<br>deposit(amount)<br>withdraw(amount) -&gt; shortfall</div>
+      <div class="role">The cash pot, in base currency. The only mutable balance. <code>withdraw</code> reports what it could not cover instead of going quietly negative.</div>
+    </article>
+    <article class="cls private">
+      <header>Commitment <small>frozen</small></header>
+      <div class="fields">fund: Fund<br>path: FundPath<br>usd: float</div>
+      <div class="methods">calls(t), distributions(t), nav(t)</div>
+      <div class="role">The engine's decision at a closing: a fixed dollar amount. Returns USD figures: <code>usd × path.x[t]</code>.</div>
+    </article>
+    <article class="cls private">
+      <header>PrivateBook</header>
+      <div class="fields">commitments: list[Commitment]</div>
+      <div class="methods">add(commitment)<br>calls(t), distributions(t), nav(t)</div>
+      <div class="role">The book of live commitments. Sums USD figures for a period. Replaces the original's <code>initial_vintages</code> / <code>new_vintages</code> pair.</div>
+    </article>
+  </div>
+
+  <p class="stage">Behaviour and engine</p>
+  <div class="classes">
+    <article class="cls engine">
+      <header>CommitmentPolicy <small>protocol</small></header>
+      <div class="fields">SizingBase(t, liquid, private_nav)<br><span class="m">.total = liquid + private_nav</span></div>
+      <div class="methods">size(cohort, base) -&gt; {fund: base_ccy_amount}</div>
+      <div class="role">Given the funds closing now and a snapshot of balances, decide base-currency commitments. <code>AnnualRatePolicy</code> is the default; it precomputes a rate per fund from <code>commitment_rates</code>.</div>
+    </article>
+    <article class="cls engine">
+      <header>Simulator</header>
+      <div class="fields">portfolio: Portfolio<br>funds: list[Fund]<br>policy: CommitmentPolicy<br>stop_on_shortfall: bool = True</div>
+      <div class="methods">run() -&gt; SimulationResult</div>
+      <div class="role">Builds the timeline, paths and rate arrays at construction; owns the one loop.</div>
+    </article>
+    <article class="cls engine">
+      <header>SimulationResult <small>frozen</small></header>
+      <div class="fields">periods: DataFrame<br>funds: DataFrame<br>commitments: DataFrame<br>shortfall: Shortfall | None</div>
+      <div class="methods">status<br>by_type() -&gt; DataFrame<br>exposures() -&gt; DataFrame</div>
+      <div class="role">Per-period balances in base currency; per-fund rows in both currencies; one row per commitment event with the rate used; and a verdict.</div>
+    </article>
+  </div>
+
+  <h3>Who holds whom</h3>
+  <ul>
+    <li><code>Simulator</code> takes one <code>Portfolio</code>, many <code>Fund</code>s and one <code>CommitmentPolicy</code>. From the portfolio it derives a <code>Timeline</code>, return factors and an exchange-rate array; from each fund a <code>FundPath</code>.</li>
+    <li><code>PrivateBook</code> owns many <code>Commitment</code>s; each references its <code>Fund</code> and <code>FundPath</code>. Paths are immutable, prepared once, and shared.</li>
+    <li>The policy sees a <code>SizingBase</code> snapshot and the closing cohort, never the portfolios. Sizing is pure and testable without a simulator.</li>
+    <li>Nothing references the <code>Simulator</code>. The result is a value; the simulator can be discarded after <code>run()</code>.</li>
+  </ul>
+</section>
+
+<section id="dates">
+  <h2>Dates become periods</h2>
+  <p class="kicker">Three conversions, all done by <code>Timeline</code> and <code>Fund.on()</code> before the loop starts.</p>
+
+  <div class="rule"><p class="t">Closings</p><p><code>closing_index = timeline.index_of(closing_date)</code> &mdash; the first observation on or after the closing. A fund closing on 15 February is committed at the 31 March observation. Its rate year is still the calendar year of the actual closing date. A closing after the last observation gets <code>closing_index = n</code> and is never committed; it is reported, not dropped.</p></div>
+
+  <div class="rule"><p class="t">Flows</p><p>Unit calls and distributions dated in <code>(dates[t−1], dates[t]]</code> are summed into period <code>t</code>. The first period takes everything on or before the first date. Calls and distributions are bucketed separately, so a same-day call and distribution both survive.</p></div>
+
+  <div class="rule"><p class="t">Unit NAV</p><p>Walk the fund's events in date order with a running unit NAV starting at 0: each call adds, each distribution subtracts, and a NAV mark replaces the running value (marks are assumed to include that day's flows). <code>path.nav[t]</code> is the running value after the last event on or before <code>dates[t]</code>. A mark between observations therefore counts; a missing mark just leaves the cash-adjusted estimate in place; a negative running value is a data error raised at preparation, naming the fund and date.</p></div>
+
+  <div class="rule"><p class="t">Exchange rates</p><p><code>fx = timeline.asof(portfolio.usd_rate)</code>: the last rate on or before each observation. The rate series may be daily or sparse; it must have a value on or before the first observation.</p></div>
+</section>
+
+<section id="currency">
+  <h2>Currency</h2>
+  <p class="kicker">Private data is always in US dollars; the liquid pot and the reports are in base currency. The boundary is crossed in exactly four lines of the loop.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Quantity</th><th>Native currency</th><th>Conversion</th></tr></thead>
+    <tbody>
+      <tr class="rule-liquid"><td>Sizing base, commitment decision</td><td>base</td><td>Policy works in base currency: <code>rate × liquid balance</code>.</td></tr>
+      <tr class="rule-private"><td>Commitment amount</td><td>USD, fixed at closing</td><td><code>commitment_usd = commitment_base ÷ fx[closing_index]</code>. The dollar figure never changes afterwards; its base-currency value floats.</td></tr>
+      <tr class="rule-private"><td>Calls, distributions in a period</td><td>USD</td><td>Multiplied by <code>fx[t]</code> on the observation they settle on, then applied to the liquid pot.</td></tr>
+      <tr class="rule-private"><td>Private NAV at an observation</td><td>USD</td><td><code>nav_usd(t) × fx[t]</code>. A move in the rate between observations shows up as private valuation P&amp;L.</td></tr>
+      <tr class="rule-engine"><td>FX translation</td><td>base</td><td>Reported separately: <code>nav_usd(t−1) × (fx[t] − fx[t−1])</code> &mdash; the part of private P&amp;L that is purely the currency moving.</td></tr>
+    </tbody>
+  </table></div>
+  <p>Two facts are fixed in the system rather than supplied per input: private-markets flows and NAV are always in US dollars (a module constant, <code>PRIVATE_CURRENCY = "USD"</code>), and the liquid index is always in <code>Portfolio.base_currency</code>. That one setting therefore tells the system whether to convert at all. When it is "USD" the rate array is all ones and a supplied <code>usd_rate</code> is rejected as contradictory; when it is anything else <code>usd_rate</code> is required and checked at construction, before any period runs. The rate is quoted as base currency per 1 USD, so USD figures are multiplied to reach base and base figures divided to reach USD. Intra-period flows are converted at the observation-date rate, consistent with all flows settling at the observation.</p>
+</section>
+
+<section id="loop">
+  <h2>The period loop</h2>
+  <p class="kicker">The original's cash ordering, kept. Numbered because the order is the contract.</p>
+  <ol class="steps">
+    <li><div><div class="what">Snapshot the opening state</div><div class="how">liquid_open = liquid.balance &nbsp;·&nbsp; nav_usd_open = book.nav(t − 1) &nbsp;·&nbsp; private_open = last period's private_close</div><div class="why">Opening private NAV is last period's closing NAV in base currency, at last period's rate. At <code>t = 0</code> both are zero: there are no pre-existing commitments.</div></div></li>
+    <li><div><div class="what">Apply the liquid return</div><div class="how">pnl = liquid.grow(t) &nbsp;·&nbsp; balance × level[t] / level[t − 1]</div><div class="why">The factor at <code>t = 0</code> is 1. Returns are ratios of consecutive levels: no annualising, no assumed periods per year.</div></div></li>
+    <li><div><div class="what">Bank distributions from existing commitments</div><div class="how">distributions = book.distributions(t) × fx[t] &nbsp;·&nbsp; liquid.deposit(distributions)</div><div class="why">Only commitments made before this observation exist yet, so this can never include a fund being sized in step 4.</div></div></li>
+    <li><div><div class="what">Size and fix commitments for the closing cohort</div><div class="how">cohort = funds with closing_index == t &nbsp;·&nbsp; base = SizingBase(t, liquid.balance, nav_usd_open × fx[t]) &nbsp;·&nbsp; for fund, amount in policy.size(cohort, base): book.add(Commitment(fund, path, amount ÷ fx[t]))</div><div class="why">All funds closing at this observation are sized from the same base in one call. A commitment creates a book entry; it moves no cash.</div></div></li>
+    <li><div><div class="what">Bank the new cohort's distributions, then pay this period's calls</div><div class="how">liquid.deposit(Σ new.distributions(t) × fx[t]) &nbsp;·&nbsp; calls = book.calls(t) × fx[t] &nbsp;·&nbsp; missing = liquid.withdraw(calls)</div><div class="why">A fund that distributes inside its own closing period could not be in step 3 (it did not exist yet); its distributions are banked here, after sizing, so they can help pay calls without inflating the base they were sized from. Calls include the cohort's, as in the original. Aggregated before withdrawal, so fund order cannot change the outcome.</div></div></li>
+    <li><div><div class="what">Value, record, and stop if the pot ran dry</div><div class="how">private_close = book.nav(t) × fx[t] &nbsp;·&nbsp; append period, fund and commitment rows &nbsp;·&nbsp; if missing &gt; 0 and stop_on_shortfall: break</div><div class="why">The failed period is recorded with its negative balance visible and named in <code>result.shortfall</code>. With <code>stop_on_shortfall=False</code> the balance goes negative and the run continues &mdash; the "how much would I have to borrow" view.</div></div></li>
+  </ol>
+  <p>Accounting identities, asserted by the tests on every completed period:</p>
+<pre><code>liquid_close = liquid_open + liquid_pnl + distributions − calls
+private_valuation_pnl = private_close − private_open − calls + distributions
+total_close − total_open = liquid_pnl + private_valuation_pnl</code></pre>
+</section>
+
+<section id="example">
+  <h2>Worked example</h2>
+  <p class="kicker">Sterling portfolio, two dollar funds, a 10% rate, and the dollar weakening between the two closings. Verified against a prototype of this design.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Input</th><th>Value</th></tr></thead>
+    <tbody>
+      <tr class="rule-liquid"><td>liquid_levels (GBP)</td><td>1,000,000 on 1 Jan · 1,100,000 on 31 Mar · 1,210,000 on 30 Jun 2027</td></tr>
+      <tr class="rule-liquid"><td>usd_rate (GBP per USD)</td><td>0.80 on 1 Jan · 0.80 on 31 Mar · 0.75 on 30 Jun</td></tr>
+      <tr class="rule-liquid"><td>commitment_rates</td><td>BUYOUT, 2027: 0.10 &mdash; policy weights A 0.6, B 0.4</td></tr>
+      <tr class="rule-private"><td>Fund A · BUYOUT</td><td>closes 15 Feb · unit call 0.25 on 1 Mar · unit distribution 0.05 on 1 Jun · no marks</td></tr>
+      <tr class="rule-private"><td>Fund B · BUYOUT</td><td>closes 10 May · unit call 0.25 on 20 May · no marks</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><code>result.periods</code> &mdash; base currency (GBP)</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>row</th><th class="num">1 Jan</th><th class="num">31 Mar</th><th class="num">30 Jun</th></tr></thead>
+    <tbody>
+      <tr class="rule-liquid"><td>liquid_open</td><td class="num">1,000,000.00</td><td class="num">1,000,000.00</td><td class="num">1,083,500.00</td></tr>
+      <tr class="rule-private"><td>private_open</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">16,500.00</td></tr>
+      <tr class="rule-engine"><td>usd_rate</td><td class="num">0.80</td><td class="num">0.80</td><td class="num">0.75</td></tr>
+      <tr class="rule-liquid"><td>liquid_pnl</td><td class="num">0.00</td><td class="num">100,000.00</td><td class="num">108,350.00</td></tr>
+      <tr class="rule-private"><td>distributions</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">3,093.75</td></tr>
+      <tr class="rule-liquid"><td>sizing_base</td><td class="num">1,000,000.00</td><td class="num">1,100,000.00</td><td class="num">1,194,943.75</td></tr>
+      <tr class="rule-private"><td>commitments (base)</td><td class="num">0.00</td><td class="num">66,000.00</td><td class="num">47,797.75</td></tr>
+      <tr class="rule-private"><td>calls</td><td class="num">0.00</td><td class="num">16,500.00</td><td class="num">11,949.44</td></tr>
+      <tr class="rule-liquid"><td>liquid_close</td><td class="num">1,000,000.00</td><td class="num">1,083,500.00</td><td class="num">1,182,994.31</td></tr>
+      <tr class="rule-private"><td>private_close</td><td class="num">0.00</td><td class="num">16,500.00</td><td class="num">24,324.44</td></tr>
+      <tr class="total"><td>total_close</td><td class="num">1,000,000.00</td><td class="num">1,100,000.00</td><td class="num">1,207,318.75</td></tr>
+      <tr class="rule-private"><td>private_valuation_pnl</td><td class="num">0.00</td><td class="num">0.00</td><td class="num neg">−1,031.25</td></tr>
+      <tr class="rule-engine"><td>fx_translation</td><td class="num">0.00</td><td class="num">0.00</td><td class="num neg">−1,031.25</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><code>result.commitments</code></h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>date</th><th>fund</th><th>closing</th><th class="num">rate</th><th class="num">sizing base</th><th class="num">commitment GBP</th><th class="num">fx</th><th class="num">commitment USD</th></tr></thead>
+    <tbody>
+      <tr><td>31 Mar</td><td>A</td><td>15 Feb</td><td class="num">0.06</td><td class="num">1,100,000.00</td><td class="num">66,000.00</td><td class="num">0.80</td><td class="num">82,500.00</td></tr>
+      <tr><td>30 Jun</td><td>B</td><td>10 May</td><td class="num">0.04</td><td class="num">1,194,943.75</td><td class="num">47,797.75</td><td class="num">0.75</td><td class="num">63,730.33</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><code>result.funds</code></h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>date</th><th>fund</th><th class="num">commit USD</th><th class="num">calls USD</th><th class="num">dist USD</th><th class="num">nav USD</th><th class="num">calls GBP</th><th class="num">dist GBP</th><th class="num">nav GBP</th></tr></thead>
+    <tbody>
+      <tr><td>31 Mar</td><td>A</td><td class="num">82,500.00</td><td class="num">20,625.00</td><td class="num">0.00</td><td class="num">20,625.00</td><td class="num">16,500.00</td><td class="num">0.00</td><td class="num">16,500.00</td></tr>
+      <tr><td>30 Jun</td><td>A</td><td class="num">82,500.00</td><td class="num">0.00</td><td class="num">4,125.00</td><td class="num">16,500.00</td><td class="num">0.00</td><td class="num">3,093.75</td><td class="num">12,375.00</td></tr>
+      <tr><td>30 Jun</td><td>B</td><td class="num">63,730.33</td><td class="num">15,932.58</td><td class="num">0.00</td><td class="num">15,932.58</td><td class="num">11,949.44</td><td class="num">0.00</td><td class="num">11,949.44</td></tr>
+    </tbody>
+  </table></div>
+  <p>Fund A's dollar NAV fell from 20,625 to 16,500 only because it distributed 4,125 &mdash; no valuation change. But in sterling its NAV fell by more than the distribution, because the pound strengthened: that extra −1,031.25 is the <code>fx_translation</code> row, and it is the entire private valuation P&amp;L this period. Both identities hold on every row.</p>
+</section>
+
+<section id="code">
+  <h2>Code skeleton</h2>
+  <p class="kicker">Signatures, the date-to-period sweep, and the loop in full; validation elided. This is the prototype the example was run on.</p>
+<pre><code><span class="c"># inputs.py</span>
+<span class="k">@dataclass</span>(frozen=True)
+<span class="k">class</span> <span class="p">Fund</span>:
+    name: str; fund_type: str; closing_date: date
+    unit_calls: pd.Series; unit_distributions: pd.Series; unit_nav: pd.Series   <span class="c"># per $1, USD, dated</span>
+
+    <span class="k">def</span> on(self, timeline: Timeline) -&gt; FundPath:
+        events = merge_by_day(self.unit_calls, self.unit_distributions, self.unit_nav)   <span class="c"># {day: (call, dist, mark)}</span>
+        calls, dists, nav = (np.zeros(timeline.n) <span class="k">for</span> _ <span class="k">in</span> range(3))
+        j, running = 0, 0.0
+        <span class="k">for</span> t, obs <span class="k">in</span> enumerate(timeline.dates):
+            <span class="k">while</span> j &lt; len(events) <span class="k">and</span> events.day[j] &lt;= obs:
+                c, d, mark = events[j]
+                running = mark <span class="k">if</span> mark <span class="k">is not</span> None <span class="k">else</span> running + c - d
+                <span class="k">if</span> running &lt; 0: <span class="k">raise</span> ValueError(f"{self.name}: negative unit NAV on {events.day[j]}")
+                calls[t] += c; dists[t] += d; j += 1
+            nav[t] = running
+        <span class="k">return</span> FundPath(calls, dists, nav, timeline.index_of(self.closing_date))
+
+
+PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV are always in dollars</span>
+
+<span class="k">@dataclass</span>(frozen=True)
+<span class="k">class</span> <span class="l">Portfolio</span>:
+    base_currency: str                   <span class="c"># currency of the liquid index and of all reports</span>
+    liquid_levels: pd.Series             <span class="c"># dated total-return levels, base currency; dates = the grid</span>
+    commitment_rates: pd.DataFrame       <span class="c"># index = calendar year, columns = fund_type</span>
+    usd_rate: pd.Series | None = None    <span class="c"># price of 1 USD in base currency, dated; required iff base != USD</span>
+
+
+<span class="c"># timeline.py</span>
+<span class="k">@dataclass</span>(frozen=True)
+<span class="k">class</span> Timeline:
+    dates: pd.DatetimeIndex
+    <span class="k">def</span> index_of(self, d) -&gt; int: <span class="k">return</span> int(self.dates.searchsorted(pd.Timestamp(d), side="left"))
+    <span class="k">def</span> asof(self, s: pd.Series) -&gt; np.ndarray: <span class="k">return</span> s.sort_index().reindex(self.dates, method="ffill").to_numpy()
+
+
+<span class="c"># state.py</span>
+<span class="k">@dataclass</span>
+<span class="k">class</span> <span class="l">LiquidAccount</span>:
+    balance: float; factors: np.ndarray
+    <span class="k">def</span> grow(self, t):     pnl = self.balance * (self.factors[t] - 1); self.balance += pnl; <span class="k">return</span> pnl
+    <span class="k">def</span> deposit(self, x):  self.balance += x
+    <span class="k">def</span> withdraw(self, x): short = max(0.0, x - self.balance); self.balance -= x; <span class="k">return</span> short
+
+<span class="k">@dataclass</span>(frozen=True)
+<span class="k">class</span> <span class="p">Commitment</span>:
+    fund: Fund; path: FundPath; usd: float
+    <span class="k">def</span> calls(self, t):         <span class="k">return</span> self.usd * self.path.calls[t]
+    <span class="k">def</span> distributions(self, t): <span class="k">return</span> self.usd * self.path.distributions[t]
+    <span class="k">def</span> nav(self, t):           <span class="k">return</span> self.usd * self.path.nav[t] <span class="k">if</span> t &gt;= 0 <span class="k">else</span> 0.0
+
+<span class="k">@dataclass</span>
+<span class="k">class</span> <span class="p">PrivateBook</span>:
+    commitments: list[Commitment] = field(default_factory=list)
+    <span class="k">def</span> add(self, c): self.commitments.append(c)
+    <span class="k">def</span> calls(self, t):         <span class="k">return</span> sum(c.calls(t) <span class="k">for</span> c <span class="k">in</span> self.commitments)
+    <span class="k">def</span> distributions(self, t): <span class="k">return</span> sum(c.distributions(t) <span class="k">for</span> c <span class="k">in</span> self.commitments)
+    <span class="k">def</span> nav(self, t):           <span class="k">return</span> sum(c.nav(t) <span class="k">for</span> c <span class="k">in</span> self.commitments)
+
+
+<span class="c"># policy.py</span>
+<span class="k">class</span> CommitmentPolicy(Protocol):
+    <span class="k">def</span> size(self, cohort: Sequence[Fund], base: SizingBase) -&gt; Mapping[str, float]: ...
+
+<span class="k">class</span> AnnualRatePolicy:
+    <span class="c">"""rate[closing year, type], split across that year's funds of that type by weight."""</span>
+    <span class="k">def</span> __init__(self, rates, funds, weights=None, carry_forward=False):
+        self.rate_for = {}                              <span class="c"># fund name -&gt; effective rate, precomputed</span>
+        <span class="k">for</span> kind <span class="k">in</span> rates.columns:
+            carried = 0.0
+            <span class="k">for</span> year <span class="k">in</span> rates.index:
+                pool = rates.loc[year, kind] + carried
+                cohort = [f <span class="k">for</span> f <span class="k">in</span> funds <span class="k">if</span> (f.closing_date.year, f.fund_type) == (year, kind)]
+                <span class="k">for</span> f <span class="k">in</span> cohort: self.rate_for[f.name] = pool * (weights or {}).get(f.name, 1 / len(cohort))
+                carried = 0.0 <span class="k">if</span> cohort <span class="k">or not</span> carry_forward <span class="k">else</span> pool
+
+    <span class="k">def</span> size(self, cohort, base): <span class="k">return</span> {f.name: self.rate_for[f.name] * base.liquid <span class="k">for</span> f <span class="k">in</span> cohort}
+
+
+<span class="c"># simulator.py</span>
+<span class="k">class</span> Simulator:
+    <span class="k">def</span> __init__(self, portfolio, funds, policy=None, stop_on_shortfall=True):
+        self.timeline = Timeline(portfolio.liquid_levels.index)
+        self.paths = {f.name: f.on(self.timeline) <span class="k">for</span> f <span class="k">in</span> funds}
+        levels = portfolio.liquid_levels.to_numpy()
+        self.factors = np.r_[1.0, levels[1:] / levels[:-1]]
+        <span class="k">if</span> portfolio.base_currency == PRIVATE_CURRENCY:
+            <span class="k">if</span> portfolio.usd_rate <span class="k">is not</span> None: <span class="k">raise</span> ValueError("usd_rate must be omitted when base_currency is USD")
+            self.fx = np.ones(self.timeline.n)
+        <span class="k">else</span>:
+            <span class="k">if</span> portfolio.usd_rate <span class="k">is</span> None: <span class="k">raise</span> ValueError(f"usd_rate is required: base_currency {portfolio.base_currency!r} is not USD")
+            self.fx = self.timeline.asof(portfolio.usd_rate)
+        self.policy = policy <span class="k">or</span> AnnualRatePolicy(portfolio.commitment_rates, funds)
+        ...
+
+    <span class="k">def</span> run(self) -&gt; SimulationResult:
+        liquid = LiquidAccount(float(self.portfolio.liquid_levels.iloc[0]), self.factors)
+        book, fx, private_open, shortfall = PrivateBook(), self.fx, 0.0, None
+        <span class="k">for</span> t, obs <span class="k">in</span> enumerate(self.timeline.dates):
+            liquid_open, nav_usd_open = liquid.balance, book.nav(t - 1)                    <span class="c"># 1</span>
+            pnl = liquid.grow(t)                                                           <span class="c"># 2</span>
+            distributions = book.distributions(t) * fx[t]                                  <span class="c"># 3</span>
+            liquid.deposit(distributions)
+            cohort = [f <span class="k">for</span> f <span class="k">in</span> self.funds <span class="k">if</span> self.paths[f.name].closing_index == t]     <span class="c"># 4</span>
+            base = SizingBase(t, liquid.balance, nav_usd_open * fx[t])
+            <span class="k">for</span> name, amount <span class="k">in</span> self.policy.size(cohort, base).items():
+                book.add(Commitment(self.fund[name], self.paths[name], amount / fx[t]))
+            new = [c <span class="k">for</span> c <span class="k">in</span> book.commitments <span class="k">if</span> c.path.closing_index == t]               <span class="c"># 5</span>
+            distributions += sum(c.distributions(t) <span class="k">for</span> c <span class="k">in</span> new) * fx[t]
+            liquid.deposit(sum(c.distributions(t) <span class="k">for</span> c <span class="k">in</span> new) * fx[t])
+            calls = book.calls(t) * fx[t]
+            missing = liquid.withdraw(calls)
+            private_close = book.nav(t) * fx[t]                                            <span class="c"># 6</span>
+            fx_translation = nav_usd_open * (fx[t] - fx[t - 1]) <span class="k">if</span> t <span class="k">else</span> 0.0
+            self.record(obs, liquid_open, private_open, pnl, distributions, base, calls,
+                        liquid.balance, private_close, fx_translation, book)
+            private_open = private_close
+            <span class="k">if</span> missing &gt; 0:
+                shortfall = Shortfall(t, obs, calls, calls - missing)
+                <span class="k">if</span> self.stop_on_shortfall: <span class="k">break</span>
+        <span class="k">return</span> self.result(shortfall)</code></pre>
+  <p>If performance ever matters, <code>PrivateBook</code> is the one place to vectorise: stack the paths into <code>(n, funds)</code> arrays and keep <code>usd</code> as a vector. The interface does not change.</p>
+</section>
+
+<section id="mapping">
+  <h2>From the original function</h2>
+  <p class="kicker">Where each parameter and variable of <code>generate_cash_flows_liquid_private</code> lands.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Original</th><th>Becomes</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr><td><code>current_total_liquid_assets</code></td><td><code>Portfolio.liquid_levels.iloc[0]</code></td><td>The first level is the starting balance; no separate parameter.</td></tr>
+      <tr><td><code>liquid_portfolio_yearly_returns</code>, <code>num_years</code></td><td><code>Portfolio.liquid_levels</code> → <code>Timeline</code> + factors</td><td>Dated levels replace annual returns. Their dates are the grid; ratios are the returns.</td></tr>
+      <tr><td><code>initial_vintages</code> (dict class → [Vintage])</td><td>&mdash;</td><td>Not an input in this system: there are no pre-existing commitments at inception. (If ever needed: a <code>Fund</code> closing before the first date, with a supplied dollar commitment.)</td></tr>
+      <tr><td><code>self._schema</code> / <code>Vintage(type, schema, commitment)</code></td><td><code>Fund</code> (unit history) + <code>Commitment</code> (dollars)</td><td>Same split, made explicit: the fund holds the unit data, the engine holds the dollars.</td></tr>
+      <tr><td><code>annual_commitments[class, year]</code></td><td><code>Portfolio.commitment_rates[year, type]</code> via <code>AnnualRatePolicy</code></td><td>Same table, indexed by calendar year and type string. Applied at each fund's closing, not every year.</td></tr>
+      <tr><td><code>ann_commitments_in_dollars</code>, <code>use_total_mv</code></td><td>Other <code>CommitmentPolicy</code> implementations</td><td>Not needed for the stated inputs; each would be a ten-line class, not a flag.</td></tr>
+      <tr><td><code>inflation_paths</code>, <code>wealth_flows</code></td><td>&mdash;</td><td>Not among the inputs. External flows would be one <code>deposit</code> in step 3 if ever wanted.</td></tr>
+      <tr><td>(no currency handling)</td><td><code>Portfolio.base_currency</code> + <code>usd_rate</code> → <code>fx[t]</code></td><td>New. The base-currency setting decides whether conversion applies; four multiplications in the loop and an <code>fx_translation</code> column.</td></tr>
+      <tr><td><code>total_MV</code>, <code>pe_alloc</code></td><td><code>periods.total_open</code>, <code>periods.private_open</code></td><td>Columns in base currency.</td></tr>
+      <tr><td><code>distributions[i, year]</code>, <code>capital_calls[i, year]</code></td><td><code>result.by_type()</code></td><td>Groupby of the per-fund table.</td></tr>
+      <tr><td><code>vintage_exposures[start, year, class]</code></td><td><code>result.exposures()</code></td><td>Pivot of <code>funds.nav_base</code> by <code>(closing year, type) × date</code>.</td></tr>
+      <tr><td><code>PrivateAssetProjections(…)</code></td><td><code>SimulationResult</code></td><td>Plus <code>commitments</code> (one row per closing with the rate and fx used) and a <code>shortfall</code>.</td></tr>
+    </tbody>
+  </table></div>
+
+  <h3>What the original got wrong, and where the design removes it</h3>
+  <ul>
+    <li><b>Hard-coded 20-year flows array</b> &mdash; gone; everything is sized from the liquid dates.</li>
+    <li><b>Exposure bucket overwritten</b> (<code>vintage_exposures[0, …]</code>) &mdash; gone; exposures are a pivot of recorded rows, never a mutable array.</li>
+    <li><b>Silent negative liquidity</b> &mdash; <code>LiquidAccount.withdraw</code> reports the shortfall; the run stops by default.</li>
+    <li><b>Zero-commitment placeholder vintages</b> every year &mdash; gone; a <code>Commitment</code> exists only once a fund closes.</li>
+    <li><b>Quadratic rescans</b> of every vintage every year &mdash; each path is prepared once; the loop indexes arrays.</li>
+    <li><b>New vintages' same-period distributions lost</b> &mdash; the original read a placeholder vintage's distributions before it had a commitment, so they were always zero. Here the cohort's closing-period distributions are banked in step 5, after sizing and before calls: kept, and kept out of the sizing base.</li>
+  </ul>
+</section>
+
+<section id="scope">
+  <h2>Scope and extension points</h2>
+  <p class="kicker">What the core leaves out, and the seam each one plugs into.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Need</th><th>Seam</th><th>Shape</th></tr></thead>
+    <tbody>
+      <tr><td>Carry unspent rates forward to the next year with a fund of that type</td><td><code>AnnualRatePolicy(carry_forward=True)</code></td><td>Already in the skeleton: missed years pool into the next closing year, split by weight. The engine is unaware. Verified: 10% + 8% + 12% with 60/40 weights gives 180,000 and 144,000 on the plan's example.</td></tr>
+      <tr><td>Two funds of one type in one year</td><td><code>AnnualRatePolicy(weights={…})</code></td><td>Explicit weights; default is an equal split.</td></tr>
+      <tr><td>Pacing to a target private allocation</td><td>A policy: <code>TargetAllocation(target=0.25)</code></td><td>Sizes from the gap between <code>base.private_nav / base.total</code> and the target.</td></tr>
+      <tr><td>Funds closing after the last observation</td><td><code>closing_index == n</code></td><td>Never committed; listed in the result so the pipeline is visible.</td></tr>
+      <tr><td>Monte Carlo over liquid or FX paths</td><td>A loop outside the engine</td><td>One <code>Portfolio</code> per path; funds shared. The engine stays single-path and pure.</td></tr>
+      <tr><td>A fund whose data is not in USD</td><td>Closed by rule</td><td>Private data is always USD (<code>PRIVATE_CURRENCY</code>). Supporting a non-dollar fund would mean a currency on <code>Fund</code> and a rate series per currency; the seam exists but is deliberately closed.</td></tr>
+      <tr><td>Already-netted fund histories</td><td>Input contract</td><td>Gross calls and distributions must be supplied separately; a netted series cannot be decomposed and the design does not try.</td></tr>
+      <tr><td>Fees, taxes, recycling, secondary sales</td><td>Out of scope</td><td>None were in the original. Each would be a new step in the loop, so they should be added deliberately.</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="build">
+  <h2>Modules and tests</h2>
+  <p class="kicker">Five modules, around 350 lines, and the tests that pin the contract.</p>
+<pre><code>private_markets/
+  inputs.py       Fund, Portfolio
+  timeline.py     Timeline, FundPath
+  state.py        LiquidAccount, Commitment, PrivateBook
+  policy.py       SizingBase, CommitmentPolicy, AnnualRatePolicy
+  simulator.py    Simulator, SimulationResult, Shortfall
+tests/
+  test_timeline.py, test_fund_path.py, test_policy.py, test_simulator.py</code></pre>
+  <h3>Tests worth writing first</h3>
+  <ul>
+    <li><b>No funds:</b> <code>liquid_close</code> equals the input levels exactly; private columns are zero; FX irrelevant.</li>
+    <li><b>Worked example:</b> the sterling tables above, to the penny, including <code>fx_translation</code>.</li>
+    <li><b>USD base:</b> the same funds with <code>base_currency="USD"</code> reproduce the single-currency figures (66,000 and 47,806 commitments).</li>
+    <li><b>Currency config:</b> <code>base_currency="GBP"</code> without <code>usd_rate</code> fails at construction; <code>"USD"</code> with a rate series fails too; a sparse rate series is carried forward to every observation.</li>
+    <li><b>Identities:</b> all three hold on every row of every test run &mdash; a shared fixture, not a single test.</li>
+    <li><b>Dates:</b> a closing between observations maps to the next one and keeps its calendar-year rate; a December closing observed in January uses December's rate; a same-day call and distribution both appear.</li>
+    <li><b>Unit NAV:</b> a mark between observations is honoured; a zero mark resets; a missing mark leaves the cash-adjusted value; a negative running value raises at preparation with the fund and date.</li>
+    <li><b>Carry-forward:</b> 10% + 8% + 12% with 60/40 weights yields 180,000 and 144,000.</li>
+    <li><b>Shortfall:</b> calls exceeding cash stop the run at that date with <code>deficit</code> equal to the gap; with <code>stop_on_shortfall=False</code> the balance goes negative and the run completes.</li>
+    <li><b>Fund order and immutability:</b> permuting the fund list changes nothing; input <code>Fund</code> and <code>Portfolio</code> objects are unchanged after a run.</li>
+    <li><b>Exposures:</b> <code>exposures().sum()</code> per date equals <code>periods.private_close</code>.</li>
+  </ul>
+</section>
+
+<p class="footnote">Relation to the code now in the repo: the current <code>Simulation</code> already runs on the liquid dates with unit fund histories and percentage carry-forward, so it is closer to this design than the original function was. The differences here are structural: inputs split into <code>Fund</code> and <code>Portfolio</code> by ownership; a <code>Timeline</code> that converts dates once; the sizing rule pulled out into a policy so carry-forward and weights stop being engine concerns; small state objects instead of parallel arrays; and currency handling, which the current code does not have at all. Numbers in the worked example come from a prototype of the classes above, run in the project's own environment.</p>
+
+</main>
+</div>
+</div>

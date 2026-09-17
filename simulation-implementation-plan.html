@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Private Markets Simulation — Implementation Plan</title>
+<style>
+:root{--paper:#f6f4ee;--ink:#172d35;--muted:#5b6c70;--line:#d6ddd8;--teal:#126659;--light:#e6efea;--gold:#ad762e;--white:#fffefa}
+*{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:24px}body{margin:0;background:var(--paper);color:var(--ink);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.65}header{background:var(--ink);color:var(--paper);padding:64px max(32px,calc((100vw - 1180px)/2)) 48px}.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.16em;font-weight:700;color:#afd1c1}h1{font-family:Georgia,serif;font-size:clamp(36px,5vw,58px);line-height:1.1;font-weight:400;max-width:850px;margin:20px 0}header p{max-width:790px;color:#d5e2df;font-size:18px}.tags{display:flex;gap:8px;flex-wrap:wrap;margin-top:25px}.tags span{border:1px solid #52696d;border-radius:20px;padding:5px 12px;font-size:12px}.layout{display:grid;grid-template-columns:210px minmax(0,1fr);gap:48px;max-width:1244px;margin:auto;padding:46px 32px 80px}aside{position:sticky;top:28px;height:fit-content;font-size:13px}aside strong{font-size:11px;letter-spacing:.12em;text-transform:uppercase}aside a{display:block;text-decoration:none;color:var(--muted);padding:7px 0;border-bottom:1px solid var(--line)}aside a:hover{color:var(--teal)}main{min-width:0}section{margin:0 0 48px}h2{font-family:Georgia,serif;font-weight:400;font-size:31px;line-height:1.2;border-top:1px solid var(--line);padding-top:22px;margin:0 0 20px}h2 small{font:12px system-ui;color:var(--teal);display:block;margin-bottom:9px;letter-spacing:.12em}h3{font-size:17px;margin:26px 0 8px}p{margin:10px 0 15px}ul,ol{padding-left:23px}li{margin:7px 0}.callout{background:var(--light);border-left:4px solid var(--teal);padding:16px 21px;margin:20px 0}.callout p{margin:0}.note{border-left-color:var(--gold);background:#f2eadd}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.card{background:var(--white);border:1px solid var(--line);padding:19px}.card h3{margin:0 0 8px}.card p{font-size:14px;margin:0}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:14px;margin:18px 0}th{text-align:left;background:var(--light);font-size:12px}th,td{vertical-align:top;padding:12px;border-bottom:1px solid var(--line)}td:first-child{font-weight:600}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.88em;overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#203940;color:#e6eee9;padding:22px;font-size:13px;line-height:1.7;border-radius:3px}pre code{font-size:inherit}.formula{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--white);border:1px solid var(--line);padding:15px 20px;font-size:14px;overflow-x:auto}.step{display:grid;grid-template-columns:36px 1fr;gap:14px;margin:22px 0}.step .num{background:var(--teal);color:white;width:32px;height:32px;border-radius:50%;text-align:center;line-height:32px;font-size:13px}.step h3{margin:0 0 5px}.step p{margin:0 0 10px}footer{border-top:1px solid var(--line);padding-top:20px;color:var(--muted);font-size:12px}.small{font-size:13px;color:var(--muted)}a{color:var(--teal)}@media(max-width:850px){.layout{display:block;padding:26px 20px}aside{position:static;margin-bottom:35px;display:flex;gap:8px 16px;flex-wrap:wrap}aside strong{width:100%}aside a{border:0;padding:0}header{padding:38px 22px}.grid{grid-template-columns:1fr}h2{font-size:27px}}@media print{body{background:white;font-size:10pt}header{background:white;color:var(--ink);padding:0 0 18px}header p,.eyebrow{color:var(--muted)}h1{font-size:30pt}.tags{display:none}.layout{display:block;padding:0}aside{display:none}section{margin-bottom:26px}h2{font-size:21pt}h2,h3{break-after:avoid}tr,.card,.callout,.formula{break-inside:avoid}pre{background:#eef2ef;color:var(--ink);font-size:9pt}a{text-decoration:none;color:inherit}footer{margin-top:25px}}
+</style>
+</head>
+<body>
+<header>
+<div class="eyebrow">Implementation specification · 16 September 2026</div>
+<h1>Private Markets<br>Simulation</h1>
+<p>A config-driven portfolio engine that grows a liquid account, sizes commitments at fund closings, pays capital calls, receives distributions, and reconstructs private NAV on the liquid series’ observation dates.</p>
+<div class="tags"><span>Specific investable funds</span><span>Any calendar-date grid</span><span>Percentage carryforward</span><span>Stop on liquidity shortfall</span></div>
+</header>
+<div class="layout">
+<aside aria-label="Contents"><strong>In this plan</strong><a href="#decisions">01 · Agreed behavior</a><a href="#api">02 · Class and config</a><a href="#timing">03 · Dates and event rules</a><a href="#engine">04 · Simulation algorithm</a><a href="#nav">05 · Private NAV</a><a href="#results">06 · Results and failure</a><a href="#validation">07 · Validation</a><a href="#example">08 · Worked example</a><a href="#implementation">09 · Build sequence</a><a href="#tests">10 · Acceptance tests</a><a href="#compatibility">11 · Source compatibility</a></aside>
+<main>
+<section id="decisions">
+<h2><small>01 / AGREED BEHAVIOR</small>The model we are implementing</h2>
+<div class="grid">
+<div class="card"><h3>Liquid assets</h3><p>The input series is a total-return index scaled to the desired starting dollar value. Its first value initializes liquid assets. Later value ratios supply returns; simulated balances then reflect private cash flows.</p></div>
+<div class="card"><h3>Fund universe</h3><p>Every <code>FundVintage</code> is a specific investable fund with its own dated unit cash flows and NAVs. Commitment date and closing date mean the same thing. There are no previously committed funds at inception.</p></div>
+<div class="card"><h3>Commitment policy</h3><p>Annual percentages are supplied by fund type, represented by <code>strategy</code>. A year without a closing carries its percentage forward for that type. The next closing-year pool combines missed percentages with that year’s target and is split using supplied fund weights. Dollars are calculated at each fund’s closing NAV.</p></div>
+<div class="card"><h3>Timing and liquidity</h3><p>Off-grid closings move to the next observation. Private NAV adjusts for cash flows between marks. If aggregate calls exceed available cash at an observation, simulation stops and returns a shortfall report.</p></div>
+</div>
+<div class="callout"><p><strong>No separate initial liquid value.</strong> If the first index value is 100, the engine starts with $100. An index rebased to 100 therefore simulates $100 unless scaled before input. Future index levels are a return source, not replacement portfolio balances.</p></div>
+<p><strong>Scope:</strong> implement the <code>Simulation</code> class and supporting config/result objects. Do not generate additional funds, shift existing fund histories, add inflation or external wealth flows, or add stochastic behavior. Those features are outside the requested replication.</p>
+</section>
+<section id="api">
+<h2><small>02 / CLASS AND CONFIG</small>A small public interface</h2>
+<pre><code>@dataclass(frozen=True)
+class SimulationConfig:
+    liquid_total_return_index: pd.Series
+    funds: Sequence[FundVintage]
+    annual_commitment_rates: pd.DataFrame
+    fund_weights: Mapping[str, float] = field(default_factory=dict)
+    cash_tolerance: float = 1e-8
+
+class Simulation:
+    def __init__(self, config: SimulationConfig): ...
+    def run(self) -&gt; SimulationResult: ...
+    def simulate(self) -&gt; SimulationResult:
+        return self.run()</code></pre>
+<p>This is an interface sketch, not the implementation. The agreed behavior is fixed by the class contract rather than exposed as multiple timing switches.</p>
+<div class="table-wrap"><table><thead><tr><th>Field</th><th>Contract</th></tr></thead><tbody>
+<tr><td><code>liquid_total_return_index</code></td><td>A nonempty, strictly increasing, unique calendar-date index with finite, strictly positive values. Returns are consecutive ratios; no annualization or assumed number of periods per year.</td></tr>
+<tr><td><code>funds</code></td><td>Specific fund objects. Require unique, nonempty names for stable identifiers and explicit closing dates. All commitment dates must be on or after the first model date.</td></tr>
+<tr><td><code>annual_commitment_rates</code></td><td>Rows are calendar years; columns are fund-type strings matching <code>fund.strategy</code>. Values are decimal rates: <code>0.08</code> means 8%. Require an explicit finite nonnegative value, including zero where appropriate, for every modeled calendar year and configured type, even in years with no closings. Rates are commitment rates, not target portfolio allocations.</td></tr>
+<tr><td><code>fund_weights</code></td><td>Mapping from unique fund name to a nonnegative fraction. Within each actual closing-year × fund-type group, weights must sum to 1. For a single fund, an omitted weight defaults to 1. Multiple-fund groups require all weights explicitly.</td></tr>
+<tr><td><code>cash_tolerance</code></td><td>A small absolute monetary tolerance for floating-point comparisons; deficits within tolerance may be rounded to zero. Weight checks use a separate small dimensionless tolerance.</td></tr>
+</tbody></table></div>
+<p><strong>State ownership:</strong> snapshot the relevant input data during construction. Keep calculated dollar commitments in private simulation state; do not change the supplied objects’ <code>commitment_size</code> or history lists. Each <code>run()</code> starts from fresh state and produces identical results for identical inputs.</p>
+<p>Because all commitments are calculated by this engine, read the <em>normalized</em> histories and multiply by the engine’s stored commitment. Existing <code>commitment_size</code> fields are not used for sizing; report any nonzero supplied values as ignored input metadata.</p>
+<p><strong>No additional carryforward input is required.</strong> Derive missed percentages from the annual policy and supplied closing schedule. Start with zero carried percentage at simulation inception. Policy years before the first model date’s year are excluded and flagged; importing an opening backlog would be a separate extension.</p>
+</section>
+<section id="timing">
+<h2><small>03 / DATES AND EVENT RULES</small>One output grid, explicit event boundaries</h2>
+<ol>
+<li><strong>Output dates:</strong> exactly the dates in the liquid series. Do not resample it to a monthly or annual grid.</li>
+<li><strong>Closing assignment:</strong> effective closing is the first model date greater than or equal to the actual closing date. Use a vectorized left-sided date search.</li>
+<li><strong>Annual policy lookup:</strong> use the <em>actual closing date’s calendar year</em> for the pooled rate and weight group. A December closing mapped to a January observation still uses December’s pool; it must not absorb January’s new target.</li>
+<li><strong>Period boundaries:</strong> after the first date, cash-flow buckets are <code>(previous_date, current_date]</code>. Include every individual flow in the interval exactly once, even if no event is dated exactly on an observation.</li>
+<li><strong>First date:</strong> opening liquid assets equal the first index value; the return factor is 1. Process closings, flows and NAV marks dated on that first date. No earlier fund exposure or cash flow is allowed.</li>
+<li><strong>Same observation:</strong> all funds closing at that observation are sized from the same pre-call liquid balance. Never update the sizing balance fund by fund.</li>
+<li><strong>Horizon:</strong> funds closing after the final observation are not activated. Record them as outside the horizon. Do not redistribute their weights to earlier funds. Truncate later flows and marks, without forcing remaining private NAV to zero.</li>
+</ol>
+<div class="callout note"><p><strong>Period-level convention.</strong> All cash transfers are applied after the interval’s liquid return. This preserves the source’s ordering, but does not model cash earning returns after an intra-period distribution or losing returns after an intra-period call. A shortfall is assessed at observation dates; intra-period liquidity deficits are not detected. Grid frequency can therefore affect results.</p></div>
+<p>Weights define shares of the closing year’s <em>pooled percentage</em>, including carryforward, not a fixed annual dollar pool. Funds closing at different observations use different liquid balances, so their eventual dollar commitments need not be proportional to their weights.</p>
+<p>For a horizon covering only part of a year, provide the complete intended same-year fund group to validate the weights. Funds outside the horizon retain their assigned shares; no automatic renormalization takes place.</p>
+<h3>Percentage carryforward by fund type</h3>
+<p>Maintain a separate percentage budget for every type, including types with no available fund anywhere in the supplied horizon. Add each calendar year’s target once, not once per observation. The inception year receives its full supplied target with no automatic prorating. Process all intervening calendar years even when the observation grid skips a year.</p>
+<div class="formula">pool[year, type] = carried_percentage_from_prior_years + annual_rate[year, type]</div>
+<ol>
+<li><strong>No funds close in that actual calendar year:</strong> retain the whole pool as unallocated carryforward. No dollar commitment, cash reservation, or private NAV is created.</li>
+<li><strong>One or more funds close:</strong> allocate that pool once to the year’s complete fund group using the supplied weights. Each fund receives a fixed percentage entitlement: <code>effective_rate[fund] = pool[year, type] × weight[fund]</code>.</li>
+<li><strong>Reserve unclosed shares:</strong> after allocation, the pool is no longer unallocated carryforward. Shares belonging to later funds remain reserved percentage entitlements until their effective closing. Do not give the whole pool to the first fund or reuse it in subsequent years.</li>
+<li><strong>Convert at closing:</strong> multiply each entitlement by that fund’s closing-date sizing liquid NAV. After the observation succeeds, mark that entitlement as used. If the NAV is zero, the resulting dollar commitment is zero and the applied percentage is still used; there is no automatic retry.</li>
+<li><strong>End of horizon:</strong> report both unallocated carryforward and reserved shares for funds not yet activated. Do not force investment, redistribute weights, or drop the outstanding percentages.</li>
+</ol>
+<p>The annual allocation can be prepared from the known schedule before the cash simulation. Reporting must nevertheless accrue targets only when their calendar year is reached. A future scheduled allocation is not a completed investment. Budgets are independent across types and percentages add arithmetically without compounding, inflation, or conversion to historical dollar amounts.</p>
+<pre><code># Prepare percentage entitlements, independently for each fund type.
+carry = 0.0
+for year in all_calendar_years_from_inception_through_horizon:
+    pool = carry + annual_rate[year, fund_type]
+    cohort = funds_with_actual_closing_year_and_type(year, fund_type)
+    if not cohort:
+        carry = pool
+    else:
+        for fund in cohort:
+            effective_rate[fund] = pool * weight[fund]
+            # Retain source-year contributions for the audit trail.
+        carry = 0.0  # Transferred to reserved shares, not yet used.</code></pre>
+</section>
+<section id="engine">
+<h2><small>04 / SIMULATION ALGORITHM</small>Preserve the source’s cash ordering</h2>
+<p>For observation <code>k</code>, let <code>L_open</code> be the last completed closing liquid balance, and let <code>I[k]</code> be the supplied total-return index. Initially <code>L_open = I[0]</code> and all private NAV and commitments are zero.</p>
+<div class="step"><div class="num">1</div><div><h3>Read opening balances and advance the budget ledger</h3><p>Snapshot liquid assets and each active fund’s prior closing NAV. Calculate opening private NAV by fund type and opening total value. Opening exposures exclude funds that will activate at this observation. In candidate state, accrue any calendar-year targets crossed since the previous observation, exactly once, and update carryforward/reserved shares from the prepared annual allocation.</p><div class="formula">total_open = L_open + sum(private_nav_open)</div></div></div>
+<div class="step"><div class="num">2</div><div><h3>Apply the liquid return</h3><p>Use the actual ratio of observations. At the first date, use a factor of 1.</p><div class="formula">factor = 1 if k == 0 else I[k] / I[k - 1]<br>liquid_after_return = L_open × factor</div></div></div>
+<div class="step"><div class="num">3</div><div><h3>Receive distributions from previously active funds</h3><p>For each fund already committed before this observation, sum its positive unit flow entries in the interval and scale by its fixed dollar commitment.</p><div class="formula">sizing_liquid_nav = liquid_after_return + distributions_existing</div></div></div>
+<div class="step"><div class="num">4</div><div><h3>Set commitments for the closing cohort</h3><p>For every fund mapped to this date, look up its prepared percentage entitlement, based on the pooled percentage for its actual closing year and its supplied weight. Calculate all commitments against the same <code>sizing_liquid_nav</code>, then keep them fixed for the fund’s entire simulated life.</p><div class="formula">effective_rate[f] = pooled_rate[actual_closing_year, strategy] × weight[f]<br>commitment[f] = effective_rate[f] × sizing_liquid_nav</div><p>A commitment alone does not reduce cash or create NAV. Zero current-year rates do not cancel accumulated percentages: a fund can still receive a commitment from carryforward. Zero effective-rate or zero-weight funds may be activated with a zero commitment for a complete audit trail.</p></div></div>
+<div class="step"><div class="num">5</div><div><h3>Scale this period’s remaining flows</h3><p>Include calls from existing and newly activated funds. Also include distributions from newly activated funds <em>after</em> commitment sizing. This avoids circular sizing if a fund closes and distributes within the same bucket.</p><p>Separate positive and negative entries before aggregation. Do not recover gross distributions or calls from an already-netted interval total.</p><div class="formula">calls = Σ commitment[f] × Σ max(-unit_flow, 0)<br>distributions_new = Σ commitment[new_fund] × Σ max(unit_flow, 0)</div></div></div>
+<div class="step"><div class="num">6</div><div><h3>Check liquidity before completing the period</h3><div class="formula">cash_available_for_calls = sizing_liquid_nav + distributions_new<br>liquid_close_candidate = cash_available_for_calls - calls</div><p>If the candidate is below negative cash tolerance, stop with a structured shortfall result. Do not cap calls, borrow, resize commitments, or continue subsequent periods. Aggregate calls first so the result is independent of fund ordering.</p></div></div>
+<div class="step"><div class="num">7</div><div><h3>Roll private NAV and save the completed observation</h3><p>Advance the fund event histories using the NAV rules below. Save closing liquid assets, private NAV, flows, commitment events, and total value. Move successfully activated funds’ percentage entitlements from reserved to used. Commit the financial state and percentage ledger atomically only after the period passes its checks.</p><div class="formula">total_close = liquid_close + sum(private_nav_close)</div></div></div>
+</section>
+<section id="nav">
+<h2><small>05 / PRIVATE NAV</small>Process all marks, including off-grid marks</h2>
+<p>Build a normalized NAV path from each fund’s raw dated events, starting at zero. Merge flows and NAV marks into chronological order. Between explicit marks, adjust NAV for cash flows:</p>
+<div class="formula">unit_nav_after_flow = unit_nav_before_flow - signed_unit_flow</div>
+<p>A negative flow is a capital call and increases NAV; a positive flow is a distribution and decreases NAV. An explicit mark replaces the running estimate. At each model date, use the final normalized NAV after all events on or before that date, then scale it by the fund’s calculated commitment.</p>
+<ul>
+<li><strong>Same-day convention:</strong> apply the day's aggregate net flow, then the NAV mark. Marks are assumed to include that day’s cash flows. Check inferred NAV after all same-day events, so intermediate entry order does not create a false negative-NAV error.</li>
+<li><strong>Off-grid mark:</strong> retain its actual date within the event sequence. A March 20 mark must affect a March 31 observation even without an exact March 31 mark.</li>
+<li><strong>Missing mark:</strong> continue cash-flow adjustment; do not invent investment returns or use a future mark.</li>
+<li><strong>Explicit zero:</strong> a zero mark resets NAV to zero. It is not missing data.</li>
+<li><strong>Duplicate marks:</strong> reject multiple NAV marks on the same fund/date.</li>
+<li><strong>Negative inferred NAV:</strong> report a valuation-data error rather than silently clamp a material negative value. If it occurs between marks, request adequate valuation data or a separately agreed alternative policy.</li>
+</ul>
+<p>Example: a $20 call, followed by a $23 NAV mark, followed by a $3 distribution produces a closing NAV of $20. Applying every cash flow after the latest mark would double-count the earlier call; chronological processing avoids this.</p>
+<p>Do not use <code>monthly_nav()</code>: its month-specific branches and exact-date matching are unsuitable here. Also avoid <code>latest_nav</code>, <code>total_called</code>, and <code>total_distributed</code> inside the engine because those properties include the entire supplied history. <code>monthly_flows()</code> has useful interval semantics, but its net totals cannot replace gross-flow aggregation.</p>
+</section>
+<section id="results">
+<h2><small>06 / RESULTS AND FAILURE</small>A result that can be reconciled</h2>
+<pre><code>@dataclass
+class SimulationResult:
+    status: str  # "completed" or "liquidity_shortfall"
+    portfolio: pd.DataFrame
+    fund_detail: pd.DataFrame
+    strategy_detail: pd.DataFrame
+    commitment_events: pd.DataFrame
+    commitment_budget: pd.DataFrame
+    shortfall: Optional[LiquidityShortfall]
+    diagnostics: list[Diagnostic]</code></pre>
+<div class="table-wrap"><table><thead><tr><th>Output</th><th>Required contents</th></tr></thead><tbody>
+<tr><td>Portfolio, indexed by model date</td><td>Opening liquid/private/total values; liquid index and period return; liquid investment P&amp;L; sizing liquid NAV; new commitments; gross calls; gross distributions; net private cash flow; closing liquid/private/total values; private valuation P&amp;L.</td></tr>
+<tr><td>Fund detail, indexed by date and fund ID</td><td>Strategy; activation status; fixed commitment; opening and closing NAV; calls and distributions in the interval; cumulative calls and distributions through this date; latest actual mark date, or no mark yet.</td></tr>
+<tr><td>Strategy detail</td><td>Aggregations of fund-level commitments, calls, distributions and NAV. No separate strategy-level cash account.</td></tr>
+<tr><td>Commitment events</td><td>Fund ID; actual and effective closing dates; policy year; type; current-year target rate; carried rate and its source years; pooled rate; fund weight; effective fund rate; sizing liquid NAV; calculated dollar commitment.</td></tr>
+<tr><td>Commitment budget, indexed by model date and fund type</td><td>Cumulative target percentage accrued; cumulative percentage used; unallocated carried percentage; reserved percentage for funds awaiting activation. Retain year-level source attribution so missed targets can be traced to their eventual funds. Include policy types with no funds, and separately identify outstanding balances at the horizon.</td></tr>
+<tr><td>Diagnostics</td><td>Policy entries outside the modeled calendar years; funds/flows outside the horizon; outstanding carried/reserved percentages; ignored supplied commitment sizes; actual-date-to-observation mapping; known netting limitations and valuation assumptions. A valid target in a no-closing year is an active budget entry, not an unused-policy warning.</td></tr>
+</tbody></table></div>
+<p><strong>Shortfall behavior:</strong> return all successfully completed observations and a separate failure record for the first failed observation. Include the date and interval, opening liquid balance, return factor, existing/new distributions, available cash, calls required, deficit, candidate commitments, and per-fund calls. The failed date is not presented as a completed portfolio row; attempted commitments are clearly labeled and are not committed to completed state.</p>
+<p>If the very first date fails, completed tables are empty but the failure record is populated. Structural input errors raise a descriptive validation exception before running. A valuation-data failure uses a separate descriptive exception with fund/date context; it must not be mislabeled as a liquidity failure.</p>
+<p>On a shortfall, do not mark attempted percentage entitlements as used. Return the last completed budget ledger plus a clearly labeled candidate budget snapshot for the failed date, including target accruals and attempted entitlement use. No later fund may consume those shares because the simulation stops.</p>
+<h3>Reconciliation identities</h3>
+<pre><code>liquid_close = liquid_open + liquid_investment_pnl
+               + distributions - calls
+
+private_valuation_pnl = private_nav_close - private_nav_open
+                        - calls + distributions
+
+total_close = liquid_close + private_nav_close
+total_close - total_open = liquid_investment_pnl
+                           + private_valuation_pnl</code></pre>
+<p>Commitments are obligations, not immediate asset transfers. They must never appear directly as a deduction in the liquid or total-value identities.</p>
+<div class="formula">For each fund type at each completed observation:<br>cumulative_target_percentage = cumulative_used_percentage<br>                              + unallocated_carried_percentage<br>                              + reserved_percentage</div>
+<p>This identity reconciles percentage policy. It does not assert a historical dollar target: each used percentage is valued at its receiving fund’s closing NAV. There is no meaningful dollar total for outstanding percentages until a future closing NAV is known.</p>
+</section>
+<section id="validation">
+<h2><small>07 / VALIDATION</small>Fail clearly on ambiguous inputs</h2>
+<ul>
+<li>Validate positive finite index levels, unique increasing dates, and nonempty input. Limit this version to calendar dates because the attached fund model stores <code>date</code>; reject intraday observations and timezone ambiguity.</li>
+<li>Require a unique fund name, a canonical fund-type string, and a commitment date for every fund. Do not infer closing from <code>vintage_year</code> or the first flow.</li>
+<li>Reject closing dates before inception and nonzero NAVs or any nonzero flows before a fund’s actual closing date. Pre-closing zero marks may be ignored.</li>
+<li>Require finite nonnegative rates and weights. Do not impose an arbitrary 100% cap on summed commitment rates: commitments need not be called immediately.</li>
+<li>Validate weights over the full supplied closing-year/type group. Require explicit rates for every calendar year from inception through the horizon and every configured type, including years/types without closings; reject missing cells rather than interpret them as zero. The configured types are the union of policy columns and supplied fund types. Policy-only types are valid and accumulate carryforward.</li>
+<li>Do not cap accumulated percentages at 100%, normalize them across types, or expire them. No-closing years add to carryforward. Rates outside the modeled calendar years are excluded and flagged, not silently imported into an opening backlog.</li>
+<li>Validate finite flow values, correct entry types, nonnegative explicit NAV marks, and one NAV mark per fund/date. Preserve separate same-date call/distribution entries.</li>
+<li>Assume a common currency across liquid values and all dollar commitments. No FX conversion is included.</li>
+<li>Document that already-netted source entries cannot be decomposed into gross calls and distributions. Accurate gross reporting requires those events to be supplied separately.</li>
+</ul>
+<div class="callout note"><p><strong>Attachment compatibility:</strong> <code>FundVintage.__post_init__()</code> currently restricts <code>vintage_year</code> to the current year plus one. Long future simulations will require relaxing that validation in the class or its data adapter. Its cleaner also silently removes some invalid entries; the engine cannot detect data already discarded before it receives the objects.</p></div>
+</section>
+<section id="example">
+<h2><small>08 / WORKED EXAMPLE</small>Two closings, one annual percentage</h2>
+<p>Use liquid index values of $1,000,000 on January 1, $1,100,000 on March 31, and $1,210,000 on June 30. BUYOUT has a 10% annual commitment rate. Fund A closes February 15 with weight 60%; Fund B closes May 10 with weight 40%.</p>
+<div class="table-wrap"><table><thead><tr><th>Observation</th><th>Calculation</th><th>Result</th></tr></thead><tbody>
+<tr><td>January 1</td><td>Initialize from first index value. No funds active.</td><td>Liquid $1,000,000; private NAV $0.</td></tr>
+<tr><td>March 31</td><td>Grow cash 10%. Activate A at this observation. Commitment = $1,100,000 × 10% × 60%.</td><td>A commitment $66,000.</td></tr>
+<tr><td>March 31 flows</td><td>A calls 25% of commitment within the interval; no distributions or NAV marks.</td><td>Call $16,500; liquid $1,083,500; private NAV $16,500; total $1,100,000.</td></tr>
+<tr><td>June 30</td><td>Grow the <em>simulated</em> liquid balance 10% to $1,191,850. A distributes $3,300. B sizing base is $1,195,150.</td><td>B commitment = $1,195,150 × 10% × 40% = $47,806.</td></tr>
+<tr><td>June 30 flows</td><td>B calls 25%, or $11,951.50. A has no further calls; no NAV marks arrive.</td><td>Liquid $1,183,198.50; A NAV $13,200; B NAV $11,951.50; total $1,208,350.</td></tr>
+</tbody></table></div>
+<p>The second-period return uses the ratio <code>1,210,000 / 1,100,000</code>, but is applied to $1,083,500. It does not overwrite cash with $1,210,000. Total commitments are $113,806; the 60/40 weights do not create a 60/40 dollar split because closing NAVs differ.</p>
+<p><strong>Failure variant:</strong> if aggregate June calls instead equal $1,200,000 with no additional distributions, available cash is $1,195,150. Stop on June 30 with a $4,850 shortfall and return January/March as the completed observations.</p>
+<h3>Carryforward example: two missed closing years</h3>
+<p>Suppose BUYOUT targets 10% in 2027, 8% in 2028 and 12% in 2029, with no BUYOUT fund closing until 2029. The available 2029 pool is <strong>30%</strong>. Assume the simulation begins in 2027, so all three policy years are in scope.</p>
+<div class="table-wrap"><table><thead><tr><th>Year / event</th><th>Percentage treatment</th><th>Dollar treatment</th></tr></thead><tbody>
+<tr><td>2027: no closing</td><td>Carry 10% forward.</td><td>No commitment and no cash movement.</td></tr>
+<tr><td>2028: no closing</td><td>Add 8%; carry is now 18%.</td><td>No historical dollar budget is calculated.</td></tr>
+<tr><td>2029: funds C and D, weights 60% / 40%</td><td>Add 12%; reserve 18% for C and 12% for D. The 30% pool is allocated only once.</td><td>Each fund uses its own closing-date liquid NAV.</td></tr>
+<tr><td>C closes with sizing NAV $1,000,000</td><td>Use C’s 18%; D’s 12% remains reserved.</td><td>Commit $180,000 to C.</td></tr>
+<tr><td>D closes with sizing NAV $1,200,000</td><td>Use D’s 12%. Total used is 30%; no carry or reserved share remains.</td><td>Commit $144,000 to D. Total commitments are $324,000.</td></tr>
+</tbody></table></div>
+<p>The two NAVs above are illustrative sizing balances after the relevant returns and distributions. If only one fund closed in 2029, its weight would be 100% and it would receive the entire 30% entitlement. SECONDARIES follows its own independent policy; its closings never consume BUYOUT’s carryforward.</p>
+</section>
+<section id="implementation">
+<h2><small>09 / BUILD SEQUENCE</small>Implement in six bounded stages</h2>
+<ol>
+<li><strong>Define contracts.</strong> Create the config, result, diagnostic, and shortfall data classes, including the percentage-budget ledger. Document the first-date, year-selection, carryforward, same-day-mark, and new-fund-distribution conventions alongside them.</li>
+<li><strong>Normalize and validate.</strong> Snapshot input objects, enforce unique IDs and strategy keys, verify dates/rates/weights, and flag out-of-horizon data. Address the fund class’s future-year restriction where needed.</li>
+<li><strong>Prepare events and percentage entitlements.</strong> Walk every calendar year for each type, pool missing-year rates and reserve weighted shares for the next closing-year group. Preserve source-year attribution. Map closings and individual flows to model observations. Precompute unit gross calls/distributions and normalized NAV at each model date using chronological marks and flows. Do not repeatedly rescan entire histories.</li>
+<li><strong>Implement the state loop.</strong> Track active funds, fixed commitment amounts, liquid balance, prior private NAV and the percentage ledger. Accrue annual targets once, then apply returns → existing distributions → new commitments → remaining flows → liquidity check → closing NAV/results. Finalize used entitlements only on successful observations.</li>
+<li><strong>Build reporting.</strong> Produce portfolio, fund and strategy tables; the percentage-budget ledger; commitment audit entries; structured shortfall output; and both monetary and percentage reconciliation diagnostics. Support <code>simulate()</code> as a thin alias for <code>run()</code>.</li>
+<li><strong>Verify and document.</strong> Run the acceptance cases below and a small manual reconciliation fixture. Document the intentional differences from the old source and the interval-level liquidity limitation.</li>
+</ol>
+<p>Suggested module separation: <code>simulation.py</code> for the public class/config/results, <code>simulation_events.py</code> for event alignment and unit NAV reconstruction, and <code>tests/test_simulation.py</code> for behavior and accounting tests. Keep helper methods private unless another consumer actually needs them.</p>
+<p>Use NumPy/Pandas for arrays and reports. Event preparation can use sorted sweeps and date searches; the main loop operates on prepared fund-by-date arrays. Avoid constructing zero-commitment placeholder fund objects or quadratic repeated calls to history-scanning methods.</p>
+</section>
+<section id="tests">
+<h2><small>10 / ACCEPTANCE TESTS</small>Test accounting and timing, not just execution</h2>
+<div class="table-wrap"><table><thead><tr><th>Case</th><th>Expected behavior</th></tr></thead><tbody>
+<tr><td>No funds</td><td>Simulated liquid balances exactly follow the input index; private NAV and flows remain zero.</td></tr>
+<tr><td>Worked example</td><td>Match the exact commitments, gross flows, NAVs and cash balances above.</td></tr>
+<tr><td>Missed-year percentage pooling</td><td>10% + 8% + 12% becomes a 30% entitlement pool. At weights 60% / 40%, use 18% / 12%; match the $180,000 and $144,000 example commitments.</td></tr>
+<tr><td>Independent fund types</td><td>A SECONDARIES closing does not consume or reset BUYOUT carryforward.</td></tr>
+<tr><td>Zero current-year target</td><td>A closing with a zero current-year rate still receives prior missed percentages.</td></tr>
+<tr><td>No available funds through horizon</td><td>Targets remain in the budget ledger, including policy-only fund types. No synthetic investment or cash deduction occurs.</td></tr>
+<tr><td>No double use of pooled rates</td><td>Later funds in the same year consume only their reserved shares; the next year starts with its own target and any genuinely unallocated carry.</td></tr>
+<tr><td>Skipped years / repeated observations</td><td>Every calendar-year target accrues once even across a sparse grid; monthly observations never add an annual rate twelve times.</td></tr>
+<tr><td>First-date closing and call</td><td>No first-date return; fund commitment and same-date call are processed exactly once.</td></tr>
+<tr><td>Off-grid closing and flow</td><td>Both are assigned to the next observation; actual event order is retained for NAV.</td></tr>
+<tr><td>December closing / January observation</td><td>Use December’s pooled entitlement; keep January’s new annual target separate even if both years’ funds map to the same observation.</td></tr>
+<tr><td>Several same-date funds</td><td>All use one sizing base. Permuting fund input order leaves all results unchanged.</td></tr>
+<tr><td>Same-period new-fund distribution</td><td>Excluded from its cohort’s sizing base; included in cash available for calls and in NAV adjustment afterward.</td></tr>
+<tr><td>Gross flows cancel</td><td>A $10 call and $10 distribution remain visible separately despite zero net flow.</td></tr>
+<tr><td>NAV event order</td><td>Off-grid and same-day marks override earlier cash adjustments correctly; a zero mark resets NAV.</td></tr>
+<tr><td>Missing marks</td><td>Calls/distributions adjust NAV in every month. No special quarter-end branch.</td></tr>
+<tr><td>Insufficient cash</td><td>Stop at the first failed observation, report the exact deficit, and do not return a completed negative balance or mark attempted entitlements as used.</td></tr>
+<tr><td>Full cash use</td><td>Exactly zero closing liquidity is valid; subsequent zero sizing bases produce zero commitments.</td></tr>
+<tr><td>Irregular grid / long horizon</td><td>No hard-coded 20 periods, annual return assumption, or monthly NAV logic.</td></tr>
+<tr><td>Partial-year horizon</td><td>Outside-horizon funds retain their shares; no rescaling of included weights.</td></tr>
+<tr><td>Invalid inputs</td><td>Specific errors for duplicate dates/IDs/marks, missing rates/weights, historical commitments and invalid numerical values.</td></tr>
+<tr><td>Repeatability</td><td>Two runs match and supplied fund objects remain unchanged.</td></tr>
+<tr><td>Accounting invariants</td><td>Fund totals equal strategy and portfolio totals. Each completed date satisfies monetary identities and, for each type, accrued target percentage = used + carried + reserved.</td></tr>
+</tbody></table></div>
+</section>
+<section id="compatibility">
+<h2><small>11 / SOURCE COMPATIBILITY</small>Preserved logic and deliberate changes</h2>
+<p><strong>Preserved:</strong> liquid returns precede private flows; distributions from active funds feed the commitment-sizing balance; all commitments in a period use the same pre-call base; capital calls include newly activated funds; commitment creation itself does not spend cash.</p>
+<p><strong>Replaced as requested:</strong> annual array positions become calendar-date observations; synthetic annual vintages become the supplied specific funds; fund-type rates and weights determine commitments; missing-year percentages accumulate independently by type and join the next closing-year pool. There is no separate starting-liquid parameter, historical fund cohort, or total-market-value commitment option.</p>
+<p><strong>Corrected explicitly:</strong> no hard-coded flow length, overwritten exposure bucket, silent negative liquidity, or month-specific NAV handling. The first observation has no preceding return interval but still processes same-date events. Newly closing funds’ same-period distributions are retained after sizing; the original source would lose those distributions.</p>
+<p><strong>Implementation defaults requiring no further configuration:</strong> actual closing year selects the percentage pool; carryforward starts at zero and annual targets are not prorated; pooled percentages use the supplied same-year weights; same-day NAV marks are post-flow marks; funds remain distinct by unique name; currency is common; no exogenous wealth flows or inflation are applied. These rules belong in the public API documentation and tests.</p>
+</section>
+<footer>Prepared from the original <code>generate_cash_flows_liquid_private</code> function, the supplied <code>FundVintage</code> class, and the clarified simulation requirements. This deliverable is an implementation plan; the simulation engine has not been implemented.</footer>
+</main>
+</div>
+</body>
+</html>

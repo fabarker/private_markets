@@ -4,7 +4,7 @@ A liquid portfolio in its base currency funds commitments to US-dollar private f
 `Simulator(portfolio, funds).run()` walks the liquid index's own dates and reports the liquid
 balance, the private NAV, every flow between the two pots, and whether the pot ever ran dry.
 
-This is the implementation of `../simulator-design.html`. Package modules map to that note:
+This is the implementation of `simulator-design.html` (in this folder). Package modules map to that note:
 
 | Module | Contents |
 | --- | --- |

@@ -41,9 +41,10 @@ COMMITMENT_COLUMNS = [
     "fund_type", "closing_date", "policy_year", "sizing_base", "rate", "commitment_base",
     "usd_rate", "commitment_usd", "current_year_rate", "carried_rate", "pooled_rate", "weight",
 ]
+EVENT_COLUMNS = ["observation_date", "period", "unit_call", "unit_distribution", "unit_nav_mark"]
 _TEXT_COLUMNS = {"fund", "fund_type"}
-_DATE_COLUMNS = {"date", "closing_date"}
-_INT_COLUMNS = {"policy_year"}
+_DATE_COLUMNS = {"date", "closing_date", "event_date", "observation_date"}
+_INT_COLUMNS = {"policy_year", "period"}
 
 
 def _frame(rows: list[dict[str, Any]], columns: list[str], index: list[str]) -> pd.DataFrame:
@@ -252,6 +253,29 @@ class Simulator:
             shortfall,
             self.beyond_horizon,
         )
+
+    # ---------------------------------------------------------------- audit
+    def event_map(self) -> pd.DataFrame:
+        """Where every fund event lands: one row per fund and event day.
+
+        The liquid index sets the observation frequency; a flow or mark dated on any day
+        pools onto the first observation on or after it — a call on the 15th lands on that
+        month's end on a month-end grid, on the next business day on a daily grid.
+        ``observation_date`` is NaT and ``period`` is ``n`` for events after the last
+        observation, which the simulation ignores.
+        """
+        rows: list[dict[str, Any]] = []
+        for fund in self.funds:
+            events = fund.events()
+            periods = self.timeline.assign([day for day, *_ in events])
+            for (day, call, distribution, mark), t in zip(events, periods):
+                rows.append({
+                    "fund": fund.name, "event_date": day,
+                    "observation_date": self.timeline.dates[t] if t < self.timeline.n else pd.NaT,
+                    "period": int(t), "unit_call": call, "unit_distribution": distribution,
+                    "unit_nav_mark": float("nan") if mark is None else mark,
+                })
+        return _frame(rows, EVENT_COLUMNS, ["fund", "event_date"])
 
     # -------------------------------------------------------------- helpers
     def _size(self, cohort: Sequence[Fund], base: SizingBase) -> dict[str, float]:

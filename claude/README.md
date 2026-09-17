@@ -122,6 +122,31 @@ it, and the run stops. With `stop_on_shortfall=False` the balance goes negative 
 continues — the "how much would I need to borrow" view. Exactly zero cash is valid; a zero
 sizing base gives a zero commitment and still uses the rate.
 
+## Observation frequency
+
+The liquid index sets the observation frequency — monthly month ends, quarter ends,
+business days, or any irregular set of dates. Fund events are dated on whatever day they
+happened and need not line up with it. One rule covers every mismatch:
+
+**An event on any day pools onto the first observation on or after that day.**
+
+- Calls and distributions dated inside a month land on that month's end on a monthly
+  grid; inside a quarter, on that quarter end; on a Saturday, on the next business day of
+  a daily grid. Totals are consistent across frequencies: a quarter's calls on a quarterly
+  grid equal the sum of its three months' calls on a monthly grid.
+- A NAV mark between observations is applied in event order and is what the next
+  observation sees, after any flows between the mark and the observation.
+- A fund closing intramonth is committed at that month's end, sized from that month
+  end's liquid balance, and its calls in the same month are paid in that period.
+- Exchange rates go the other way, because a rate is a state rather than an event: each
+  observation uses the last rate on or before it.
+
+`Simulator.event_map()` lists every fund event with the observation it pooled onto, for
+audit. Because flows settle at observations, a call dated the 3rd and one dated the 28th
+are treated alike within the month: neither loses nor earns that month's return, and a
+liquidity shortfall is detected at the month end, not on the day. A finer grid makes the
+simulation finer; the rule does not change.
+
 ## Results
 
 `periods` (index `date`, base currency unless noted): `liquid_open`, `private_open`,

@@ -3,6 +3,13 @@
 The engine never touches a date: a ``Timeline`` built from the liquid index converts
 every dated input into per-period arrays once, and the loop then works on integer
 period indices ``t``.
+
+The liquid index sets the observation frequency — month ends, quarter ends, business
+days, or any irregular dates — and fund events are dated on whatever day they happened.
+One rule covers every mismatch: an event on any day pools onto the first observation on
+or after that day (``index_of`` / ``assign``). Exchange rates go the other way, because a
+rate is a state rather than an event: each observation uses the last rate on or before
+it (``asof``).
 """
 from __future__ import annotations
 
@@ -48,6 +55,11 @@ class Timeline:
     def index_of(self, day: Any) -> int:
         """Index of the first observation on or after ``day``; ``n`` when ``day`` is past the last one."""
         return int(self.dates.searchsorted(pd.Timestamp(as_date(day)), side="left"))
+
+    def assign(self, days: Any) -> np.ndarray:
+        """``index_of`` for many days at once: the period each day pools onto (``n`` when beyond the last)."""
+        stamps = pd.DatetimeIndex([pd.Timestamp(as_date(d)) for d in days])
+        return np.asarray(self.dates.searchsorted(stamps, side="left"), dtype=int)
 
     def asof(self, series: pd.Series, *, name: str = "series") -> np.ndarray:
         """The last value on or before each observation, as an array aligned to the timeline."""

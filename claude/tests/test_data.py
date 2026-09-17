@@ -1,0 +1,235 @@
+"""Data layer: normalized tables, the in-memory repository, and the orchestrator."""
+from datetime import date
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from pmsim import AnnualRatePolicy, Simulator
+from pmsim.data import FrameRepository, Orchestrator, SimulationSpec, build_funds, build_portfolio
+from pmsim.data.tables import (
+    normalize_commitment_rates,
+    normalize_fund_market_data,
+    normalize_fund_specs,
+    normalize_market_data,
+)
+from tests.conftest import check_identities
+
+SPEC = SimulationSpec("GBP", liquid_series="liquid_gbp", fx_series="gbp_per_usd", weights={"A": 0.6, "B": 0.4})
+
+
+def tables():
+    """The worked example as workbook-style tables. Flows are dollars; scale is the fund's commitment."""
+    fund_spec = pd.DataFrame({"fund_name": ["A", "B"], "type": ["BUYOUT", "BUYOUT"],
+                              "closing_date": ["2027-02-15", "2027-05-10"]})
+    fund_market = pd.DataFrame([
+        ("A", "Flow", -250_000.0, "2027-03-01", 1_000_000),
+        ("A", "NAV", 250_000.0, "2027-03-31", 1_000_000),
+        ("A", "Flow", 50_000.0, "2027-06-01", 1_000_000),
+        ("B", "Flow", -250_000.0, "2027-05-20", 1_000_000),
+    ], columns=["fund_name", "type", "value", "date", "scale"])
+    market = pd.DataFrame({"date": ["2027-01-01", "2027-03-31", "2027-06-30"],
+                           "liquid_gbp": [1e6, 1.1e6, 1.21e6], "gbp_per_usd": [0.8, 0.8, 0.75]})
+    rates = pd.DataFrame({"year": [2027], "BUYOUT": [0.1]})
+    return fund_spec, fund_market, market, rates
+
+
+def expected(gbp_portfolio, worked_funds):
+    policy = AnnualRatePolicy(gbp_portfolio.commitment_rates, worked_funds, {"A": 0.6, "B": 0.4})
+    return Simulator(gbp_portfolio, worked_funds, policy).run()
+
+
+# ------------------------------------------------------------ end to end
+def test_tables_reproduce_the_worked_example(gbp_portfolio, worked_funds):
+    result = Orchestrator(FrameRepository(*tables()), SPEC).run()
+    want = expected(gbp_portfolio, worked_funds)
+    pd.testing.assert_frame_equal(result.periods, want.periods)
+    pd.testing.assert_frame_equal(result.funds, want.funds)
+    pd.testing.assert_frame_equal(result.commitments, want.commitments)
+    assert result.periods["total_close"].iloc[-1] == pytest.approx(1_207_318.75)
+    check_identities(result)
+
+
+def test_column_aliases_are_case_and_space_insensitive(gbp_portfolio, worked_funds):
+    fund_spec, fund_market, market, rates = tables()
+    fund_spec.columns = ["Fund Name", "Strategy", "Closing Date"]
+    fund_market.columns = ["Fund", "Entry Type", "Amount", "Date", "Divisor"]
+    market.columns = ["Date", "Liquid GBP", "GBP-per-USD"]
+    rates.columns = ["Year", "BUYOUT"]
+    spec = SimulationSpec("gbp", liquid_series="liquid gbp", fx_series="gbp per usd", weights={"A": 0.6, "B": 0.4})
+    result = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates), spec).run()
+    pd.testing.assert_frame_equal(result.periods, expected(gbp_portfolio, worked_funds).periods)
+
+
+def test_orchestrator_exposes_the_assembled_pieces():
+    orchestrator = Orchestrator(FrameRepository(*tables()), SPEC)
+    assert [f.name for f in orchestrator.funds] == ["A", "B"]
+    assert orchestrator.portfolio.base_currency == "GBP" and orchestrator.portfolio.converts_currency
+    assert orchestrator.policy.entitlements["A"].effective_rate == pytest.approx(0.06)
+    assert orchestrator.simulator.timeline.n == 3
+    assert orchestrator.event_map().loc[("A", pd.Timestamp("2027-03-01")), "observation_date"] == pd.Timestamp("2027-03-31")
+    with pytest.raises(TypeError, match="SimulationSpec"):
+        Orchestrator(FrameRepository(*tables()), {"base_currency": "GBP"})
+
+
+def test_fund_summary():
+    summary = Orchestrator(FrameRepository(*tables()), SPEC).fund_summary()
+    assert list(summary.index) == ["A", "B"]
+    a = summary.loc["A"]
+    assert (a["fund_type"], a["calls"], a["distributions"], a["marks"]) == ("BUYOUT", 1, 1, 1)
+    assert a["unit_called"] == pytest.approx(0.25) and a["unit_distributed"] == pytest.approx(0.05)
+    assert a["latest_unit_nav"] == pytest.approx(0.25) and a["closing_date"] == pd.Timestamp("2027-02-15")
+    assert a["first_event"] == pd.Timestamp("2027-03-01") and a["last_event"] == pd.Timestamp("2027-06-01")
+    assert not a["beyond_horizon"] and np.isnan(summary.loc["B", "latest_unit_nav"])
+
+
+# --------------------------------------------------------- fund histories
+def test_flow_sign_convention_and_explicit_kinds():
+    specs = normalize_fund_specs(pd.DataFrame({"fund_name": ["F"], "type": ["VC"], "closing_date": ["2027-01-01"]}))
+    market = normalize_fund_market_data(pd.DataFrame([
+        ("F", "flow", -20.0, "2027-02-01", 100), ("F", "flow", 5.0, "2027-03-01", 100),
+        ("F", "Call", -10.0, "2027-04-01", 100), ("F", "Distribution", -2.0, "2027-05-01", 100),
+        ("F", "flow", 0.0, "2027-06-01", 100), ("F", "NAV", 30.0, "2027-06-30", 100),
+    ], columns=["fund_name", "type", "value", "date", "scale"]))
+    [fund] = build_funds(specs, market)
+    assert fund.unit_calls.to_dict() == {pd.Timestamp("2027-02-01"): 0.2, pd.Timestamp("2027-04-01"): 0.1}
+    assert fund.unit_distributions.to_dict() == {pd.Timestamp("2027-03-01"): 0.05, pd.Timestamp("2027-05-01"): 0.02}
+    assert fund.unit_nav.to_dict() == {pd.Timestamp("2027-06-30"): 0.3}
+    [flipped] = build_funds(specs, market, calls_are_negative=False)
+    assert flipped.unit_calls.to_dict() == {pd.Timestamp("2027-03-01"): 0.05, pd.Timestamp("2027-04-01"): 0.1}
+    assert flipped.unit_distributions.to_dict() == {pd.Timestamp("2027-02-01"): 0.2, pd.Timestamp("2027-05-01"): 0.02}
+
+
+def test_scale_divides_and_must_be_positive():
+    rows = pd.DataFrame([("F", "flow", -250_000.0, "2027-02-01", 1_000_000)], columns=["fund_name", "type", "value", "date", "scale"])
+    assert normalize_fund_market_data(rows)["unit"].tolist() == [-0.25]
+    for bad in (0, -1, None, "x"):
+        rows["scale"] = [bad]
+        with pytest.raises(ValueError, match="scale"):
+            normalize_fund_market_data(rows)
+
+
+@pytest.mark.parametrize("kind", ["Foo", "", None, 3])
+def test_unknown_kind_is_an_error(kind):
+    rows = pd.DataFrame([("F", kind, 1.0, "2027-02-01", 1)], columns=["fund_name", "type", "value", "date", "scale"])
+    with pytest.raises(ValueError, match="expected Flow, NAV, Call or Distribution"):
+        normalize_fund_market_data(rows)
+
+
+def test_market_rows_for_unknown_funds_fail_and_spec_only_funds_are_empty():
+    fund_spec, fund_market, market, rates = tables()
+    fund_spec = pd.concat([fund_spec, pd.DataFrame({"fund_name": ["C"], "type": ["VC"], "closing_date": ["2027-06-30"]})])
+    rates["VC"] = [0.0]
+    funds = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates), SPEC).funds
+    assert [f.name for f in funds] == ["A", "B", "C"] and funds[2].unit_calls.empty
+    stray = pd.concat([fund_market, pd.DataFrame([("Z", "Flow", -1.0, "2027-02-01", 1)], columns=fund_market.columns)])
+    with pytest.raises(ValueError, match=r"missing from fund_spec: \['Z'\]"):
+        FrameRepository(fund_spec, stray, market, rates) and Orchestrator(FrameRepository(fund_spec, stray, market, rates), SPEC).funds
+
+
+def test_fund_spec_validation():
+    with pytest.raises(ValueError, match=r"duplicated: \['A'\]"):
+        normalize_fund_specs(pd.DataFrame({"fund_name": ["A", "A"], "type": ["X", "X"], "closing_date": ["2027-01-01"] * 2}))
+    with pytest.raises(ValueError, match=r"no column for 'closing_date'; columns are \['fund_name', 'type'\]"):
+        normalize_fund_specs(pd.DataFrame({"fund_name": ["A"], "type": ["X"]}))
+    with pytest.raises(ValueError, match="fund_type is missing in row 1"):
+        normalize_fund_specs(pd.DataFrame({"fund_name": ["A"], "type": [None], "closing_date": ["2027-01-01"]}))
+    with pytest.raises(ValueError, match="closing_date in row 1"):
+        normalize_fund_specs(pd.DataFrame({"fund_name": ["A"], "type": ["X"], "closing_date": ["soon"]}))
+    with pytest.raises(ValueError, match="both look like|all look like"):
+        normalize_fund_specs(pd.DataFrame({"fund_name": ["A"], "fund": ["A"], "type": ["X"], "closing_date": ["2027-01-01"]}))
+    blank_rows = pd.DataFrame({"fund_name": ["A", None], "type": ["X", None], "closing_date": ["2027-01-01", None]})
+    assert len(normalize_fund_specs(blank_rows)) == 1  # fully blank rows are ignored
+
+
+# ------------------------------------------------------------ market data
+def test_market_data_long_form_pivots_to_wide(gbp_portfolio, worked_funds):
+    fund_spec, fund_market, wide, rates = tables()
+    long = wide.melt(id_vars="date", var_name="series", value_name="value")
+    result = Orchestrator(FrameRepository(fund_spec, fund_market, long, rates), SPEC).run()
+    pd.testing.assert_frame_equal(result.periods, expected(gbp_portfolio, worked_funds).periods)
+    with pytest.raises(ValueError, match="more than one value for 'liquid_gbp' on 2027-01-01"):
+        normalize_market_data(pd.concat([long, long.iloc[[0]]]))
+
+
+def test_market_data_sparse_fx_and_validation():
+    wide = normalize_market_data(pd.DataFrame({"date": ["2027-01-01", "2027-02-01", "2027-03-01"],
+                                               "liquid": [100, 101, 102], "fx": [0.8, None, 0.9]}))
+    assert wide.index.name == "date" and list(wide.columns) == ["liquid", "fx"]
+    assert wide["fx"].dropna().tolist() == [0.8, 0.9]
+    with pytest.raises(ValueError, match="more than one row for 2027-01-01"):
+        normalize_market_data(pd.DataFrame({"date": ["2027-01-01", "2027-01-01"], "liquid": [1, 2]}))
+    with pytest.raises(ValueError, match="liquid in row 2 is 'n/a', not a number"):
+        normalize_market_data(pd.DataFrame({"date": ["2027-01-01", "2027-02-01"], "liquid": [1, "n/a"]}))
+
+
+def test_fx_quote_can_be_inverted():
+    fund_spec, fund_market, market, rates = tables()
+    market["usd_per_gbp"] = 1.0 / market["gbp_per_usd"]
+    spec = SimulationSpec("GBP", liquid_series="liquid_gbp", fx_series="usd_per_gbp", fx_quote="usd_per_base",
+                          weights={"A": 0.6, "B": 0.4})
+    portfolio = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates), spec).portfolio
+    np.testing.assert_allclose(portfolio.usd_rate, [0.8, 0.8, 0.75])
+    with pytest.raises(ValueError, match="fx_quote must be one of"):
+        SimulationSpec("GBP", liquid_series="x", fx_series="y", fx_quote="sideways")
+
+
+def test_series_and_currency_configuration_errors():
+    fund_spec, fund_market, market, rates = tables()
+    repository = FrameRepository(fund_spec, fund_market, market, rates)
+    with pytest.raises(ValueError, match=r"no series 'nope' for liquid_series; series are \['liquid_gbp', 'gbp_per_usd'\]"):
+        Orchestrator(repository, SimulationSpec("GBP", liquid_series="nope", fx_series="gbp_per_usd")).portfolio
+    with pytest.raises(ValueError, match="fx_series is required: base_currency 'GBP' is not USD"):
+        Orchestrator(repository, SimulationSpec("GBP", liquid_series="liquid_gbp")).portfolio
+    with pytest.raises(ValueError, match="fx_series is set but base_currency is USD"):
+        Orchestrator(repository, SimulationSpec("USD", liquid_series="liquid_gbp", fx_series="gbp_per_usd")).portfolio
+    usd = Orchestrator(repository, SimulationSpec("USD", liquid_series="liquid_gbp", weights={"A": .6, "B": .4}))
+    assert usd.portfolio.usd_rate is None and usd.run().periods["total_close"].iloc[-1] == pytest.approx(1_208_350)
+    with pytest.raises(ValueError, match="liquid_series must name"):
+        SimulationSpec("USD", liquid_series=" ")
+
+
+# ------------------------------------------------------- commitment rates
+def test_commitment_rates_long_wide_spec_and_missing():
+    fund_spec, fund_market, market, wide = tables()
+    long = pd.DataFrame({"year": [2027, 2027], "fund_type": ["BUYOUT", "VC"], "rate": [0.1, 0.05]})
+    from_long = normalize_commitment_rates(long)
+    assert from_long.loc[2027].to_dict() == {"BUYOUT": 0.1, "VC": 0.05}
+    assert from_long.index.name == "year" and from_long.columns.name == "fund_type"
+    pd.testing.assert_frame_equal(normalize_commitment_rates(pd.DataFrame({"Year": [2027.0], "BUYOUT": [0.1]})),
+                                  normalize_commitment_rates(wide))
+    with pytest.raises(ValueError, match=r"no rate for \[\(2028, 'VC'\)\]; use 0"):
+        normalize_commitment_rates(pd.DataFrame({"year": [2027, 2027, 2028], "type": ["BUYOUT", "VC", "BUYOUT"], "rate": [.1, .05, .1]}))
+    with pytest.raises(ValueError, match="more than one rate for 'BUYOUT' in 2027"):
+        normalize_commitment_rates(pd.DataFrame({"year": [2027, 2027], "type": ["BUYOUT", "BUYOUT"], "rate": [.1, .2]}))
+    with pytest.raises(ValueError, match="not a calendar year"):
+        normalize_commitment_rates(pd.DataFrame({"year": ["FY27"], "BUYOUT": [0.1]}))
+    # the spec overrides the sheet; with neither, a clear error
+    override = Orchestrator(FrameRepository(fund_spec, fund_market, market, wide),
+                            SimulationSpec("GBP", "liquid_gbp", "gbp_per_usd", commitment_rates={"BUYOUT": {2027: 0.2}},
+                                           weights={"A": .6, "B": .4}))
+    assert override.policy.entitlements["A"].effective_rate == pytest.approx(0.12)
+    with pytest.raises(ValueError, match="commitment_rates are needed"):
+        Orchestrator(FrameRepository(fund_spec, fund_market, market), SPEC).portfolio
+
+
+# -------------------------------------------------------------- repository
+def test_frame_repository_normalizes_once_and_hands_out_copies():
+    fund_spec, fund_market, market, rates = tables()
+    repository = FrameRepository(fund_spec, fund_market, market, rates)
+    specs = repository.fund_specs()
+    assert list(specs.columns) == ["fund_name", "fund_type", "closing_date"]
+    assert specs["closing_date"].tolist() == [date(2027, 2, 15), date(2027, 5, 10)]
+    specs.loc[0, "fund_name"] = "changed"
+    assert repository.fund_specs()["fund_name"].tolist() == ["A", "B"]
+    assert list(repository.fund_market_data().columns) == ["fund_name", "kind", "date", "value", "scale", "unit"]
+    assert repository.market_data().index.equals(pd.DatetimeIndex(["2027-01-01", "2027-03-31", "2027-06-30"], name="date"))
+    assert FrameRepository(fund_spec, fund_market, market).commitment_rates() is None
+    with pytest.raises(TypeError, match="expected a DataFrame"):
+        FrameRepository("not a frame", fund_market, market)
+
+
+def test_build_portfolio_directly():
+    fund_spec, fund_market, market, rates = tables()
+    portfolio = build_portfolio(normalize_market_data(market), SPEC, normalize_commitment_rates(rates))
+    assert portfolio.liquid_levels.tolist() == [1e6, 1.1e6, 1.21e6] and portfolio.usd_rate.tolist() == [0.8, 0.8, 0.75]

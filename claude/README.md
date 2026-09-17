@@ -14,18 +14,22 @@ This is the implementation of `simulator-design.html` (in this folder). Package 
 | `pmsim/policy.py` | `SizingBase`, `CommitmentPolicy` protocol, `AnnualRatePolicy` |
 | `pmsim/simulator.py` | `Simulator`, `SimulationResult`, `Shortfall` — the one loop |
 | `pmsim/dates.py` | date coercion shared by the above |
+| `pmsim/data/tables.py` | the normalized tables a data source must deliver, and the column aliases accepted |
+| `pmsim/data/repository.py` | `DataRepository` protocol, `ExcelRepository`, `FrameRepository`, `SheetNames` |
+| `pmsim/data/orchestrator.py` | `SimulationSpec`, `Orchestrator`, `run_workbook` — tables in, result out |
 
 ## Run
 
 From this directory, with the project's virtual environment:
 
 ```bash
-../.venv/bin/python -m pytest -q        # tests
-../.venv/bin/python -m examples.basic   # worked example, carry-forward, shortfall
+../.venv/bin/python -m pytest -q           # tests
+../.venv/bin/python -m examples.basic      # worked example, carry-forward, shortfall
+../.venv/bin/python -m examples.workbook   # writes a sample workbook, loads it, runs it
 ```
 
 Nothing needs installing: `pyproject.toml` puts `.` on the test path, and `examples` is a
-package. Dependencies are NumPy and pandas (pytest for the tests).
+package. Dependencies are NumPy, pandas and openpyxl (for `.xlsx`); pytest for the tests.
 
 ## Usage
 
@@ -185,6 +189,48 @@ rate to the next year of that type that has one: 10% + 8% + 12% with 60/40 weigh
 Any object with `size(cohort, base) -> {fund name: base-currency amount}` is a policy; the
 sizing base offers `liquid`, `private_nav` and `total`. If it also has
 `explain(fund_name)`, those figures land in the commitments table.
+
+## Loading from a workbook
+
+`pmsim.data` turns an Excel workbook (a database later) into the engine's inputs:
+
+```python
+from pmsim.data import SimulationSpec, load_workbook
+
+spec = SimulationSpec(
+    base_currency="GBP",
+    liquid_series="liquid_gbp",      # market_data column holding the liquid total-return level
+    fx_series="gbp_per_usd",         # market_data column holding the USD rate; omit when base is USD
+    fx_quote="base_per_usd",         # or "usd_per_base" if the sheet quotes USD per 1 GBP
+    weights={"A": 0.6, "B": 0.4},    # optional; carry_forward=True also available
+    # commitment_rates=...           # optional: overrides the workbook's commitment_rates sheet
+)
+orchestrator = load_workbook("portfolio.xlsx", spec)
+orchestrator.fund_summary()          # what was loaded per fund, and whether it closes in the horizon
+orchestrator.event_map()             # where every fund event pools on the liquid grid
+result = orchestrator.run()
+```
+
+The workbook's sheets (names matched case-, space- and hyphen-insensitively; override with
+`SheetNames`):
+
+| Sheet | Columns | Notes |
+| --- | --- | --- |
+| `fund_spec` | `fund_name`, `type`, `closing_date` | one row per fund; `type` is the fund type |
+| `fund_market_data` | `fund_name`, `type`, `value`, `date`, `scale` | long form; `type` is `Flow` or `NAV` (also `Call`, `Distribution`); **unit = value ÷ scale** |
+| `market_data` | `date` + one column per series | wide, or long with `date`, `series`, `value`; blanks are fine (sparse FX) |
+| `commitment_rates` | `year` + one column per fund type | optional; or long with `year`, `type`, `rate`; every year, 0 for none |
+
+Column names are matched by alias (`Fund Name`, `fund`, `name` → `fund_name`; `Strategy`
+→ fund type; `Amount` → value; `Divisor`/`Commitment` → scale, and so on). `Flow` rows
+follow the LP's sign convention — negative is a call, positive a distribution — flip it
+with `calls_are_negative=False`; `Call`/`Distribution` rows are read as magnitudes. A fund
+in `fund_spec` with no market rows is a future closing with an empty history; market
+rows for a fund that is not in `fund_spec` are an error.
+
+`FrameRepository(fund_specs, fund_market_data, market_data, commitment_rates)` takes the
+same tables as DataFrames — the shape a database adapter will take: implement the four
+`DataRepository` methods and hand the object to `Orchestrator`.
 
 ## Out of scope
 

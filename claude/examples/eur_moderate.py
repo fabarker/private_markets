@@ -12,7 +12,8 @@ next to it and used instead, so the script runs on a fresh checkout — the noti
 at the top says which file was used.
 
 The EUR portfolio's balance is kept in euros, so the 100 dollars are converted at the first
-EURUSD rate on or before the first Liquid date; the script prints that conversion.
+available EURUSD rate — the rate the engine also carries at the inception date, one month
+before the first Liquid return; the script prints that conversion.
 """
 import sys
 from pathlib import Path
@@ -39,17 +40,19 @@ PERIOD_COLUMNS = ["liquid_open", "liquid_pnl", "distributions", "commitments", "
 
 
 def starting_balance(repository: WorkbookRepository, start_usd: float) -> tuple[float, float, pd.Timestamp]:
-    """The starting balance in the profile's currency, the rate used, and the date it applies to."""
+    """The starting balance in the profile's currency, the rate used, and the date of that rate."""
     market = repository.market_data()
-    first_date = market[repository.liquid_column].dropna().index[0]
+    first_liquid_date = market[repository.liquid_column].dropna().index[0]
     if repository.fx_column is None:  # a USD profile: nothing to convert
-        return start_usd, 1.0, first_date
-    rate = market[repository.fx_column].dropna().asof(first_date)
+        return start_usd, 1.0, first_liquid_date
+    rates = market[repository.fx_column].dropna()
+    rate = rates.asof(first_liquid_date)  # the first known rate; the engine carries it at inception too
     if pd.isna(rate):
-        raise ValueError(f"no {repository.fx_column} rate on or before {first_date.date()} to convert the starting balance")
+        raise ValueError(f"no {repository.fx_column} rate on or before {first_liquid_date.date()} to convert the starting balance")
+    rate_date = rates.index[rates.index <= first_liquid_date][-1]
     # usd_per_base (EURUSD): euros = dollars / rate; base_per_usd (USDEUR): euros = dollars × rate
     base = start_usd / rate if repository.fx_quote == "usd_per_base" else start_usd * rate
-    return float(base), float(rate), first_date
+    return float(base), float(rate), rate_date
 
 
 def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_currency: bool = START_IN_BASE_CURRENCY):
@@ -63,9 +66,9 @@ def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_curre
     repository = WorkbookRepository(path, CURRENCY, RISK)                       # 1. read every sheet, pick the profile
 
     if start_in_base_currency:                                                  # 2. the starting balance in euros
-        initial_value, rate, first_date = float(start_usd), float("nan"), repository.market_data().index[0]
+        initial_value, rate, rate_date = float(start_usd), float("nan"), None
     else:
-        initial_value, rate, first_date = starting_balance(repository, start_usd)
+        initial_value, rate, rate_date = starting_balance(repository, start_usd)
 
     spec = repository.simulation_spec(initial_value)                                       # 3. base currency, series, fx quote, returns→levels
     orchestrator = Orchestrator(repository, spec)
@@ -76,22 +79,23 @@ def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_curre
 
     result = orchestrator.run()                                                 # 7. the period loop
 
-    report(repository, orchestrator, result, start_usd, initial_value, rate, first_date, start_in_base_currency)
+    report(repository, orchestrator, result, start_usd, initial_value, rate, rate_date, start_in_base_currency)
     if out_dir is not None:
         write_csvs(orchestrator, result, Path(out_dir))
     return orchestrator, result
 
 
-def report(repository, orchestrator, result, start_usd, initial_value, rate, first_date, start_in_base_currency):
+def report(repository, orchestrator, result, start_usd, initial_value, rate, rate_date, start_in_base_currency):
+    inception = orchestrator.portfolio.first_date  # one period before the first Liquid return
     print(f"Workbook: {repository.path}")
     print(f"Sheets:   {repository.sheet_names}")
     print(f"Profile:  {repository.profile} · liquid column {repository.liquid_column!r} · "
           f"fx column {repository.fx_column!r} ({repository.fx_quote}) · inception year {repository.inception_year}")
     if start_in_base_currency:
-        print(f"\nStarting balance: {CURRENCY} {initial_value:,.2f} on {first_date.date()}")
+        print(f"\nStarting balance: {CURRENCY} {initial_value:,.2f} at inception {inception}")
     else:
         print(f"\nStarting balance: USD {start_usd:,.2f} = {CURRENCY} {initial_value:,.4f} "
-              f"at {repository.fx_column} {rate:.4f} on {first_date.date()}")
+              f"at {repository.fx_column} {rate:.4f} (first available rate, {rate_date.date()}), held at inception {inception}")
 
     print(f"\nCommitment rates for {repository.profile} (calendar year × type):")
     print(repository.commitment_rates().T)

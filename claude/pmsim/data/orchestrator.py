@@ -17,6 +17,7 @@ from typing import Any, Mapping
 import numpy as np
 import pandas as pd
 
+from ..dates import as_date
 from ..inputs import PRIVATE_CURRENCY, Fund, Portfolio
 from ..policy import AnnualRatePolicy
 from ..simulator import SimulationResult, Simulator
@@ -33,8 +34,11 @@ class SimulationSpec:
 
     ``liquid_series`` and ``fx_series`` name columns of market_data. ``liquid_kind`` says
     what the liquid column holds: ``levels`` (used as is; the first level is the starting
-    balance) or ``returns`` (simple per-period returns, compounded from ``initial_value``;
-    the first row's return is the return *into* the first observation and is not applied).
+    balance) or ``returns`` (simple per-period returns). With returns, the simulation
+    starts one period before the first return — ``inception_date`` if given, otherwise
+    inferred from the series' frequency and rolled back to a business day — where the
+    balance is ``initial_value``; every return is then applied. If the FX series starts
+    later than that inception date, its first rate is taken to apply there.
     ``fx_quote`` says how the rate is quoted: ``base_per_usd`` (GBP per 1 USD, used as is)
     or ``usd_per_base`` (USD per 1 GBP, inverted). ``commitment_rates`` overrides the
     repository's rate table when given. ``calls_are_negative`` is the sign convention of
@@ -49,6 +53,7 @@ class SimulationSpec:
     fx_quote: str = "base_per_usd"
     liquid_kind: str = "levels"
     initial_value: float | None = None
+    inception_date: Any = None
     commitment_rates: Any = None
     weights: Mapping[str, float] | None = None
     carry_forward: bool = False
@@ -67,22 +72,62 @@ class SimulationSpec:
             value = self.initial_value  # numbers.Real: numpy scalars count, bool is excluded explicitly
             if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value) or value <= 0:
                 raise ValueError("initial_value (the starting liquid balance) must be a positive number when liquid_kind is 'returns'")
+        elif self.inception_date is not None:
+            raise ValueError("inception_date only applies when liquid_kind is 'returns'")
 
 
-def returns_to_levels(returns: pd.Series, initial_value: float) -> pd.Series:
-    """Total-return levels from simple per-period returns.
+def infer_inception_date(dates: Any) -> pd.Timestamp:
+    """One period before the first date, on the frequency inferred from the dates, rolled back to a business day.
 
-    ``level[0] = initial_value`` and ``level[t] = level[t-1] × (1 + returns[t])``. The first
-    return is the return into the first observation — before the simulation starts — so it
-    is not applied; the engine's first-period factor is 1 either way.
+    Month-end returns starting 30 April give 31 March; quarter-ends give the previous
+    quarter end; daily returns give the previous day. A period end that falls on a weekend
+    rolls back to the Friday before it. The frequency comes from ``pd.infer_freq``, which
+    needs at least three regularly spaced dates.
     """
-    return_factors = 1.0 + returns.to_numpy(dtype=float)
-    if len(return_factors) == 0:
+    dates = pd.DatetimeIndex(dates)
+    if len(dates) < 3:
+        raise ValueError("at least three dated returns are needed to infer their frequency; supply inception_date")
+    frequency = pd.infer_freq(dates)
+    if frequency is None:
+        raise ValueError("cannot infer the frequency of the returns from their dates; supply inception_date")
+    previous = dates[0] - pd.tseries.frequencies.to_offset(frequency)
+    return pd.offsets.BDay().rollback(previous)
+
+
+def returns_to_levels(returns: pd.Series, initial_value: float, *, inception_date: Any = None) -> pd.Series:
+    """Total-return levels from simple per-period returns, starting one period before the first.
+
+    The inception date — ``inception_date`` if given, otherwise ``infer_inception_date`` of
+    the return dates — carries ``initial_value``; every return is then applied:
+    ``level[t] = level[t-1] × (1 + returns[t])``.
+    """
+    if returns.empty:
         raise ValueError("returns series is empty")
-    if not np.isfinite(return_factors).all() or (return_factors[1:] <= 0).any():
+    return_factors = 1.0 + returns.to_numpy(dtype=float)
+    if not np.isfinite(return_factors).all() or (return_factors <= 0).any():
         raise ValueError("returns must be finite and greater than -100%")
-    return_factors[0] = 1.0
-    return pd.Series(float(initial_value) * np.cumprod(return_factors), index=returns.index, name=returns.name)
+    dates = pd.DatetimeIndex(returns.index)
+    if inception_date is None:
+        inception = infer_inception_date(dates)
+    else:
+        inception = pd.Timestamp(as_date(inception_date))
+        if inception >= dates[0]:
+            raise ValueError(f"inception_date {inception.date()} must be before the first return on {dates[0].date()}")
+    levels = float(initial_value) * np.cumprod(np.concatenate([[1.0], return_factors]))
+    return pd.Series(levels, index=pd.DatetimeIndex([inception]).append(dates), name=returns.name)
+
+
+def _rate_at_inception(usd_rate: pd.Series, inception: pd.Timestamp) -> pd.Series:
+    """When the FX series starts after the inception date, its first rate is taken to apply there.
+
+    Nothing is normally converted on the inception date — no commitment exists yet — so the
+    rate only labels that row; without it the timeline would reject a series that starts
+    on the first return date, as the workbook's FX sheet does.
+    """
+    if usd_rate.empty or usd_rate.index.min() <= inception:
+        return usd_rate
+    first = usd_rate.sort_index().iloc[0]
+    return pd.concat([pd.Series([first], index=pd.DatetimeIndex([inception])), usd_rate])
 
 
 def build_funds(specs: pd.DataFrame, market: pd.DataFrame, *, calls_are_negative: bool = True) -> list[Fund]:
@@ -130,7 +175,7 @@ def build_portfolio(market: pd.DataFrame, spec: SimulationSpec, rates: Any) -> P
     """The ``Portfolio`` for a spec: liquid index and, unless the base currency is USD, the USD rate."""
     liquid = select_market_series(market, spec.liquid_series, label="liquid_series")
     if spec.liquid_kind == "returns":
-        liquid = returns_to_levels(liquid, spec.initial_value)
+        liquid = returns_to_levels(liquid, spec.initial_value, inception_date=spec.inception_date)
     usd_rate = None
     if spec.base_currency.strip().upper() == PRIVATE_CURRENCY:
         if spec.fx_series:
@@ -141,6 +186,8 @@ def build_portfolio(market: pd.DataFrame, spec: SimulationSpec, rates: Any) -> P
         usd_rate = select_market_series(market, spec.fx_series, label="fx_series")
         if spec.fx_quote == "usd_per_base":
             usd_rate = 1.0 / usd_rate
+        if spec.liquid_kind == "returns":
+            usd_rate = _rate_at_inception(usd_rate, liquid.index[0])
     return Portfolio(spec.base_currency, liquid, rates, usd_rate=usd_rate)
 
 
@@ -173,8 +220,13 @@ class Orchestrator:
 
     @cached_property
     def policy(self) -> AnnualRatePolicy:
+        # The rate table must cover every year with a return; an inception date that falls in
+        # the year before the first return carries no target and needs no row.
+        levels = self.portfolio.liquid_levels
+        first_year = levels.index[1 if self.spec.liquid_kind == "returns" else 0].year
         return AnnualRatePolicy(self.portfolio.commitment_rates, self.funds, self.spec.weights,
-                                carry_forward=self.spec.carry_forward, years=self.portfolio.calendar_years)
+                                carry_forward=self.spec.carry_forward,
+                                years=range(first_year, self.portfolio.last_date.year + 1))
 
     @cached_property
     def simulator(self) -> Simulator:

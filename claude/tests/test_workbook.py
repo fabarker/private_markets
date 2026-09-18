@@ -14,6 +14,7 @@ from pmsim.data import (  # noqa: E402
     SimulationSpec,
     WorkbookRepository,
     calendar_rates_for_profile,
+    infer_inception_date,
     load_profile_workbook,
     returns_to_levels,
     run_profile_workbook,
@@ -90,12 +91,35 @@ def test_commitment_schedule_maps_relative_years_onto_the_calendar(usd, eur):
 
 
 # ------------------------------------------------------- returns and levels
-def test_returns_to_levels_compounds_from_the_initial_value():
-    returns = pd.Series([0.05, 0.10, -0.50], index=pd.to_datetime(["2027-01-31", "2027-02-28", "2027-03-31"]))
-    levels = returns_to_levels(returns, 1000.0)
-    np.testing.assert_allclose(levels, [1000.0, 1100.0, 550.0])  # the first return is not applied
+def test_returns_to_levels_starts_one_period_before_the_first_return():
+    month_ends = pd.to_datetime(["2027-01-31", "2027-02-28", "2027-03-31"])
+    levels = returns_to_levels(pd.Series([0.05, 0.10, -0.50], index=month_ends), 1000.0)
+    assert list(levels.index) == [pd.Timestamp("2026-12-31"), *month_ends]  # a month back; 31 Dec 2026 is a Thursday
+    np.testing.assert_allclose(levels, [1000.0, 1050.0, 1155.0, 577.5])  # every return applied
     with pytest.raises(ValueError, match="greater than -100%"):
-        returns_to_levels(pd.Series([0.0, -1.0]), 1.0)
+        returns_to_levels(pd.Series([0.0, -1.0, 0.0], index=month_ends), 1.0)
+
+
+def test_inception_date_follows_the_inferred_frequency():
+    weekend = pd.to_datetime(["2027-02-28", "2027-03-31", "2027-04-30"])
+    assert infer_inception_date(weekend) == pd.Timestamp("2027-01-29")  # 31 Jan 2027 is a Sunday: back to the Friday
+    assert infer_inception_date(pd.to_datetime(["2027-06-30", "2027-09-30", "2027-12-31"])) == pd.Timestamp("2027-03-31")
+    assert infer_inception_date(pd.bdate_range("2027-01-04", periods=4)) == pd.Timestamp("2027-01-01")  # Monday: back to Friday
+    assert infer_inception_date(pd.date_range("2027-01-08", periods=3, freq="W-FRI")) == pd.Timestamp("2027-01-01")
+    irregular = pd.Series([0.1, 0.1, 0.1], index=pd.to_datetime(["2027-01-05", "2027-02-17", "2027-05-30"]))
+    with pytest.raises(ValueError, match="cannot infer the frequency"):
+        returns_to_levels(irregular, 1.0)
+    with pytest.raises(ValueError, match="at least three"):
+        returns_to_levels(irregular.iloc[:2], 1.0)
+    explicit = returns_to_levels(irregular, 1.0, inception_date="2027-01-01")  # the escape hatch
+    assert explicit.index[0] == pd.Timestamp("2027-01-01") and explicit.iloc[1] == pytest.approx(1.1)
+    with pytest.raises(ValueError, match="must be before the first return"):
+        returns_to_levels(irregular, 1.0, inception_date="2027-01-05")
+    with pytest.raises(ValueError, match="inception_date only applies"):
+        SimulationSpec("USD", "x", inception_date="2027-01-01")
+
+
+def test_initial_value_validation():
     for bad in (None, 0, -1, float("nan"), True, "100"):
         with pytest.raises(ValueError, match="initial_value"):
             SimulationSpec("USD", "x", liquid_kind="returns", initial_value=bad)
@@ -111,11 +135,14 @@ def test_profile_spec_builds_levels_and_inverts_fx(usd, eur):
         ("USD", "USD Conservative", "returns", 1_000_000, None)
     portfolio = Orchestrator(usd, spec).portfolio
     returns = usd.market_data()["USD Conservative"]
-    np.testing.assert_allclose(portfolio.liquid_levels.to_numpy(),
-                               1_000_000 * np.cumprod(np.r_[1.0, 1.0 + returns.to_numpy()[1:]]))
+    levels = portfolio.liquid_levels
+    assert levels.index[0] == pd.Timestamp("2009-03-31") and levels.index[1] == pd.Timestamp("2009-04-30")  # inception: a month back
+    np.testing.assert_allclose(levels.to_numpy(), 1_000_000 * np.cumprod(np.r_[1.0, 1.0 + returns.to_numpy()]))
     assert portfolio.usd_rate is None
     eur_portfolio = Orchestrator(eur, eur.simulation_spec(2_000_000)).portfolio
-    np.testing.assert_allclose(eur_portfolio.usd_rate.to_numpy(), 1.0 / eur.market_data()["EURUSD"].to_numpy())
+    rate = eur_portfolio.usd_rate
+    assert rate.index[0] == pd.Timestamp("2009-03-31") and rate.iloc[0] == rate.iloc[1]  # first known rate applies at inception
+    np.testing.assert_allclose(rate.to_numpy()[1:], 1.0 / eur.market_data()["EURUSD"].to_numpy())
     assert eur_portfolio.base_currency == "EUR" and eur_portfolio.liquid_levels.iloc[0] == 2_000_000
     overridden = usd.simulation_spec(1_000_000, carry_forward=True, stop_on_shortfall=False)
     assert overridden.carry_forward and not overridden.stop_on_shortfall
@@ -167,6 +194,27 @@ def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(wor
     assert "Starting balance: USD 100.00 = EUR" in capsys.readouterr().out
     _, in_euros = eur_moderate.run(workbook, start_usd=100.0, start_in_base_currency=True)
     assert in_euros.periods["liquid_open"].iloc[0] == 100.0
+    check_identities(result)
+
+
+def test_january_start_puts_inception_in_the_previous_year_without_needing_its_rate(tmp_path):
+    tables = sample_tables()
+    shifted = pd.date_range("2010-01-31", periods=len(tables["Liquid"]), freq="ME")
+    tables["Liquid"].index = shifted
+    tables["FX"].index = shifted
+    path = tmp_path / "january.xlsx"
+    with pd.ExcelWriter(path) as writer:
+        tables["Liquid"].to_excel(writer, sheet_name="Liquid")
+        tables["FX"].to_excel(writer, sheet_name="FX")
+        for sheet in ("Flows", "Commitments", "Spec"):
+            tables[sheet].to_excel(writer, sheet_name=sheet, index=False)
+    orchestrator = load_profile_workbook(path, "EUR", "Conservative", 1_000_000)
+    assert orchestrator.repository.inception_year == 2010  # schedule Year 0: the first Liquid year, not the inception row's
+    assert orchestrator.portfolio.first_date == date(2009, 12, 31)  # a Thursday
+    assert list(orchestrator.repository.commitment_rates().index)[:2] == [2010, 2011]
+    result = orchestrator.run()
+    assert result.status == "completed" and result.periods.index[0] == pd.Timestamp("2009-12-31")
+    assert result.periods["usd_rate"].iloc[0] == result.periods["usd_rate"].iloc[1]  # first known rate at inception
     check_identities(result)
 
 

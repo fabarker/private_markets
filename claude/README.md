@@ -223,7 +223,7 @@ compare a real file against.
 
 | Sheet | Layout | How it is read |
 | --- | --- | --- |
-| `Liquid` | blank header, then one column per profile: `USD Conservative`, `EUR Moderate`, … | **monthly returns**; compounded into levels from `initial_value`. The first row's return is the return *into* the first observation and is not applied |
+| `Liquid` | blank header, then one column per profile: `USD Conservative`, `EUR Moderate`, … | **monthly returns**. The frequency is inferred, the simulation starts one period before the first return (rolled back to a business day; the profile's `initial_value` is the balance there), and every return is applied. Pass `inception_date=` to `load_profile_workbook` when the dates are too irregular to infer. The FX sheet's first rate is taken to apply at inception |
 | `FX` | blank header, then `EURUSD`, `GBPUSD`, … (USD per 1 unit of the currency) | the profile's `<CCY>USD` column, inverted to base-per-USD; `USD<CCY>` is also recognised and used as is |
 | `Flows` | `Vintage`, `Date`, `Value`, `Type` (`Flow`/`NAV`), `Scale` | `Vintage` is the fund name; unit = `Value ÷ Scale`; negative flows are calls |
 | `Commitments` | `Type`, `Year`, `Currency`, `Risk`, `Commitment`, `Rate` | rows of the profile; `Year` is **years since inception** (0 = the year of the first Liquid date) and is mapped onto calendar years; `Rate` is the decimal used |

@@ -20,6 +20,7 @@ from .orchestrator import (
     SimulationSpec,
     build_funds,
     build_portfolio,
+    infer_inception_date,
     load_tables_workbook,
     returns_to_levels,
     run_tables_workbook,
@@ -40,7 +41,7 @@ from .workbook import (
 )
 
 __all__ = [
-    "SimulationSpec", "Orchestrator", "build_funds", "build_portfolio", "returns_to_levels",
+    "SimulationSpec", "Orchestrator", "build_funds", "build_portfolio", "returns_to_levels", "infer_inception_date",
     "load_tables_workbook", "run_tables_workbook",
     "DataRepository", "ExcelRepository", "FrameRepository", "SheetNames",
     "WorkbookRepository", "SheetLayout", "calendar_rates_for_profile", "load_profile_workbook", "run_profile_workbook",

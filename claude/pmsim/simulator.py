@@ -18,6 +18,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from datetime import date
+from numbers import Real
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -141,7 +142,8 @@ class Simulator:
         if len(set(names)) != len(names):
             duplicates = sorted({n for n in names if names.count(n) > 1})
             raise ValueError(f"fund names must be unique; duplicated: {duplicates}")
-        if not (isinstance(cash_tolerance, (int, float)) and math.isfinite(cash_tolerance) and cash_tolerance >= 0):
+        if (isinstance(cash_tolerance, bool) or not isinstance(cash_tolerance, Real)
+                or not math.isfinite(cash_tolerance) or cash_tolerance < 0):
             raise ValueError("cash_tolerance must be a finite non-negative number")
 
         self.portfolio = portfolio

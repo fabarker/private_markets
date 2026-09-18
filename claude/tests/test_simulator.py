@@ -219,8 +219,10 @@ def test_cash_tolerance_absorbs_rounding_only():
     fund = Fund("S", "VC", "2027-01-01", unit_calls=[("2027-02-01", 1.0 + 1e-13)])
     assert Simulator(portfolio, [fund]).run().status == "completed"
     assert Simulator(portfolio, [fund], cash_tolerance=0.0).run().status == "shortfall"
-    with pytest.raises(ValueError, match="cash_tolerance"):
-        Simulator(portfolio, [fund], cash_tolerance=-1)
+    assert Simulator(portfolio, [fund], cash_tolerance=np.int64(0)).cash_tolerance == 0.0  # numpy ints are numbers
+    for bad in (-1, float("nan"), True, "0"):  # a bool is not a tolerance
+        with pytest.raises(ValueError, match="cash_tolerance"):
+            Simulator(portfolio, [fund], cash_tolerance=bad)
 
 
 # ------------------------------------------------------------- validation

@@ -96,9 +96,11 @@ def test_returns_to_levels_compounds_from_the_initial_value():
     np.testing.assert_allclose(levels, [1000.0, 1100.0, 550.0])  # the first return is not applied
     with pytest.raises(ValueError, match="greater than -100%"):
         returns_to_levels(pd.Series([0.0, -1.0]), 1.0)
-    for bad in (None, 0, -1, float("nan"), True):
+    for bad in (None, 0, -1, float("nan"), True, "100"):
         with pytest.raises(ValueError, match="initial_value"):
             SimulationSpec("USD", "x", liquid_kind="returns", initial_value=bad)
+    for good in (100, 100.0, np.int64(100), np.float64(100.0)):  # numpy scalars from a DataFrame are numbers too
+        assert SimulationSpec("USD", "x", liquid_kind="returns", initial_value=good).initial_value == 100
     with pytest.raises(ValueError, match="liquid_kind must be one of"):
         SimulationSpec("USD", "x", liquid_kind="prices")
 

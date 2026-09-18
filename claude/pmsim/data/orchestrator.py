@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from functools import cached_property
+from numbers import Real
 from typing import Any, Mapping
 
 import numpy as np
@@ -63,8 +64,8 @@ class SimulationSpec:
         if not isinstance(self.liquid_series, str) or not self.liquid_series.strip():
             raise ValueError("liquid_series must name a market_data column")
         if self.liquid_kind == "returns":
-            value = self.initial_value
-            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+            value = self.initial_value  # numbers.Real: numpy scalars count, bool is excluded explicitly
+            if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value) or value <= 0:
                 raise ValueError("initial_value (the starting liquid balance) must be a positive number when liquid_kind is 'returns'")
 
 

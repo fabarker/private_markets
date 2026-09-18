@@ -13,9 +13,12 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
+import pandas as pd
+
 from .inputs import Fund, coerce_rate_table
 
 WEIGHT_TOLERANCE = 1e-9
+FundGroups = dict[tuple[int, str], list[Fund]]  # funds by (closing year, fund type)
 
 
 @dataclass(frozen=True)
@@ -50,6 +53,45 @@ class Entitlement:
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+def _weights_by_fund(groups: FundGroups, weights: Mapping[str, float]) -> dict[str, float]:
+    """Each fund's share of its group's pooled rate: given for all of a group or none (equal split), summing to 1."""
+    shares: dict[str, float] = {}
+    for (year, fund_type), group in groups.items():
+        given = [f for f in group if f.name in weights]
+        if not given:
+            for f in group:
+                shares[f.name] = 1.0 / len(group)
+            continue
+        if len(given) != len(group):
+            raise ValueError(f"weights for {fund_type} funds closing in {year} must be given for all of them or none")
+        for f in group:
+            weight = float(weights[f.name])
+            if not math.isfinite(weight) or weight < 0:
+                raise ValueError(f"weight for {f.name!r} must be a finite non-negative number")
+            shares[f.name] = weight
+        total = math.fsum(shares[f.name] for f in group)
+        if abs(total - 1.0) > WEIGHT_TOLERANCE:
+            raise ValueError(f"weights for {fund_type} funds closing in {year} sum to {total:.6g}, not 1")
+    return shares
+
+
+def _entitlements(rates: pd.DataFrame, groups: FundGroups, weights: Mapping[str, float],
+                  carry_forward: bool) -> dict[str, Entitlement]:
+    """Walk each fund type's rates year by year; with carry-forward, a year with no closing pools into the next."""
+    entitlements: dict[str, Entitlement] = {}
+    for fund_type in rates.columns:
+        carried = 0.0
+        for year in rates.index:
+            current = float(rates.at[year, fund_type])
+            pool = current + carried
+            cohort = groups.get((int(year), fund_type), [])
+            for f in cohort:
+                weight = weights[f.name]
+                entitlements[f.name] = Entitlement(int(year), current, carried, pool, weight, pool * weight)
+            carried = pool if (carry_forward and not cohort) else 0.0
+    return entitlements
 
 
 class AnnualRatePolicy:
@@ -91,39 +133,11 @@ class AnnualRatePolicy:
             if missing_years:
                 raise ValueError(f"commitment_rates has no row for year(s) {sorted(missing_years)}")
 
-        groups: dict[tuple[int, str], list[Fund]] = {}
+        groups: FundGroups = {}
         for fund in funds:
             groups.setdefault((fund.closing_year, fund.fund_type), []).append(fund)
-
-        self.weights: dict[str, float] = {}
-        for (year, fund_type), group in groups.items():
-            given = [f for f in group if f.name in weights]
-            if not given:
-                for f in group:
-                    self.weights[f.name] = 1.0 / len(group)
-                continue
-            if len(given) != len(group):
-                raise ValueError(f"weights for {fund_type} funds closing in {year} must be given for all of them or none")
-            for f in group:
-                weight = float(weights[f.name])
-                if not math.isfinite(weight) or weight < 0:
-                    raise ValueError(f"weight for {f.name!r} must be a finite non-negative number")
-                self.weights[f.name] = weight
-            total = math.fsum(self.weights[f.name] for f in group)
-            if abs(total - 1.0) > WEIGHT_TOLERANCE:
-                raise ValueError(f"weights for {fund_type} funds closing in {year} sum to {total:.6g}, not 1")
-
-        self.entitlements: dict[str, Entitlement] = {}
-        for fund_type in self.rates.columns:
-            carried = 0.0
-            for year in self.rates.index:
-                current = float(self.rates.at[year, fund_type])
-                pool = current + carried
-                cohort = groups.get((int(year), fund_type), [])
-                for f in cohort:
-                    weight = self.weights[f.name]
-                    self.entitlements[f.name] = Entitlement(int(year), current, carried, pool, weight, pool * weight)
-                carried = pool if (self.carry_forward and not cohort) else 0.0
+        self.weights = _weights_by_fund(groups, weights)
+        self.entitlements = _entitlements(self.rates, groups, self.weights, self.carry_forward)
 
     def size_commitments(self, cohort: Sequence[Fund], balances: SizingBalances) -> Mapping[str, float]:
         return {f.name: self.entitlements[f.name].effective_rate * balances.liquid for f in cohort}

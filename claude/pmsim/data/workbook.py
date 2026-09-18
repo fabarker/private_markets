@@ -26,6 +26,7 @@ import pandas as pd
 
 from ..inputs import PRIVATE_CURRENCY
 from .orchestrator import Orchestrator, SimulationSpec
+from .repository import _find_sheet, _read_workbook
 from .tables import (
     _dates,
     _numbers,
@@ -109,12 +110,7 @@ class WorkbookRepository:
         self.currency = currency.strip().upper()
         self.risk = risk.strip()
         self.layout = layout
-        if not self.path.is_file():
-            raise FileNotFoundError(f"workbook not found: {self.path}")
-        try:
-            self._book: dict[str, pd.DataFrame] = pd.read_excel(self.path, sheet_name=None)
-        except ImportError as exc:
-            raise ImportError("reading Excel workbooks needs openpyxl: pip install openpyxl") from exc
+        self._book = _read_workbook(self.path)
 
     # ----------------------------------------------------------------- sheets
     @property
@@ -122,12 +118,8 @@ class WorkbookRepository:
         return list(self._book)
 
     def raw_sheet(self, name: str, *, required: bool = True) -> pd.DataFrame | None:
-        for actual, frame in self._book.items():
-            if canonical_name(actual) == canonical_name(name):
-                return frame.copy()
-        if required:
-            raise ValueError(f"{self.path.name}: no sheet named {name!r}; sheets are {self.sheet_names}")
-        return None
+        """A raw sheet by name, or None when absent and not required."""
+        return _find_sheet(self._book, name, workbook=self.path.name, required=required)
 
     def _time_series_sheet(self, name: str, *, required: bool = True) -> pd.DataFrame | None:
         """A time-series sheet with its date column named ``date``; a blank first header counts as the date."""
@@ -218,8 +210,8 @@ class WorkbookRepository:
         return normalize_market_data(frame)
 
     def commitment_rates(self) -> pd.DataFrame:
-        return calendar_rates_for_profile(self.raw_sheet(self.layout.commitments), currency=self.currency, risk=self.risk,
-                                   inception_year=self.inception_year)
+        return calendar_rates_for_profile(self.raw_sheet(self.layout.commitments),
+                                          currency=self.currency, risk=self.risk, inception_year=self.inception_year)
 
     # ------------------------------------------------------------------- spec
     def simulation_spec(self, initial_value: float, **overrides: Any) -> SimulationSpec:

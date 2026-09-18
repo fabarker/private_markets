@@ -96,7 +96,7 @@ class Fund:
         Flows dated in ``(dates[t-1], dates[t]]`` are summed into period ``t``; the first
         period takes everything on or before ``dates[0]``. Unit NAV is rebuilt by walking
         events in date order from zero: a call adds, a distribution subtracts, and a mark
-        replaces the running value (marks are taken to include that day's flows). ``nav[t]``
+        replaces the running value (marks are taken to include that day's flows). ``unit_nav[t]``
         is the running value after the last event on or before ``dates[t]``, so a mark
         between observations counts and a missing mark leaves the cash-adjusted estimate.
         Events after the last observation are ignored. A negative running value is a data
@@ -154,7 +154,7 @@ def coerce_rate_table(value: Any) -> pd.DataFrame:
     table.index = pd.Index(years, name="year")
     table.columns = pd.Index(columns, name="fund_type")
     table = table.sort_index()
-    years = [int(year) for year in table.index]
+    years = sorted(years)
     try:
         table = table.astype(float)
     except (TypeError, ValueError):
@@ -200,15 +200,15 @@ class Portfolio:
         if self.base_currency == PRIVATE_CURRENCY:
             if self.usd_rate is not None:
                 raise ValueError("usd_rate must be omitted when base_currency is USD")
-        else:
-            if self.usd_rate is None:
-                raise ValueError(
-                    f"usd_rate is required: base_currency {self.base_currency!r} is not {PRIVATE_CURRENCY}"
-                )
-            rate = coerce_dated_series(self.usd_rate, name="usd_rate", sum_same_day=False)
-            if rate.empty or (rate <= 0).any():
-                raise ValueError("usd_rate must contain strictly positive rates")
-            _set(self, "usd_rate", rate)
+            return
+        if self.usd_rate is None:
+            raise ValueError(
+                f"usd_rate is required: base_currency {self.base_currency!r} is not {PRIVATE_CURRENCY}"
+            )
+        rate = coerce_dated_series(self.usd_rate, name="usd_rate", sum_same_day=False)
+        if rate.empty or (rate <= 0).any():
+            raise ValueError("usd_rate must contain strictly positive rates")
+        _set(self, "usd_rate", rate)
 
     @property
     def requires_fx_conversion(self) -> bool:

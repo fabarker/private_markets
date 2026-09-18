@@ -89,8 +89,8 @@ class SimulationResult:
     ``funds`` (index: date, fund) has one row per live commitment per period, in both
     currencies. ``commitments`` (index: date, fund) has one row per closing with the rate,
     sizing base and exchange rate used. ``shortfall`` names the first failed observation,
-    or is ``None``. ``beyond_horizon`` lists funds whose closing falls after the last
-    observation; they are never committed.
+    or is ``None``. ``funds_beyond_horizon`` lists funds whose closing falls after the
+    last observation; they are never committed.
     """
 
     base_currency: str
@@ -168,12 +168,15 @@ class Simulator:
         )
         self.stop_on_shortfall = bool(stop_on_shortfall)
         self.cash_tolerance = float(cash_tolerance)
-        self.funds_beyond_horizon: tuple[str, ...] = tuple(f.name for f in funds if self.aligned_histories[f.name].closes_beyond_horizon)
+        beyond_horizon: list[str] = []
         self._closings_by_period: dict[int, list[Fund]] = {}
         for fund in funds:
-            path = self.aligned_histories[fund.name]
-            if not path.closes_beyond_horizon:
-                self._closings_by_period.setdefault(path.closing_period, []).append(fund)
+            history = self.aligned_histories[fund.name]
+            if history.closes_beyond_horizon:
+                beyond_horizon.append(fund.name)
+            else:
+                self._closings_by_period.setdefault(history.closing_period, []).append(fund)
+        self.funds_beyond_horizon: tuple[str, ...] = tuple(beyond_horizon)
 
     # ------------------------------------------------------------------ run
     def run(self) -> SimulationResult:
@@ -190,15 +193,15 @@ class Simulator:
             day = timeline.observation_date(t)
             stamp = pd.Timestamp(day)
 
-            liquid_open = liquid.balance                                          # 1
+            liquid_open = liquid.balance                                            # 1
             nav_usd_open = book.nav_at(t - 1)
 
-            pnl = liquid.apply_return(t)                                                  # 2
+            pnl = liquid.apply_return(t)                                            # 2
 
-            distributions_existing = book.distributions_in_period(t) * fx[t]                # 3
+            distributions_existing = book.distributions_in_period(t) * fx[t]        # 3
             liquid.deposit(distributions_existing)
 
-            cohort = self._closings_by_period.get(t, [])                                     # 4
+            cohort = self._closings_by_period.get(t, [])                            # 4
             balances = SizingBalances(t, day, liquid.balance, nav_usd_open * fx[t])
             amounts = self._size_commitments(cohort, balances)
             for fund in cohort:
@@ -206,13 +209,13 @@ class Simulator:
                 book.add(commitment)
                 commitment_rows.append(self._commitment_row(stamp, fund, balances, amounts[fund.name], fx[t], commitment.usd))
 
-            new = book.commitments_closing_in(t)                                               # 5
+            new = book.commitments_closing_in(t)                                    # 5
             distributions_new = math.fsum(c.distributions_in_period(t) for c in new) * fx[t]
             liquid.deposit(distributions_new)
             calls = book.calls_in_period(t) * fx[t]
             missing = liquid.withdraw(calls)
 
-            private_close = book.nav_at(t) * fx[t]                                   # 6
+            private_close = book.nav_at(t) * fx[t]                                  # 6
             distributions = distributions_existing + distributions_new
             fx_translation = nav_usd_open * (fx[t] - fx[t - 1]) if t > 0 else 0.0
             period_rows.append({
@@ -227,11 +230,12 @@ class Simulator:
                 "fx_translation": fx_translation,
             })
             for c in book.commitments:
+                calls_usd, distributions_usd, nav_usd = c.calls_in_period(t), c.distributions_in_period(t), c.nav_at(t)
                 fund_rows.append({
                     "date": stamp, "fund": c.fund.name, "fund_type": c.fund.fund_type,
-                    "commitment_usd": c.usd, "calls_usd": c.calls_in_period(t), "distributions_usd": c.distributions_in_period(t),
-                    "nav_usd": c.nav_at(t), "calls_base": c.calls_in_period(t) * fx[t],
-                    "distributions_base": c.distributions_in_period(t) * fx[t], "nav_base": c.nav_at(t) * fx[t],
+                    "commitment_usd": c.usd, "calls_usd": calls_usd, "distributions_usd": distributions_usd,
+                    "nav_usd": nav_usd, "calls_base": calls_usd * fx[t],
+                    "distributions_base": distributions_usd * fx[t], "nav_base": nav_usd * fx[t],
                 })
             private_open = private_close
 
@@ -261,8 +265,8 @@ class Simulator:
         The liquid index sets the observation frequency; a flow or mark dated on any day
         pools onto the first observation on or after it — a call on the 15th lands on that
         month's end on a month-end grid, on the next business day on a daily grid.
-        ``observation_date`` is NaT and ``period`` is ``n`` for events after the last
-        observation, which the simulation ignores.
+        ``observation_date`` is NaT and ``period`` is ``n_observations`` for events after
+        the last observation, which the simulation ignores.
         """
         rows: list[dict[str, Any]] = []
         for fund in self.funds:

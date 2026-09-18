@@ -68,18 +68,33 @@ class SheetNames:
     commitment_rates: str = "commitment_rates"  # optional sheet
 
 
+def _read_workbook(path: Path) -> dict[str, pd.DataFrame]:
+    """Every sheet of a workbook, read once. Needs openpyxl for .xlsx."""
+    if not path.is_file():
+        raise FileNotFoundError(f"workbook not found: {path}")
+    try:
+        return pd.read_excel(path, sheet_name=None)
+    except ImportError as exc:
+        raise ImportError("reading Excel workbooks needs openpyxl: pip install openpyxl") from exc
+
+
+def _find_sheet(book: dict[str, pd.DataFrame], name: str, *, workbook: str, required: bool) -> pd.DataFrame | None:
+    """A copy of the sheet whose name matches ``name`` loosely, or None when absent and not required."""
+    for actual, frame in book.items():
+        if canonical_name(actual) == canonical_name(name):
+            return frame.copy()
+    if required:
+        raise ValueError(f"{workbook}: no sheet named {name!r}; sheets are {list(book)}")
+    return None
+
+
 class ExcelRepository:
     """The tables read from one workbook. Reads every sheet once; needs openpyxl for .xlsx."""
 
     def __init__(self, path: Any, sheets: SheetNames = SheetNames()) -> None:
         self.path = Path(path)
         self.sheets = sheets
-        if not self.path.is_file():
-            raise FileNotFoundError(f"workbook not found: {self.path}")
-        try:
-            self._book: dict[str, pd.DataFrame] = pd.read_excel(self.path, sheet_name=None)
-        except ImportError as exc:
-            raise ImportError("reading Excel workbooks needs openpyxl: pip install openpyxl") from exc
+        self._book = _read_workbook(self.path)
 
     @property
     def sheet_names(self) -> list[str]:
@@ -87,12 +102,7 @@ class ExcelRepository:
 
     def raw_sheet(self, name: str, *, required: bool = True) -> pd.DataFrame | None:
         """A raw sheet by name, or None when absent and not required."""
-        for actual, frame in self._book.items():
-            if canonical_name(actual) == canonical_name(name):
-                return frame.copy()
-        if required:
-            raise ValueError(f"{self.path.name}: no sheet named {name!r}; sheets are {self.sheet_names}")
-        return None
+        return _find_sheet(self._book, name, workbook=self.path.name, required=required)
 
     def fund_specs(self) -> pd.DataFrame:
         return normalize_fund_specs(self.raw_sheet(self.sheets.fund_spec))

@@ -148,6 +148,16 @@ def _years(values: Iterable[Any], *, table: str, column: Any) -> list[int]:
     return out
 
 
+def _kinds(values: Iterable[Any], *, table: str) -> list[str]:
+    out = []
+    for i, value in enumerate(values):
+        key = "" if _is_missing(value) else canonical_name(value)
+        if key not in KINDS:
+            raise ValueError(f"{table}: row {i + 1} has type {value!r}; expected Flow, NAV, Call or Distribution")
+        out.append(KINDS[key])
+    return out
+
+
 # ------------------------------------------------------------------ tables
 def normalize_fund_specs(raw: Any) -> pd.DataFrame:
     """fund_name, fund_type, closing_date — one row per fund, names unique."""
@@ -170,12 +180,7 @@ def normalize_fund_market_data(raw: Any) -> pd.DataFrame:
     table = "fund_market_data"
     frame = _non_empty_rows(raw, table)
     columns = {wanted: find_column(frame, wanted, table=table) for wanted in FUND_MARKET_COLUMNS}
-    kinds = []
-    for i, value in enumerate(frame[columns["kind"]]):
-        key = "" if _is_missing(value) else canonical_name(value)
-        if key not in KINDS:
-            raise ValueError(f"{table}: row {i + 1} has type {value!r}; expected Flow, NAV, Call or Distribution")
-        kinds.append(KINDS[key])
+    kinds = _kinds(frame[columns["kind"]], table=table)
     out = pd.DataFrame({
         "fund_name": _texts(frame[columns["fund_name"]], table=table, column="fund_name"),
         "kind": kinds,

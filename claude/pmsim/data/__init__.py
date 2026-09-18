@@ -31,7 +31,13 @@ from .tables import (
     normalize_fund_specs,
     normalize_market_data,
 )
-from .workbook import SheetLayout, WorkbookRepository, calendar_rates_for_profile, load_profile_workbook, run_profile_workbook
+from .workbook import (
+    SheetLayout,
+    WorkbookRepository,
+    calendar_rates_for_profile,
+    load_profile_workbook,
+    run_profile_workbook,
+)
 
 __all__ = [
     "SimulationSpec", "Orchestrator", "build_funds", "build_portfolio", "returns_to_levels",

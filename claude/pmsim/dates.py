@@ -25,7 +25,7 @@ def as_date(value: Any) -> date:
     if isinstance(value, str):
         try:
             value = pd.Timestamp(value)
-        except ValueError as exc:
+        except ValueError:
             raise TypeError(f"cannot interpret {value!r} as a date") from None
     if isinstance(value, datetime):  # pd.Timestamp is a datetime subclass
         stamp = pd.Timestamp(value)

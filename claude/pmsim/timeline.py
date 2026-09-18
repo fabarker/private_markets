@@ -7,9 +7,9 @@ period indices ``t``.
 The liquid index sets the observation frequency — month ends, quarter ends, business
 days, or any irregular dates — and fund events are dated on whatever day they happened.
 One rule covers every mismatch: an event on any day pools onto the first observation on
-or after that day (``first_observation_on_or_after`` / ``assign``). Exchange rates go the other way, because a
-rate is a state rather than an event: each observation uses the last rate on or before
-it (``asof``).
+or after that day (``first_observation_on_or_after``). Exchange rates go the other way,
+because a rate is a state rather than an event: each observation uses the last rate on
+or before it (``last_value_on_or_before``).
 """
 from __future__ import annotations
 
@@ -53,11 +53,11 @@ class Timeline:
         return range(self.dates[0].year, self.dates[-1].year + 1)
 
     def first_observation_on_or_after(self, day: Any) -> int:
-        """Index of the first observation on or after ``day``; ``n`` when ``day`` is past the last one."""
+        """Index of the first observation on or after ``day``; ``n_observations`` when ``day`` is past the last one."""
         return int(self.dates.searchsorted(pd.Timestamp(as_date(day)), side="left"))
 
     def first_observations_on_or_after(self, days: Any) -> np.ndarray:
-        """``first_observation_on_or_after`` for many days at once: the period each day pools onto (``n`` when beyond the last)."""
+        """``first_observation_on_or_after`` for many days at once, as an array."""
         stamps = pd.DatetimeIndex([pd.Timestamp(as_date(d)) for d in days])
         return np.asarray(self.dates.searchsorted(stamps, side="left"), dtype=int)
 

@@ -8,7 +8,7 @@ liquid index turns every dated input into per-period arrays once. The Simulator 
 the one loop; a CommitmentPolicy decides how much to commit when funds close.
 """
 from .inputs import PRIVATE_CURRENCY, Fund, Portfolio
-from .policy import AnnualRatePolicy, CommitmentPolicy, Entitlement, SizingBase
+from .policy import AnnualRatePolicy, CommitmentPolicy, Entitlement, SizingBalances
 from .simulator import Shortfall, SimulationResult, Simulator
 from .state import Commitment, LiquidAccount, CommitmentBook
 from .timeline import AlignedFundHistory, Timeline
@@ -17,6 +17,6 @@ __all__ = [
     "PRIVATE_CURRENCY", "Fund", "Portfolio",
     "Timeline", "AlignedFundHistory",
     "LiquidAccount", "Commitment", "CommitmentBook",
-    "SizingBase", "CommitmentPolicy", "AnnualRatePolicy", "Entitlement",
+    "SizingBalances", "CommitmentPolicy", "AnnualRatePolicy", "Entitlement",
     "Simulator", "SimulationResult", "Shortfall",
 ]

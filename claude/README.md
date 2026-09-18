@@ -11,7 +11,7 @@ This is the implementation of `simulator-design.html` (in this folder). Package 
 | `pmsim/inputs.py` | `Fund` (fund-held data, USD per $1 committed), `Portfolio` (portfolio-held data, base currency), `PRIVATE_CURRENCY` |
 | `pmsim/timeline.py` | `Timeline` (the observation grid), `AlignedFundHistory` (a fund's history on it) |
 | `pmsim/state.py` | `LiquidAccount`, `Commitment`, `CommitmentBook` — mutable state during a run |
-| `pmsim/policy.py` | `SizingBase`, `CommitmentPolicy` protocol, `AnnualRatePolicy` |
+| `pmsim/policy.py` | `SizingBalances`, `CommitmentPolicy` protocol, `AnnualRatePolicy` |
 | `pmsim/simulator.py` | `Simulator`, `SimulationResult`, `Shortfall` — the one loop |
 | `pmsim/dates.py` | date coercion shared by the above |
 | `pmsim/data/tables.py` | the normalized tables a data source must deliver, and the column aliases accepted |
@@ -198,8 +198,8 @@ summing to 1. With `carry_forward=True` a year in which no fund of a type closes
 rate to the next year of that type that has one: 10% + 8% + 12% with 60/40 weights gives
 18% and 12%. Fund types are independent.
 
-Any object with `size_commitments(cohort, base) -> {fund name: base-currency amount}` is a policy; the
-sizing base offers `liquid`, `private_nav` and `total`. If it also has
+Any object with `size_commitments(cohort, balances) -> {fund name: base-currency amount}` is a policy; the
+`SizingBalances` it receives offer `liquid`, `private_nav` and `total`. If it also has
 `explain_rate(fund_name)`, those figures land in the commitments table.
 
 ## The portfolio workbook

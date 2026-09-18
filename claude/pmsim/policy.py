@@ -19,7 +19,7 @@ WEIGHT_TOLERANCE = 1e-9
 
 
 @dataclass(frozen=True)
-class SizingBase:
+class SizingBalances:
     """What a policy may look at when sizing commitments at observation ``t``, in base currency."""
 
     t: int
@@ -33,7 +33,7 @@ class SizingBase:
 
 
 class CommitmentPolicy(Protocol):
-    def size_commitments(self, cohort: Sequence[Fund], base: SizingBase) -> Mapping[str, float]:
+    def size_commitments(self, cohort: Sequence[Fund], balances: SizingBalances) -> Mapping[str, float]:
         """Base-currency commitment for each fund in ``cohort``, keyed by fund name."""
 
 
@@ -125,8 +125,8 @@ class AnnualRatePolicy:
                     self.entitlements[f.name] = Entitlement(int(year), current, carried, pool, weight, pool * weight)
                 carried = pool if (self.carry_forward and not cohort) else 0.0
 
-    def size_commitments(self, cohort: Sequence[Fund], base: SizingBase) -> Mapping[str, float]:
-        return {f.name: self.entitlements[f.name].effective_rate * base.liquid for f in cohort}
+    def size_commitments(self, cohort: Sequence[Fund], balances: SizingBalances) -> Mapping[str, float]:
+        return {f.name: self.entitlements[f.name].effective_rate * balances.liquid for f in cohort}
 
     def explain_rate(self, fund_name: str) -> dict[str, Any]:
         """The entitlement behind a fund's rate, for the commitments table."""

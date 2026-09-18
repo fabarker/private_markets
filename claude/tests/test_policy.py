@@ -2,9 +2,9 @@ from datetime import date
 
 import pytest
 
-from pmsim import AnnualRatePolicy, Fund, SizingBase
+from pmsim import AnnualRatePolicy, Fund, SizingBalances
 
-BASE = SizingBase(t=3, date=date(2029, 3, 31), liquid=1_000_000.0, private_nav=250_000.0)
+BALANCES = SizingBalances(t=3, date=date(2029, 3, 31), liquid=1_000_000.0, private_nav=250_000.0)
 
 
 def fund(name, fund_type="BUYOUT", closing="2027-03-01"):
@@ -14,21 +14,21 @@ def fund(name, fund_type="BUYOUT", closing="2027-03-01"):
 def test_single_fund_takes_the_whole_rate():
     a = fund("A")
     policy = AnnualRatePolicy({"BUYOUT": {2027: 0.1}}, [a])
-    assert policy.size_commitments([a], BASE) == {"A": pytest.approx(100_000.0)}
+    assert policy.size_commitments([a], BALANCES) == {"A": pytest.approx(100_000.0)}
     assert policy.explain_rate("A") == {"policy_year": 2027, "current_year_rate": 0.1, "carried_rate": 0.0,
                                    "pooled_rate": 0.1, "weight": 1.0, "effective_rate": 0.1}
 
 
 def test_sizing_base_total():
-    assert BASE.total == 1_250_000.0
+    assert BALANCES.total == 1_250_000.0
 
 
 def test_two_funds_split_equally_by_default_or_by_weight():
     a, b = fund("A"), fund("B", closing="2027-09-01")
     equal = AnnualRatePolicy({"BUYOUT": {2027: 0.1}}, [a, b])
-    assert equal.size_commitments([a, b], BASE) == {"A": pytest.approx(50_000.0), "B": pytest.approx(50_000.0)}
+    assert equal.size_commitments([a, b], BALANCES) == {"A": pytest.approx(50_000.0), "B": pytest.approx(50_000.0)}
     weighted = AnnualRatePolicy({"BUYOUT": {2027: 0.1}}, [a, b], weights={"A": 0.6, "B": 0.4})
-    assert weighted.size_commitments([a], BASE) == {"A": pytest.approx(60_000.0)}
+    assert weighted.size_commitments([a], BALANCES) == {"A": pytest.approx(60_000.0)}
     assert weighted.entitlements["B"].effective_rate == pytest.approx(0.04)
 
 
@@ -87,7 +87,7 @@ def test_missing_rates_are_errors(rates, funds, years, message):
 
 def test_no_funds_and_no_types_is_valid():
     policy = AnnualRatePolicy({}, [], years=range(2027, 2030))
-    assert policy.size_commitments([], BASE) == {} and policy.entitlements == {}
+    assert policy.size_commitments([], BALANCES) == {} and policy.entitlements == {}
 
 
 def test_duplicate_fund_names_are_rejected():

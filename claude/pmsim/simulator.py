@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from .inputs import Fund, Portfolio
-from .policy import AnnualRatePolicy, CommitmentPolicy, SizingBase
+from .policy import AnnualRatePolicy, CommitmentPolicy, SizingBalances
 from .state import Commitment, LiquidAccount, CommitmentBook
 from .timeline import AlignedFundHistory, Timeline
 
@@ -199,12 +199,12 @@ class Simulator:
             liquid.deposit(distributions_existing)
 
             cohort = self._closings_by_period.get(t, [])                                     # 4
-            base = SizingBase(t, day, liquid.balance, nav_usd_open * fx[t])
-            amounts = self._size_commitments(cohort, base)
+            balances = SizingBalances(t, day, liquid.balance, nav_usd_open * fx[t])
+            amounts = self._size_commitments(cohort, balances)
             for fund in cohort:
                 commitment = Commitment(fund, self.aligned_histories[fund.name], amounts[fund.name] / fx[t])
                 book.add(commitment)
-                commitment_rows.append(self._commitment_row(stamp, fund, base, amounts[fund.name], fx[t], commitment.usd))
+                commitment_rows.append(self._commitment_row(stamp, fund, balances, amounts[fund.name], fx[t], commitment.usd))
 
             new = book.commitments_closing_in(t)                                               # 5
             distributions_new = math.fsum(c.distributions_in_period(t) for c in new) * fx[t]
@@ -219,7 +219,7 @@ class Simulator:
                 "date": stamp,
                 "liquid_open": liquid_open, "private_open": private_open, "total_open": liquid_open + private_open,
                 "return_factor": float(return_factors[t]), "usd_rate": float(fx[t]),
-                "liquid_pnl": pnl, "distributions": distributions, "sizing_base": base.liquid,
+                "liquid_pnl": pnl, "distributions": distributions, "sizing_base": balances.liquid,
                 "commitments": math.fsum(amounts.values()), "commitments_usd": math.fsum(c.usd for c in new),
                 "calls": calls, "liquid_close": liquid.balance, "private_close": private_close,
                 "total_close": liquid.balance + private_close,
@@ -278,11 +278,11 @@ class Simulator:
         return _build_table(rows, EVENT_COLUMNS, ["fund", "event_date"])
 
     # -------------------------------------------------------------- helpers
-    def _size_commitments(self, cohort: Sequence[Fund], base: SizingBase) -> dict[str, float]:
+    def _size_commitments(self, cohort: Sequence[Fund], balances: SizingBalances) -> dict[str, float]:
         if not cohort:
             return {}
         try:
-            sized: Mapping[str, float] = self.policy.size_commitments(cohort, base)
+            sized: Mapping[str, float] = self.policy.size_commitments(cohort, balances)
         except KeyError as exc:
             raise ValueError(f"policy has no sizing for fund {exc}") from None
         unknown = set(sized) - {f.name for f in cohort}
@@ -297,12 +297,12 @@ class Simulator:
         return amounts
 
     def _commitment_row(
-        self, stamp: pd.Timestamp, fund: Fund, base: SizingBase, amount: float, rate: float, usd: float
+        self, stamp: pd.Timestamp, fund: Fund, balances: SizingBalances, amount: float, rate: float, usd: float
     ) -> dict[str, Any]:
         row: dict[str, Any] = {
             "date": stamp, "fund": fund.name, "fund_type": fund.fund_type,
             "closing_date": pd.Timestamp(fund.closing_date), "policy_year": fund.closing_year,
-            "sizing_base": base.liquid, "rate": amount / base.liquid if base.liquid else float("nan"),
+            "sizing_base": balances.liquid, "rate": amount / balances.liquid if balances.liquid else float("nan"),
             "commitment_base": amount, "usd_rate": float(rate), "commitment_usd": usd,
             "current_year_rate": float("nan"), "carried_rate": float("nan"),
             "pooled_rate": float("nan"), "weight": float("nan"),

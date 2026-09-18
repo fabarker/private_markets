@@ -251,11 +251,11 @@ def test_bad_policy_output_is_rejected():
     fund = Fund("A", "VC", "2027-01-01")
 
     class Negative:
-        def size_commitments(self, cohort, base):
+        def size_commitments(self, cohort, balances):
             return {"A": -1.0}
 
     class Stranger:
-        def size_commitments(self, cohort, base):
+        def size_commitments(self, cohort, balances):
             return {"A": 1.0, "Z": 1.0}
 
     with pytest.raises(ValueError, match="invalid commitment"):
@@ -268,7 +268,7 @@ def test_custom_policy_without_explain_still_reports_rate(identities):
     portfolio = usd(levels(("2027-01-01", 200), ("2027-02-01", 200)), {"VC": {2027: 0.0}})
 
     class FlatDollars:
-        def size_commitments(self, cohort, base):
+        def size_commitments(self, cohort, balances):
             return {f.name: 50.0 for f in cohort}
 
     result = Simulator(portfolio, [Fund("A", "VC", "2027-01-15")], FlatDollars()).run()

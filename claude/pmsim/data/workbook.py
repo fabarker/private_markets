@@ -134,7 +134,7 @@ class WorkbookRepository:
             date_column = frame.columns[0]
         frame = frame.rename(columns={date_column: "date"})
         frame["date"] = [pd.Timestamp(d) for d in _dates(frame["date"], table=name, column="date")]
-        frame.columns = ["date"] + [str(c).strip() for c in frame.columns[1:]]
+        frame.columns = [c if c == "date" else str(c).strip() for c in frame.columns]  # wherever the date column sits
         return frame
 
     @cached_property

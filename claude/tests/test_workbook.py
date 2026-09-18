@@ -168,6 +168,28 @@ def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(wor
     check_identities(result)
 
 
+def test_date_column_need_not_be_first(tmp_path):
+    path = tmp_path / "date_second.xlsx"
+    tables = sample_tables()
+    liquid = tables["Liquid"].reset_index().rename(columns={"index": "Date"})
+    liquid = liquid[["USD Conservative", "Date", "USD Moderate", "USD Aggressive", "EUR Conservative", "EUR Moderate"]]
+    fx = tables["FX"].reset_index().rename(columns={"index": "Observation Date"})[["EURUSD", "GBPUSD", "Observation Date"]]
+    with pd.ExcelWriter(path) as writer:
+        liquid.to_excel(writer, sheet_name="Liquid", index=False)
+        fx.to_excel(writer, sheet_name="FX", index=False)
+        for sheet in ("Flows", "Commitments", "Spec"):
+            tables[sheet].to_excel(writer, sheet_name=sheet, index=False)
+    repository = WorkbookRepository(path, "EUR", "Conservative")
+    assert repository.inception_year == 2009 and repository.liquid_column == "EUR Conservative"
+    assert repository.fx_column == "EURUSD"
+    market = repository.market_data()
+    assert list(market.columns) == ["USD Conservative", "USD Moderate", "USD Aggressive", "EUR Conservative",
+                                    "EUR Moderate", "EURUSD", "GBPUSD"]
+    pd.testing.assert_frame_equal(market, WorkbookRepository(write_sample_workbook(tmp_path / "usual.xlsx"),
+                                                             "EUR", "Conservative").market_data())
+    check_identities(Orchestrator(repository, repository.simulation_spec(1_000_000)).run())
+
+
 def test_layout_override_and_missing_sheets(tmp_path):
     path = tmp_path / "renamed.xlsx"
     tables = sample_tables()

@@ -53,6 +53,8 @@ ALIASES: dict[str, frozenset[str]] = {
     "series": frozenset({"series", "name", "ticker", "field", "variable", "item"}),
     "portfolio": frozenset({"portfolio", "portfolio_name", "profile", "name", "liquid"}),
     "expected_return": frozenset({"expected_return", "expected_returns", "expected_ret", "exret", "ex_ret", "return", "x"}),
+    # deliberately not "years": the Spec sheet's own "Year" column holds the closing date
+    "draws": frozenset({"draws", "draw", "draw_plan", "drawn_years", "schedule_years", "commitment_years"}),
 }
 
 
@@ -305,3 +307,52 @@ def normalize_expected_returns(raw: Any) -> pd.Series:
         for portfolio, value in zip(portfolios, numbers)
     ]
     return pd.Series(returns, index=pd.Index(portfolios, name="portfolio"), name="expected_return", dtype=float)
+
+
+# --------------------------------------------------------------- draw plans
+DRAW_TERM = re.compile(r"^(\d{1,4})(?:\s*-\s*(\d{1,4}))?(?:\s*[x*×]\s*(\d+(?:\.\d+)?))?$", re.IGNORECASE)
+NO_DRAW_PLAN = frozenset({"", "-", "--", "none", "n/a", "na", "default", "nan"})
+
+
+def parse_draw_plan(text: Any, *, fund_name: str) -> dict[int, float] | None:
+    """One fund's draw plan from one cell: the schedule years it draws, each with a multiplier.
+
+    Years are counted from inception, as the Commitments sheet counts them. The cell holds
+    comma-separated terms, each a year (``7``), a run of years (``1-4``), or either of those
+    with a multiplier (``12x3``, ``1-4x2``): so ``1-4`` draws years 1, 2, 3 and 4 once each,
+    and ``12x3`` draws three times year 12's commitment. Blank, ``-`` and ``none`` all mean no
+    plan at all — the fund keeps whatever years ``carry_forward`` gives it.
+    """
+    if _is_missing(text):
+        return None
+    written = str(text).strip()
+    if written.lower() in NO_DRAW_PLAN:
+        return None
+
+    plan: dict[int, float] = {}
+    for term in written.split(","):
+        term = term.strip()
+        if not term:
+            continue
+        match = DRAW_TERM.match(term)
+        if match is None:
+            raise ValueError(f"draws for {fund_name!r}: cannot read {term!r}; write a year (7), a run of years "
+                             f"(1-4), or either with a multiplier (12x3)")
+        first, last, multiplier = match.group(1), match.group(2), match.group(3)
+        first, last = int(first), int(last or first)
+        if last < first:
+            raise ValueError(f"draws for {fund_name!r}: {term!r} runs backwards; write the earlier year first")
+        for year in range(first, last + 1):
+            if year in plan:
+                raise ValueError(f"draws for {fund_name!r}: year {year} appears twice; "
+                                 f"use a multiplier to draw a year more than once")
+            plan[year] = 1.0 if multiplier is None else float(multiplier)
+    if not plan:
+        return None
+    return dict(sorted(plan.items()))
+
+
+def relative_draw_plans_to_calendar(plans: Any, *, inception_year: int) -> dict[str, dict[int, float]]:
+    """Draw plans keyed by years since inception, remapped onto calendar years."""
+    return {name: {inception_year + year: multiplier for year, multiplier in plan.items()}
+            for name, plan in plans.items()}

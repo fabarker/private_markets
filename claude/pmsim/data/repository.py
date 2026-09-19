@@ -16,8 +16,9 @@ a database adapter will take.
                   unit = Value ÷ Scale; a negative Flow is a call, a positive one a distribution
     Commitments   Type | Year | Currency | Risk | Commitment | Rate
                   Year is years since inception (0 = the year of the first Liquid date); Rate is decimal
-    Spec          Name | Year | Type
-                  Year holds the fund's closing date (dd/mm/yyyy)
+    Spec          Name | Year | Type | Draws (optional)
+                  Year holds the fund's closing date (dd/mm/yyyy); Draws names the schedule
+                  years the fund collects, counted from inception: 1-4, 12x3, blank for none
     Liquid Spec   Liquid | ExRet          (also read as Return Spec, or Expected Returns)
                   one row per portfolio, named as its Liquid column; ExRet is the yearly return X
                   its pacing schedule was built on (5.4%, which Excel stores as 0.054)
@@ -33,7 +34,7 @@ import re
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Mapping, Protocol
 
 import pandas as pd
 
@@ -52,6 +53,8 @@ from .tables import (
     normalize_fund_market_data,
     normalize_fund_specs,
     normalize_market_data,
+    parse_draw_plan,
+    relative_draw_plans_to_calendar,
 )
 
 
@@ -71,18 +74,23 @@ class DataRepository(Protocol):
     def expected_returns(self) -> pd.Series | None:
         """Portfolio name → the yearly expected return its pacing schedule was built on; None when the source has none."""
 
+    def draw_plans(self) -> Mapping[str, Mapping[int, float]]:
+        """Fund name → calendar year → multiplier: which schedule years each fund draws. Empty when the source says nothing."""
+
 
 # ------------------------------------------------------------------ DataFrames
 class FrameRepository:
     """The tables handed over as DataFrames. Normalized once, at construction, so bad data fails early."""
 
     def __init__(self, fund_specs: Any, fund_market_data: Any, market_data: Any, commitment_rates: Any = None,
-                 expected_returns: Any = None) -> None:
+                 expected_returns: Any = None, draw_plans: Mapping[str, Mapping[int, float]] | None = None) -> None:
         self._fund_specs = normalize_fund_specs(fund_specs)
         self._fund_market_data = normalize_fund_market_data(fund_market_data)
         self._market_data = normalize_market_data(market_data)
         self._commitment_rates = None if commitment_rates is None else normalize_commitment_rates(commitment_rates)
         self._expected_returns = None if expected_returns is None else normalize_expected_returns(expected_returns)
+        # calendar years, like commitment_rates: these tables are handed over ready to use
+        self._draw_plans = {name: dict(plan) for name, plan in (draw_plans or {}).items()}
 
     def fund_specs(self) -> pd.DataFrame:
         return self._fund_specs.copy()
@@ -98,6 +106,9 @@ class FrameRepository:
 
     def expected_returns(self) -> pd.Series | None:
         return None if self._expected_returns is None else self._expected_returns.copy()
+
+    def draw_plans(self) -> dict[str, dict[int, float]]:
+        return {name: dict(plan) for name, plan in self._draw_plans.items()}
 
 
 # ------------------------------------------------------- the Excel portfolio workbook
@@ -289,6 +300,25 @@ class WorkbookRepository:
     def commitment_rates(self) -> pd.DataFrame:
         return calendar_rates_for_profile(self.raw_sheet(self.layout.commitments),
                                           currency=self.currency, risk=self.risk, inception_year=self.inception_year)
+
+    def draw_plans(self) -> dict[str, dict[int, float]]:
+        """The Spec sheet's optional Draws column, on calendar years.
+
+        Empty when the column is absent, so a workbook that does not have it leaves every fund
+        with the years ``carry_forward`` gives it.
+        """
+        table = self.layout.spec
+        frame = _non_empty_rows(self.raw_sheet(table), table)
+        column = find_column(frame, "draws", table=table, required=False)
+        if column is None:
+            return {}
+        names = _texts(frame[find_column(frame, "fund_name", table=table)], table=table, column="fund_name")
+        relative = {}
+        for name, cell in zip(names, frame[column]):
+            plan = parse_draw_plan(cell, fund_name=name)
+            if plan is not None:
+                relative[name] = plan
+        return relative_draw_plans_to_calendar(relative, inception_year=self.inception_year)
 
     def expected_returns(self) -> pd.Series:
         """The Liquid Spec sheet. Required: the Commitments sheet is a pacing schedule, and means nothing without its X."""

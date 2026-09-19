@@ -81,10 +81,10 @@ def test_worked_example_in_usd(usd_portfolio, worked_funds, identities):
     assert c["commitment_usd"].tolist() == pytest.approx([66_000, 48_400])
     assert c["closing_date"].tolist() == [D("2027-02-15"), D("2027-05-10")]
     assert c["policy_year"].tolist() == [2027, 2027] and c["rate"].tolist() == pytest.approx([0.06, 0.04])
-    assert c["weight"].tolist() == [0.6, 0.4] and c["current_year_rate"].tolist() == [0.1, 0.1]
-    assert c["current_year_usd"].tolist() == pytest.approx([110_000, 121_000])  # 10% of the liquid-only value, before weight
+    assert c["weight"].tolist() == [0.6, 0.4] and c["own_year_rate"].tolist() == [0.1, 0.1]
+    assert c["own_year_usd"].tolist() == pytest.approx([110_000, 121_000])  # 10% of the liquid-only value, before weight
     assert c["expected_value"].isna().all()  # no expected return given: the rates are shares of the liquid value already
-    assert (c["carried_usd"] == 0).all() and (c["carried_years"] == "").all()
+    assert (c["other_years_usd"] == 0).all() and (c["drawn_years"] == "2027").all()  # each fund draws its own year alone
     f = result.funds
     assert f.loc[(D("2027-06-30"), "A"), "nav_usd"] == pytest.approx(13_200)
     assert f.loc[(D("2027-06-30"), "B"), "calls_usd"] == pytest.approx(12_100)
@@ -134,11 +134,11 @@ def test_carry_forward_sizes_each_year_then_accumulates_the_dollars(identities):
     result = carry_forward_setup()
     c = result.commitments
     # 2027: 10% of 1,000,000 at its year end; 2028: 8% of 1,250,000 at its year end; both wait for 2029's funds
-    assert c["carried_usd"].tolist() == pytest.approx([200_000, 200_000]) and c["carried_years"].tolist() == ["2027, 2028"] * 2
-    assert c["current_year_usd"].tolist() == pytest.approx([150_000, 180_000])  # 12% where each fund closes
+    assert c["other_years_usd"].tolist() == pytest.approx([200_000, 200_000]) and c["drawn_years"].tolist() == ["2027, 2028, 2029"] * 2
+    assert c["own_year_usd"].tolist() == pytest.approx([150_000, 180_000])  # 12% where each fund closes
     assert c["commitment_usd"].tolist() == pytest.approx([210_000, 152_000])    # 60% and 40% of (carried + this year's)
-    assert c["current_year_rate"].tolist() == [0.12, 0.12] and c["weight"].tolist() == [0.6, 0.4]
-    np.testing.assert_allclose(c["commitment_usd"], c["weight"] * (c["current_year_usd"] + c["carried_usd"]))
+    assert c["own_year_rate"].tolist() == [0.12, 0.12] and c["weight"].tolist() == [0.6, 0.4]
+    np.testing.assert_allclose(c["commitment_usd"], c["weight"] * (c["own_year_usd"] + c["other_years_usd"]))
     np.testing.assert_allclose(c["rate"], c["commitment_usd"] / c["sizing_base_usd"])  # a share of the closing balance
     assert result.periods["commitments_usd"].tolist() == pytest.approx([0, 0, 210_000, 152_000])  # nothing moves before a fund exists
     identities(result)
@@ -147,7 +147,7 @@ def test_carry_forward_sizes_each_year_then_accumulates_the_dollars(identities):
 def test_without_carry_forward_the_years_with_no_fund_are_lost(identities):
     c = carry_forward_setup(carry_forward=False).commitments
     assert c["commitment_usd"].tolist() == pytest.approx([0.6 * 150_000, 0.4 * 180_000])
-    assert (c["carried_usd"] == 0).all()
+    assert (c["other_years_usd"] == 0).all()
 
 
 def test_carried_budgets_are_sized_in_dollars_at_each_year_ends_exchange_rate(identities):
@@ -158,8 +158,8 @@ def test_carried_budgets_are_sized_in_dollars_at_each_year_ends_exchange_rate(id
     policy = AnnualRatePolicy(portfolio.commitment_rates, [fund], carry_forward=True, years=portfolio.calendar_years)
     row = Simulator(portfolio, [fund], policy).run().commitments.iloc[0]
     # 10% of $1,000,000 (800,000 / 0.80), then 10% of $1,200,000 (900,000 / 0.75): dollars, fixed when sized
-    assert row["carried_usd"] == pytest.approx(100_000 + 120_000)
-    assert row["current_year_usd"] == pytest.approx(0.10 * 1_000_000 / 0.50)
+    assert row["other_years_usd"] == pytest.approx(100_000 + 120_000)
+    assert row["own_year_usd"] == pytest.approx(0.10 * 1_000_000 / 0.50)
     assert row["commitment_usd"] == pytest.approx(420_000) and row["commitment_base"] == pytest.approx(210_000)
 
 
@@ -417,7 +417,8 @@ def test_custom_policy_without_explain_still_reports_rate(identities):
     result = Simulator(portfolio, [Fund("A", "VC", "2027-01-15")], FlatDollars()).run()
     row = result.commitments.iloc[0]
     assert row["commitment_usd"] == 50 and row["rate"] == pytest.approx(0.25)
-    assert np.isnan(row["weight"]) and np.isnan(row["carried_usd"]) and row["carried_years"] == ""  # nothing to explain
+    assert np.isnan(row["weight"]) and np.isnan(row["other_years_usd"]) and row["drawn_years"] == ""  # nothing to explain
+    assert result.draws.empty  # and nothing to break down either
     identities(result)
 
 
@@ -477,3 +478,39 @@ def test_result_tables_have_stable_columns_and_dtypes(usd_portfolio, worked_fund
     assert result.commitments["policy_year"].dtype == "int64"
     assert str(result.commitments["closing_date"].dtype).startswith("datetime64")
     assert result.periods.dtypes.eq(float).all()
+
+
+# ------------------------------------------------------------- the draws table
+def test_a_drawn_year_after_the_closing_is_funded_at_the_closing():
+    """The engine never shows a policy a balance from a year it has not finished."""
+    portfolio = usd(levels(("2027-12-31", 1_000_000), ("2028-12-31", 2_000_000), ("2029-12-31", 4_000_000)),
+                    {"VC": {2027: 0.10, 2028: 0.10, 2029: 0.10}})
+    fund = Fund("V", "VC", "2027-12-31")
+    # V closes at the end of 2027 and draws 2027, 2028 and 2029 — two of them years the run has not reached
+    policy = AnnualRatePolicy(portfolio.commitment_rates, [fund], years=portfolio.calendar_years,
+                              draws={"V": {2027: 1.0, 2028: 1.0, 2029: 1.0}})
+    result = Simulator(portfolio, [fund], policy).run()
+
+    row = result.commitments.iloc[0]
+    # three years at 10% of the only balance known on 31 Dec 2027: not of 2028's or 2029's
+    assert row["commitment_usd"] == pytest.approx(300_000.0) and row["drawn_years"] == "2027, 2028, 2029"
+    assert row["own_year_usd"] == pytest.approx(100_000.0) and row["other_years_usd"] == pytest.approx(200_000.0)
+
+    draws = result.draws.reset_index()
+    assert draws["year"].tolist() == [2027, 2028, 2029]
+    assert (draws["funding_date"] == pd.Timestamp("2027-12-31")).all()      # every year funded at the closing
+    assert (draws["liquid_only_usd"] == 1_000_000).all()                    # on that day's value alone
+    assert draws["commitment_usd"].tolist() == pytest.approx([100_000] * 3)
+    assert draws["commitment_usd"].sum() == pytest.approx(row["commitment_usd"])
+
+
+def test_a_multiplier_shows_as_one_row_carrying_it():
+    portfolio = usd(levels(("2027-12-31", 1_000_000), ("2028-12-31", 1_000_000)), {"VC": {2027: 0.10, 2028: 0.10}})
+    fund = Fund("V", "VC", "2028-12-31")
+    policy = AnnualRatePolicy(portfolio.commitment_rates, [fund], years=portfolio.calendar_years,
+                              draws={"V": {2028: 3.0}})
+    result = Simulator(portfolio, [fund], policy).run()
+    assert result.commitments.iloc[0]["commitment_usd"] == pytest.approx(300_000.0)
+    assert result.commitments.iloc[0]["drawn_years"] == "2028x3"
+    draw = result.draws.iloc[0]
+    assert draw["multiplier"] == 3.0 and draw["rate"] == 0.10 and draw["commitment_usd"] == pytest.approx(300_000.0)

@@ -89,11 +89,11 @@ if __name__ == "__main__":
 
     carry = carry_forward_example()
     print("\nCarry-forward — 2027 and 2028 sized on their own year-end balances, collected 60/40 by 2029's funds:")
-    print(carry.commitments[["current_year_rate", "weight", "current_year_usd", "carried_usd", "carried_years", "commitment_usd"]])
+    print(carry.commitments[["own_year_rate", "weight", "own_year_usd", "other_years_usd", "drawn_years", "commitment_usd"]])
 
     pacing = pacing_schedule_example()
     print("\nPacing schedule with X = 5% — expected value 1 on the first commitment date, then 1.05, 1.1025:")
-    print(pacing.commitments[["sizing_base_usd", "current_year_rate", "expected_value", "rate", "commitment_usd"]])
+    print(pacing.commitments[["sizing_base_usd", "own_year_rate", "expected_value", "rate", "commitment_usd"]])
 
     failure = shortfall_example()
     print(f"\nShortfall example — {failure.status}: {failure.shortfall}")

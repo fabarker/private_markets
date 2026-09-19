@@ -1,0 +1,725 @@
+<title>Commitment Draw Plans</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #F5F7F5;
+    --surface: #FFFFFF;
+    --ink: #1A222B;
+    --muted: #5C6873;
+    --line: #D6DCD8;
+    --line-strong: #AEB8B2;
+    --code-bg: #ECF0EC;
+    --liquid: #0E6B66;
+    --liquid-soft: #DDEDEA;
+    --private: #A3621A;
+    --private-soft: #F4E6D4;
+    --engine: #3B4A5A;
+    --engine-soft: #E3E8ED;
+    --bad: #A63A2E;
+    --display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+    --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #121719; --surface: #1A2124; --ink: #E4E8E6; --muted: #98A4A8;
+      --line: #2B3437; --line-strong: #46535A; --code-bg: #1E272A;
+      --liquid: #4DB8AE; --liquid-soft: #173330; --private: #DBA35A; --private-soft: #3A2A16;
+      --engine: #A9B9C8; --engine-soft: #262F37; --bad: #E07A6C;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #121719; --surface: #1A2124; --ink: #E4E8E6; --muted: #98A4A8;
+    --line: #2B3437; --line-strong: #46535A; --code-bg: #1E272A;
+    --liquid: #4DB8AE; --liquid-soft: #173330; --private: #DBA35A; --private-soft: #3A2A16;
+    --engine: #A9B9C8; --engine-soft: #262F37; --bad: #E07A6C;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--body); font-size: 16px; line-height: 1.55;
+    padding-block: 0 96px; padding-inline: 24px;
+  }
+  a { color: inherit; }
+  a:focus-visible { outline: 2px solid var(--liquid); outline-offset: 2px; }
+  .page { max-width: 1080px; margin: 0 auto; }
+
+  header.top { padding-block: 56px 40px; border-bottom: 1px solid var(--line-strong); }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 18px; }
+  header.top h1 { font-family: var(--display); font-weight: 600; font-size: clamp(38px, 6vw, 60px); line-height: 1.02; letter-spacing: -.01em; margin: 0 0 18px; text-wrap: balance; max-width: 17ch; }
+  header.top .lede { font-size: 19px; line-height: 1.45; max-width: 62ch; margin: 0; }
+  .keyfacts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 28px 0 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .keyfacts b { color: var(--ink); font-weight: 500; }
+
+  .layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 48px; }
+  nav.toc { position: sticky; top: 24px; align-self: start; padding-top: 40px; font-size: 13px; max-height: calc(100vh - 24px); overflow-y: auto; }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+  nav.toc a { text-decoration: none; color: var(--muted); }
+  nav.toc a:hover { color: var(--ink); }
+  nav.toc .n { font-family: var(--mono); font-size: 11px; display: inline-block; width: 20px; }
+  nav.toc .toc-label { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+  main { min-width: 0; }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    nav.toc { position: static; padding-top: 28px; max-height: none; }
+    nav.toc ol { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+  }
+
+  main > section { padding-top: 48px; }
+  main > section + section { border-top: 1px solid var(--line); margin-top: 48px; }
+  h2 { font-family: var(--display); font-weight: 600; font-size: 30px; line-height: 1.1; margin: 0 0 8px; text-wrap: balance; }
+  h3 { font-family: var(--display); font-weight: 600; font-size: 21px; line-height: 1.15; margin: 30px 0 10px; text-wrap: balance; }
+  .kicker { color: var(--muted); margin: 0 0 22px; max-width: 62ch; }
+  p, li { max-width: 66ch; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  li::marker { color: var(--muted); }
+  code { font-family: var(--mono); font-size: .92em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre { font-family: var(--mono); font-size: 13px; line-height: 1.55; background: var(--code-bg); border: 1px solid var(--line); padding: 14px 16px; margin: 10px 0 14px; overflow-x: auto; max-width: none; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre .c { color: var(--muted); }
+  pre .k { color: var(--liquid); }
+
+  .tablewrap { overflow-x: auto; margin: 12px 0 18px; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  caption { caption-side: top; text-align: left; font-family: var(--mono); font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); padding: 9px 12px 8px; border-bottom: 1px solid var(--line); }
+  th, td { padding: 8px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+  th { font-family: var(--mono); font-weight: 500; font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); background: var(--ground); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.mono { font-family: var(--mono); font-size: 13px; white-space: nowrap; }
+  tr.total td { font-weight: 500; border-top: 1px solid var(--line-strong); }
+  .win { color: var(--liquid); }
+  .lose { color: var(--bad); }
+
+  /* the draw matrix: the assignment really is a grid of funds against schedule years */
+  .matrix table { font-size: 13px; }
+  .matrix th.yr { text-align: center; padding: 8px 0; width: 34px; min-width: 34px; }
+  .matrix td.fund { font-family: var(--mono); font-size: 12.5px; white-space: nowrap; padding-right: 16px; }
+  .matrix td.cell { padding: 0; text-align: center; border-left: 1px solid var(--line); height: 34px; }
+  .matrix td.cell span { display: block; font-family: var(--mono); font-size: 11px; line-height: 34px; }
+  .matrix td.own span { background: var(--liquid); color: var(--ground); font-weight: 500; }
+  .matrix td.past span { background: var(--engine-soft); color: var(--engine); }
+  .matrix td.fwd span { background: var(--private-soft); color: var(--private); box-shadow: inset 0 -2px 0 var(--private); }
+  .matrix tr.unclaimed td.cell span { color: var(--bad); }
+  .matrix tr.unclaimed td.fund { color: var(--muted); }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 22px; margin: 0 0 22px; padding: 0; list-style: none; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .legend li { margin: 0; display: flex; align-items: center; gap: 8px; max-width: none; }
+  .swatch { width: 26px; height: 16px; display: inline-block; }
+  .swatch.own { background: var(--liquid); }
+  .swatch.past { background: var(--engine-soft); border: 1px solid var(--engine); }
+  .swatch.fwd { background: var(--private-soft); box-shadow: inset 0 -2px 0 var(--private); }
+
+  /* two lifted blocks, each earning it: the open question, and the recommendation */
+  .ask { border: 1px solid var(--private); background: var(--private-soft); padding: 22px 24px 8px; margin: 22px 0; }
+  .ask h3 { margin-top: 0; }
+  .ask code { background: var(--surface); }
+  .rec { border-left: 3px solid var(--liquid); background: var(--liquid-soft); padding: 16px 20px 4px; margin: 18px 0; }
+  .rec p:last-child { margin-bottom: 12px; }
+  .rec .tag { font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--liquid); display: block; margin-bottom: 6px; }
+  .built { border: 1px solid var(--liquid); background: var(--liquid-soft); padding: 20px 24px 6px; margin: 0 0 8px; }
+  .built h2 { font-size: 24px; margin-bottom: 10px; }
+  .built code { background: var(--surface); }
+  .settled { font-family: var(--mono); font-size: 12px; letter-spacing: .05em; text-transform: uppercase; padding: 2px 8px; background: var(--liquid); color: var(--ground); white-space: nowrap; }
+
+  .opts { display: grid; gap: 0; margin: 18px 0 8px; }
+  .opt { padding: 22px 0; border-top: 1px solid var(--line); }
+  .opt:last-child { border-bottom: 1px solid var(--line); }
+  .opt h3 { margin: 0 0 4px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; }
+  .opt h3 .pick { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 8px; background: var(--liquid); color: var(--ground); font-weight: 500; }
+  .opt .verdict { color: var(--muted); font-size: 14px; margin: 0 0 12px; }
+
+  .files { display: grid; grid-template-columns: minmax(0, 200px) minmax(0, 1fr); gap: 10px 20px; margin: 0; }
+  .files dt { font-family: var(--mono); font-size: 12.5px; padding-top: 3px; }
+  .files dd { margin: 0; min-width: 0; }
+  @media (max-width: 620px) { .files { grid-template-columns: minmax(0, 1fr); gap: 2px 0; } .files dd { margin-bottom: 12px; } }
+
+  footer.end { margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--line-strong); font-size: 14px; color: var(--muted); }
+</style>
+
+<div class="page">
+<header class="top">
+  <p class="eyebrow">pmsim · design note for review</p>
+  <h1>Commitment Draw Plans</h1>
+  <p class="lede">A way to say, per fund, which of the pacing model's yearly commitments it collects and at what
+  multiple — so one secondaries subscription can take four vintages' worth of budget, or three times a single
+  year's. Reviewed, decided and built; this note is kept as the record of why it works the way it does.</p>
+  <ul class="keyfacts">
+    <li>concept · <b>a fund draws (year × multiplier)</b></li>
+    <li>today's rules · <b>two special cases of it</b></li>
+    <li>the hard part · <b>drawing years ahead of the closing</b></li>
+    <li>status · <b>built, 247 tests pass</b></li>
+  </ul>
+</header>
+
+<div class="layout">
+<nav class="toc">
+  <p class="toc-label">Contents</p>
+  <ol>
+    <li><a href="#built"><span class="n">0</span>As built</a></li>
+    <li><a href="#ask"><span class="n">1</span>What you asked for</a></li>
+    <li><a href="#idea"><span class="n">2</span>The idea</a></li>
+    <li><a href="#forward"><span class="n">3</span>Drawing forward</a></li>
+    <li><a href="#dates"><span class="n">4</span>Plan date, funding date</a></li>
+    <li><a href="#numbers"><span class="n">5</span>What it does to your run</a></li>
+    <li><a href="#where"><span class="n">6</span>Where the plan lives</a></li>
+    <li><a href="#code"><span class="n">7</span>What changes</a></li>
+    <li><a href="#report"><span class="n">8</span>What it reports</a></li>
+    <li><a href="#checks"><span class="n">9</span>Checks</a></li>
+    <li><a href="#decide"><span class="n">10</span>Decisions</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="built">
+  <div class="built">
+    <h2>As built</h2>
+    <p>Every decision in §10 came back the same way I recommended it, with one confirmation that mattered:
+    <b>combining a set of years means combining the dollar commitments those years compute to</b> — each year
+    priced on its own rate and its own portfolio value, then added — not pooling rates or percentages. That is
+    what the engine does.</p>
+    <ul>
+      <li><code>×3</code> is a multiplier on one year, not three consecutive years.</li>
+      <li>Convention <b>b</b>: each drawn year's rate is normalised on its own plan date.</li>
+      <li>The plan lives in a <code>Draws</code> column on the <code>Spec</code> sheet — <code>1-4</code>,
+      <code>12x3</code> — and an explicit plan switches carry-forward off for that fund type.</li>
+    </ul>
+    <p>The code landed close to the estimate: <code>Entitlement</code> is now
+    <code>(policy_year, fund_type, weight, draws)</code>, carry-forward and a plan are two ways of filling the
+    same <code>{year: multiplier}</code> mapping, and <code>result.draws</code> is the per-drawn-year audit table
+    of §8. Old behaviour is unchanged to the bit: across six sample runs the <code>periods</code> and
+    <code>funds</code> tables are byte-identical to before, and every commitment matches to 0.000e+00.</p>
+    <p>The figures in §5 were the prediction. The run gives SEC_VI <b>2.930</b>, SEC_VII <b>3.819</b>,
+    SEC_VIII <b>3.802</b>, SEC_IX <b>4.555</b>, SEC_X <b>5.389</b>, <b>20.495</b> for the sleeve — the plan's
+    numbers to three figures.</p>
+  </div>
+</section>
+
+<section id="ask">
+  <h2>1 · What you asked for</h2>
+  <p class="kicker">Five secondaries funds, each collecting a named block of the pacing model's yearly commitments.</p>
+
+  <p>Relative years run from inception: the sample workbook's first Liquid date is in 2009, so year <i>k</i> is
+  calendar <i>2009 + k</i>, and year 0 carries no commitment. Against that, the five subscriptions and the years
+  you want each to claim:</p>
+
+  <div class="tablewrap">
+    <table>
+      <caption>The requested mapping, against each fund's actual closing</caption>
+      <thead>
+        <tr><th>Fund</th><th>Closes</th><th class="num">Rel. year</th><th>Claims</th><th>Reach</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="mono">SEC_VI</td><td class="mono">31 Dec 2011</td><td class="num">2</td><td class="mono">1, 2, 3, 4</td><td>one year back, two years <b>forward</b></td></tr>
+        <tr><td class="mono">SEC_VII</td><td class="mono">31 Dec 2015</td><td class="num">6</td><td class="mono">5, 6, 7, 8</td><td>one year back, two years <b>forward</b></td></tr>
+        <tr><td class="mono">SEC_VIII</td><td class="mono">31 Dec 2018</td><td class="num">9</td><td class="mono">9, 10, 11</td><td>its own year, two years <b>forward</b></td></tr>
+        <tr><td class="mono">SEC_IX</td><td class="mono">31 Dec 2021</td><td class="num">12</td><td class="mono">12 × 3</td><td>its own year, tripled</td></tr>
+        <tr><td class="mono">SEC_X</td><td class="mono">31 Dec 2025</td><td class="num">16</td><td class="mono">16 × 3</td><td>its own year, tripled</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Two things fall straight out of that table. First, every fund but the last two claims years <i>after</i> its
+  own closing — which the engine cannot do today, and which is the one genuinely new mechanic here (§3). Second,
+  the mapping is a deliberate pattern, not a consequence of the closing dates, so it has to be stated as data
+  rather than derived.</p>
+
+  <p>Buyout needs none of this: <code>PEM2011</code>…<code>PEM2024</code> close in every year from 2010 to 2023, so
+  each simply takes its own year and nothing waits. This feature is, in practice, about the secondaries sleeve.</p>
+
+  <div class="ask">
+    <h3>Settled: <span class="settled">reading A</span></h3>
+    <p><b>“Year 12 × 3” means three times year 12's commitment.</b> Both readings were plausible and they give
+    different answers. On your own <code>Commitments</code> sheet's USD
+    Conservative secondaries rates (flat 0.80% through year 7, rising after):</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Reading</th><th class="num">SEC_IX</th><th class="num">SEC_X</th><th class="num">Programme</th><th>Years never claimed</th></tr></thead>
+        <tbody>
+          <tr><td><b>A</b> — × 3 is a multiplier</td><td class="num">3.00%</td><td class="num">3.69%</td><td class="num">15.94%</td><td class="mono">13, 14, 15, 17–20</td></tr>
+          <tr><td><b>B</b> — × 3 is three years</td><td class="num">3.16%</td><td class="num">3.90%</td><td class="num">16.31%</td><td class="mono">15, 19, 20</td></tr>
+          <tr class="total"><td>today's carry-forward</td><td class="num">2.85%</td><td class="num">4.56%</td><td class="num">14.81%</td><td class="mono">17–20</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>Reading A leaves a seven-year hole in the middle of the schedule, which the engine now reports rather than
+    hides: <code>unclaimed_schedule_years()</code> names relative years 13, 14, 15 and 17–20 as budget no
+    secondaries fund draws. The grammar expresses either reading at no extra cost — B would be
+    <code>12-14</code> instead of <code>12x3</code> — so switching is a spreadsheet edit, not a code change.</p>
+  </div>
+</section>
+
+<section id="idea">
+  <h2>2 · The idea: a fund draws years</h2>
+  <p class="kicker">One concept covers what the engine does today and everything you have just asked for.</p>
+
+  <p><b>A fund draws a set of schedule years, each with a multiplier.</b> That is the whole mechanic. The policy
+  already settles <i>which years</i> a fund collects before the run starts and leaves the dollars to the run
+  (<code>_entitlements</code> in <code>policy.py</code>); this widens that set from “its own year, plus whatever
+  was carried to it” to “whatever you say”, and attaches a multiplier.</p>
+
+  <p>Today's two behaviours become the two default ways of filling that set:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Rule</th><th>Years drawn</th><th>Status</th></tr></thead>
+      <tbody>
+        <tr><td><code>carry_forward=False</code></td><td class="mono">{closing year: 1}</td><td>today, unchanged</td></tr>
+        <tr><td><code>carry_forward=True</code></td><td class="mono">{closing year: 1, each waiting year: 1}</td><td>today, unchanged</td></tr>
+        <tr><td>a <b>draw plan</b></td><td class="mono">whatever the plan says, with multipliers</td><td>new</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>So this is a generalisation rather than a parallel mechanism: one code path, three ways of arriving at the
+  same <code>{year: multiplier}</code> mapping. A fund with no plan behaves exactly as it does now, which is what
+  keeps the change small and the 200 existing tests meaningful.</p>
+
+  <p>It is worth naming what the feature models. A secondaries subscription bought in 2011 that takes 2010–2013's
+  budget is buying four vintages of exposure in one commitment — the pacing model's yearly cadence and the fund
+  calendar's lumpiness reconciled by hand. <i>Vintage-year aggregation</i> is the thing; a draw plan is how you
+  write it down.</p>
+
+  <h3>The mapping, drawn</h3>
+  <p>The assignment is a grid of funds against schedule years, so it reads best as one. Reading A, with the
+  secondaries funds' own closing years marked:</p>
+
+  <ul class="legend">
+    <li><span class="swatch own"></span> its own closing year</li>
+    <li><span class="swatch past"></span> a year behind the closing — today's carry-forward reaches these</li>
+    <li><span class="swatch fwd"></span> a year ahead of the closing — new</li>
+  </ul>
+
+  <div class="tablewrap matrix">
+    <table>
+      <caption>Schedule year (relative to inception) → the fund that claims it</caption>
+      <thead>
+        <tr>
+          <th>Fund</th>
+          <th class="yr">1</th><th class="yr">2</th><th class="yr">3</th><th class="yr">4</th><th class="yr">5</th>
+          <th class="yr">6</th><th class="yr">7</th><th class="yr">8</th><th class="yr">9</th><th class="yr">10</th>
+          <th class="yr">11</th><th class="yr">12</th><th class="yr">13</th><th class="yr">14</th><th class="yr">15</th>
+          <th class="yr">16</th><th class="yr">17</th><th class="yr">18</th><th class="yr">19</th><th class="yr">20</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="fund">SEC_VI</td>
+          <td class="cell past"><span>·</span></td><td class="cell own"><span>·</span></td><td class="cell fwd"><span>·</span></td><td class="cell fwd"><span>·</span></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+        </tr>
+        <tr>
+          <td class="fund">SEC_VII</td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell past"><span>·</span></td><td class="cell own"><span>·</span></td><td class="cell fwd"><span>·</span></td><td class="cell fwd"><span>·</span></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+        </tr>
+        <tr>
+          <td class="fund">SEC_VIII</td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell own"><span>·</span></td><td class="cell fwd"><span>·</span></td><td class="cell fwd"><span>·</span></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+        </tr>
+        <tr>
+          <td class="fund">SEC_IX</td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell own"><span>×3</span></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+        </tr>
+        <tr>
+          <td class="fund">SEC_X</td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell own"><span>×3</span></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+        </tr>
+        <tr class="unclaimed">
+          <td class="fund">unclaimed</td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td><td class="cell"></td>
+          <td class="cell"></td><td class="cell"></td>
+          <td class="cell"><span>✕</span></td><td class="cell"><span>✕</span></td><td class="cell"><span>✕</span></td>
+          <td class="cell"></td>
+          <td class="cell"><span>✕</span></td><td class="cell"><span>✕</span></td><td class="cell"><span>✕</span></td><td class="cell"><span>✕</span></td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>The grid makes the two structural facts obvious: three funds reach past their own closing, and reading A
+  spends nothing at all from years 13–15 and 17–20. Whether that is intended is decision 3.</p>
+</section>
+
+<section id="forward">
+  <h2>3 · Drawing forward, without look-ahead</h2>
+  <p class="kicker">The engine deliberately hides the future from the policy. That guard has to stay.</p>
+
+  <p>Commitment sizing today is scrupulous about information. <code>Simulator._sizing_balances</code> hands the
+  policy only <i>completed</i> calendar years:</p>
+
+<pre><code>year_ends={year: end <span class="k">for</span> year, end <span class="k">in</span> self._year_ends.items() <span class="k">if</span> year &lt; day.year},</code></pre>
+
+  <p>The simulator holds every year end for the whole run — it computed them all up front — and that filter is the
+  single thing stopping a commitment being sized on a balance the investor could not have known. A fund closing
+  on 31 Dec 2011 that claims year 2013's budget must not be sized on 31 Dec 2013's liquid value. <b>The filter
+  stays exactly as it is.</b></p>
+
+  <p>Which leaves a straightforward rule. A commitment is fixed once, on the closing date, so that is the latest
+  date anything about it can be known:</p>
+
+  <div class="rec">
+    <span class="tag">Rule</span>
+    <p>A drawn year is funded from <b>its own year end when the run has reached it, and from the closing
+    observation otherwise</b>. Equivalently: the year end of <code>min(drawn year, closing year)</code>.</p>
+    <p>For a fund that draws only its own year and earlier ones, this is precisely what the engine does now — so
+    carry-forward keeps its current numbers to the last decimal.</p>
+  </div>
+
+  <p>A year before the first observation still contributes nothing: there was no portfolio to size on, and
+  <code>year_end_on_or_before</code> already returns <code>None</code> there.</p>
+</section>
+
+<section id="dates">
+  <h2>4 · Plan date and funding date</h2>
+  <p class="kicker">Forward draws split one date into two, and the split changes the answer. This is the part I'd most like you to check.</p>
+
+  <p>Recall how a rate becomes a share. The <code>Commitments</code> sheet is a pacing schedule quoted per 1 of
+  liquid value on the first commitment date, in a model where the portfolio then grows at X, so the engine divides
+  it back out before using it:</p>
+
+<pre><code>expected_value(d) = (1 + X) ** years from the first commitment date to d
+share             = schedule[year, type] / expected_value(d)
+budget            = share × actual liquid-only value in USD</code></pre>
+
+  <p>Until now <code>d</code> has been unambiguous: a year's rate was always divided by the expected value on
+  <i>that year's</i> date, and multiplied by the liquid value on <i>that same date</i>. A forward draw prises the
+  two apart, and they answer different questions:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Date</th><th>Answers</th><th>For a forward draw</th></tr></thead>
+      <tbody>
+        <tr><td><b>plan date</b></td><td>what fraction of the portfolio did the pacing model intend for this year?</td><td>the drawn year's own date — the model's calendar, not an observation</td></tr>
+        <tr><td><b>funding date</b></td><td>what is the portfolio actually worth when we write the cheque?</td><td>the closing observation</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Take the two candidate conventions. Year 4's rate in the sample workbook is 0.937%, and SEC_VI closes at the
+  end of year 2, when the model expects 1.054:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Convention</th><th>Divides the rate by</th><th class="num">Share of liquid value</th></tr></thead>
+      <tbody>
+        <tr><td><b>a</b> — one date for both</td><td class="mono">expected_value(closing) = 1.054</td><td class="num lose">0.889%</td></tr>
+        <tr><td><b>b</b> — plan date for the rate</td><td class="mono">expected_value(end of year 4) = 1.171</td><td class="num win">0.800%</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Convention <b>a</b> quietly inflates every forward draw by the expected growth between the two dates. The
+  pacing model earmarked 0.937% <i>of the larger portfolio it expects in year 4</i>; charging that number against
+  today's smaller portfolio commits more than the model ever intended — 11.1% more for a draw two years out at
+  X = 5.4%, and the error compounds with the reach.</p>
+
+  <div class="rec">
+    <span class="tag">Recommendation</span>
+    <p>Convention <b>b</b>. Normalise each drawn year's rate by the expected value on <b>that year's own date</b>,
+    then fund it from the liquid value on the funding date. Every drawn year then contributes the share the
+    pacing model meant it to, and the only thing the closing date decides is what that share is applied to.</p>
+    <p>The sample workbook makes this visible: its schedule grows at exactly X, so under <b>b</b> every drawn
+    year resolves to 0.800% on the nose, and SEC_VI's four years come to 0.753 + 3 × 0.726 = <b>$2.93</b>. Under
+    <b>a</b> the same four years give $3.05.</p>
+  </div>
+
+  <p>One practical detail: the plan date for a year the run has not reached cannot be an observation, so it is
+  <b>31 December of that year</b> — a date on the pacing model's own calendar, which touches no market data and
+  therefore leaks nothing. For a month-end series it is the same date the observation would have carried anyway,
+  so past and future years are treated consistently:</p>
+
+<pre><code><span class="k">def</span> _plan_date(self, year, balances):
+    <span class="c">"""Where the pacing model puts a year: its last observation, or 31 December when the run has not reached it."""</span>
+    year_end = balances.year_ends.get(year)
+    <span class="k">return</span> year_end.date <span class="k">if</span> year_end <span class="k">is not None</span> <span class="k">else</span> date(year, 12, 31)</code></pre>
+</section>
+
+<section id="numbers">
+  <h2>5 · What it does to your run</h2>
+  <p class="kicker">Sample workbook, USD Conservative, $100 start, X = 5.4%, first commitment 31 Dec 2010.</p>
+
+  <p>Every figure below comes from the run as it stands today — the year-end liquid-only values and expected
+  values are the real ones, only the draw arithmetic is hypothetical. Dollars are the USD commitment before
+  translation.</p>
+
+  <div class="tablewrap">
+    <table>
+      <caption>Secondaries commitments · draw plan (reading A) against today's carry-forward</caption>
+      <thead>
+        <tr><th>Fund</th><th class="num">Plan, conv. b</th><th class="num">Plan, conv. a</th><th class="num">Today</th><th class="num">b ÷ today</th><th>Years drawn, and where funded from</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="mono">SEC_VI</td><td class="num">2.93</td><td class="num">3.05</td><td class="num">1.48</td><td class="num">1.98×</td><td class="mono">1@2010 · 2,3,4@2011</td></tr>
+        <tr><td class="mono">SEC_VII</td><td class="num">3.82</td><td class="num">3.98</td><td class="num">3.40</td><td class="num">1.12×</td><td class="mono">5@2014 · 6,7,8@2015</td></tr>
+        <tr><td class="mono">SEC_VIII</td><td class="num">3.80</td><td class="num">4.01</td><td class="num">3.45</td><td class="num">1.10×</td><td class="mono">9,10,11@2018</td></tr>
+        <tr><td class="mono">SEC_IX</td><td class="num">4.55</td><td class="num">4.55</td><td class="num">4.33</td><td class="num">1.05×</td><td class="mono">12×3@2021</td></tr>
+        <tr><td class="mono">SEC_X</td><td class="num">5.39</td><td class="num">5.39</td><td class="num">6.57</td><td class="num">0.82×</td><td class="mono">16×3@2025</td></tr>
+        <tr class="total"><td>programme</td><td class="num">20.50</td><td class="num">20.98</td><td class="num">19.24</td><td class="num">1.07×</td><td></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Three things worth noting before you commit to the mapping:</p>
+  <ul>
+    <li><b>SEC_VI roughly doubles.</b> It goes from claiming two years to claiming four, at the bottom of the
+    portfolio's value range (liquid-only was 94.13 at end-2010 and 90.70 at end-2011, both below the $100 start).
+    That is the largest single change the plan makes.</li>
+    <li><b>SEC_X shrinks by a fifth</b>, from 6.57 to 5.39: today's carry-forward hands it four years' rates
+    (13–16), the plan gives it three times year 16's. The ×3 multiplier is smaller than the accumulation it
+    replaces.</li>
+    <li><b>The programme total barely moves</b> — 20.50 against 19.24, up 7% — but the timing shifts materially
+    earlier. More capital committed in 2011 and 2015 means more called sooner, a deeper J-curve, and a different
+    PME. The counterfactual and PME tables will tell you whether that helps.</li>
+  </ul>
+
+  <p>The two conventions differ by 2.4% at the programme level and only for the three funds that reach forward,
+  which is small — but it is a systematic over-commitment, not noise, and it grows with X and with reach.</p>
+</section>
+
+<section id="where">
+  <h2>6 · Where the plan lives</h2>
+  <p class="kicker">Per-fund data, so it belongs with the fund spec. Three ways to put it there.</p>
+
+  <div class="opts">
+    <div class="opt">
+      <h3>A · A <code>Draws</code> column on the <code>Spec</code> sheet <span class="pick">recommended</span></h3>
+      <p class="verdict">One cell per fund, the whole plan visible beside the closing dates.</p>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>Name</th><th>Year</th><th>Type</th><th>Draws</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">SEC_VI</td><td class="mono">31/12/2011</td><td class="mono">SECONDARIES</td><td class="mono">1-4</td></tr>
+            <tr><td class="mono">SEC_VII</td><td class="mono">31/12/2015</td><td class="mono">SECONDARIES</td><td class="mono">5-8</td></tr>
+            <tr><td class="mono">SEC_VIII</td><td class="mono">31/12/2018</td><td class="mono">SECONDARIES</td><td class="mono">9-11</td></tr>
+            <tr><td class="mono">SEC_IX</td><td class="mono">31/12/2021</td><td class="mono">SECONDARIES</td><td class="mono">12x3</td></tr>
+            <tr><td class="mono">SEC_X</td><td class="mono">31/12/2025</td><td class="mono">SECONDARIES</td><td class="mono">16x3</td></tr>
+            <tr><td class="mono">PEM2011</td><td class="mono">31/12/2010</td><td class="mono">BUYOUT</td><td class="mono">—</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>A grammar small enough to hold in your head: comma-separated terms, each a year (<code>7</code>), a run
+      of years (<code>1-4</code>), or a year with a multiplier (<code>12x3</code>). So <code>1-4, 7</code> and
+      <code>12x3, 15</code> both work. Blank means “behave as now”. Years are <b>relative</b>, matching the
+      <code>Commitments</code> sheet and your own description; the existing <code>Year</code> column holds the
+      closing date, so there is no collision.</p>
+      <p>Because <code>Spec</code> is shared across profiles, one plan governs all nine currency/risk
+      combinations — right, since the fund universe is shared and only the rates differ.</p>
+    </div>
+
+    <div class="opt">
+      <h3>B · A <code>Draws</code> sheet, one row per fund-year</h3>
+      <p class="verdict">More robust, more rows, nothing to parse: <code>Name | Year | Multiplier</code>.</p>
+      <p>SEC_VI becomes four rows. Sixteen rows for the sleeve rather than five cells. Worth it if the plans ever
+      grow fractional multipliers or per-profile variants, since a column of numbers beats a grammar for that.
+      Otherwise the compact form shows the pattern and this hides it.</p>
+    </div>
+
+    <div class="opt">
+      <h3>C · In code, as a mapping</h3>
+      <p class="verdict">Exists either way — it is the engine's own interface.</p>
+<pre><code>AnnualRatePolicy(rates, funds, draws={<span class="c"># relative years</span>
+    <span class="k">"SEC_VI"</span>: {1: 1, 2: 1, 3: 1, 4: 1},
+    <span class="k">"SEC_IX"</span>: {12: 3},
+})</code></pre>
+      <p>A <code>SimulationSpec.draws</code> field overrides whatever the workbook says, the way
+      <code>commitment_rates</code> and <code>expected_return</code> already do — which is what makes the feature
+      testable without touching a spreadsheet.</p>
+    </div>
+  </div>
+
+  <p>I'd build A, with C underneath it and B available later if the grammar ever gets in the way. The parser
+  belongs in <code>data/tables.py</code> beside the other normalisers, so <code>policy.py</code> only ever sees a
+  parsed <code>{year: multiplier}</code> mapping and stays free of data-entry concerns.</p>
+</section>
+
+<section id="code">
+  <h2>7 · What changes</h2>
+  <p class="kicker">Five files, no new modules, no new dependencies. Around 250 lines including tests.</p>
+
+  <dl class="files">
+    <dt>pmsim/policy.py</dt>
+    <dd><code>Entitlement</code> collapses to <code>(policy_year, weight, draws)</code>, where
+    <code>draws</code> is <code>{calendar year: multiplier}</code> — the closing year is simply one entry, so
+    <code>current_year_rate</code> and <code>carried_year_rates</code> both disappear into it (the reported
+    columns are derived, §8). <code>_entitlements</code> gains a third mode; <code>_budgets_usd</code> loops over
+    the draws, picking a plan date and a funding date for each. ~60 lines.</dd>
+
+    <dt>pmsim/data/tables.py</dt>
+    <dd><code>parse_draw_plan</code>: the grammar of option A, relative years in, an
+    error naming the fund and the offending term when it doesn't parse. ~35 lines.</dd>
+
+    <dt>pmsim/data/repository.py</dt>
+    <dd><code>fund_specs()</code> reads an optional <code>Draws</code> column and passes it through as typed text;
+    <code>normalize_fund_specs</code> keeps it. Absent column → absent plans → today's behaviour. ~10 lines.</dd>
+
+    <dt>pmsim/data/orchestrator.py</dt>
+    <dd>Converts relative years to calendar years — the same <code>inception_year</code> offset
+    <code>calendar_rates_for_profile</code> already applies — and hands the result to the policy. ~10 lines.</dd>
+
+    <dt>pmsim/data/spec.py</dt>
+    <dd>A <code>draws</code> field, so a run can be given a plan without a workbook. ~3 lines.</dd>
+
+    <dt>pmsim/simulator.py</dt>
+    <dd>Two columns renamed in <code>COMMITMENT_COLUMNS</code> and the new <code>draws</code> table on
+    <code>SimulationResult</code>. ~15 lines.</dd>
+  </dl>
+
+  <p>The sketch, to show the shape rather than the finished code:</p>
+
+<pre><code><span class="k">def</span> _entitlements(rates, groups, weights, carry_forward, plans):
+    entitlements = {}
+    <span class="k">for</span> fund_type <span class="k">in</span> rates.columns:
+        waiting: dict[int, float] = {}
+        <span class="k">for</span> year <span class="k">in</span> rates.index:
+            cohort = groups.get((int(year), fund_type), [])
+            <span class="k">for</span> fund <span class="k">in</span> cohort:
+                <span class="c"># an explicit plan wins outright; otherwise its own year plus whatever waited</span>
+                draws = plans.get(fund.name) <span class="k">or</span> {int(year): 1.0, **waiting}
+                entitlements[fund.name] = Entitlement(int(year), weights[fund.name], draws)
+            <span class="k">if</span> cohort:
+                waiting = {}
+            <span class="k">elif</span> carry_forward <span class="k">and</span> float(rates.at[year, fund_type]) &gt; 0:
+                waiting[int(year)] = 1.0
+    <span class="k">return</span> entitlements
+
+
+<span class="k">def</span> _budgets_usd(self, fund_name, balances):
+    entitlement = self.entitlements[fund_name]
+    amounts = []
+    <span class="k">for</span> year, multiplier <span class="k">in</span> entitlement.draws.items():
+        <span class="c"># funded from the year's own end, or from today when the run has not reached it</span>
+        funding = balances.year_end_on_or_before(min(year, entitlement.policy_year))
+        <span class="k">if</span> funding <span class="k">is None</span>:
+            <span class="k">continue</span>                                <span class="c"># a year before the run began has nothing to size on</span>
+        <span class="c"># but normalised by what the pacing model planned for that year, not for today</span>
+        share = self.rates.at[year, ...] / self.expected_value(self._plan_date(year, balances), first)
+        amounts.append(multiplier * share * funding.liquid_only_usd)
+    <span class="k">return</span> math.fsum(amounts)</code></pre>
+
+  <p>Two risks I can see. The first is that <code>Entitlement</code> is on the public surface, so collapsing its
+  fields is a breaking change to anything reading <code>carried_year_rates</code> — inside this package that is
+  only <code>explain_commitment</code> and the policy tests, but say the word and I'll keep the old fields as
+  derived properties. The second is that <code>min(year, policy_year)</code> is the whole no-look-ahead guarantee;
+  it wants a test that fails loudly if a future year's balance ever reaches a commitment, not just one that checks
+  the arithmetic.</p>
+</section>
+
+<section id="report">
+  <h2>8 · What it reports</h2>
+  <p class="kicker">A plan you cannot audit is worse than no plan.</p>
+
+  <p>The commitments table keeps its shape; <code>carried_years</code> and <code>carried_usd</code> generalise to
+  <code>drawn_years</code> (<code>"2010, 2011, 2012, 2013"</code>) and <code>own_year_usd</code> /
+  <code>other_years_usd</code>. But the interesting detail is per draw, not per fund, so I'd add a long-form
+  table — one row for every year every fund draws:</p>
+
+  <div class="tablewrap">
+    <table>
+      <caption>result.draws() · SEC_VI, reading A, convention b</caption>
+      <thead>
+        <tr><th>fund</th><th class="num">year</th><th class="num">mult</th><th class="num">rate</th><th>plan date</th><th class="num">exp. value</th><th>funding date</th><th class="num">liquid only</th><th class="num">usd</th></tr>
+      </thead>
+      <tbody>
+        <tr><td class="mono">SEC_VI</td><td class="num">2010</td><td class="num">1</td><td class="num">0.00800</td><td class="mono">2010-12-31</td><td class="num">1.0000</td><td class="mono">2010-12-31</td><td class="num">94.13</td><td class="num">0.753</td></tr>
+        <tr><td class="mono">SEC_VI</td><td class="num">2011</td><td class="num">1</td><td class="num">0.00843</td><td class="mono">2011-12-31</td><td class="num">1.0540</td><td class="mono">2011-12-31</td><td class="num">90.70</td><td class="num">0.726</td></tr>
+        <tr><td class="mono">SEC_VI</td><td class="num">2012</td><td class="num">1</td><td class="num">0.00889</td><td class="mono">2012-12-31</td><td class="num">1.1109</td><td class="mono">2011-12-31</td><td class="num">90.70</td><td class="num">0.726</td></tr>
+        <tr><td class="mono">SEC_VI</td><td class="num">2013</td><td class="num">1</td><td class="num">0.00937</td><td class="mono">2013-12-31</td><td class="num">1.1709</td><td class="mono">2011-12-31</td><td class="num">90.70</td><td class="num">0.726</td></tr>
+        <tr class="total"><td class="mono">SEC_VI</td><td colspan="7">commitment</td><td class="num">2.931</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Every number that went into a commitment, in one place, with the two dates side by side so a forward draw is
+  visible as the row where they differ. This is also the table that makes convention a versus b a two-second
+  check rather than an argument.</p>
+
+  <p>Alongside it, a coverage report per fund type — which schedule years were drawn, by whom, at what multiple,
+  and which were never drawn at all. For reading A that report would name years 13–15 and 17–20 as unspent, which
+  is either the point of the plan or a typo in it, and only you can say which.</p>
+</section>
+
+<section id="checks">
+  <h2>9 · Checks</h2>
+  <p class="kicker">What the loader should refuse, and what it should merely mention.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Condition</th><th>Response</th><th>Why</th></tr></thead>
+      <tbody>
+        <tr><td>a drawn year is outside the rate table</td><td class="mono lose">error</td><td>same as today's missing-year check on closing years</td></tr>
+        <tr><td>a multiplier is negative, or not finite</td><td class="mono lose">error</td><td>matches the existing weight validation</td></tr>
+        <tr><td>a term doesn't parse</td><td class="mono lose">error</td><td>naming the fund and the term, not the row number</td></tr>
+        <tr><td>two funds of one type draw the same year</td><td class="mono lose">error</td><td>almost always a copy-paste slip; use a multiplier if it's deliberate</td></tr>
+        <tr><td>a year no fund of its type draws</td><td class="mono">reported</td><td>intended under reading A, so not an error</td></tr>
+        <tr><td>a drawn year before the first observation</td><td class="mono">contributes nothing</td><td>unchanged: no portfolio existed to size on</td></tr>
+        <tr><td>a plan on a fund whose type has no rates</td><td class="mono lose">error</td><td>unchanged</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h3>Weights</h3>
+  <p>Weights and draw plans are orthogonal and compose cleanly: a plan says which years a fund draws, weights
+  split a year among funds of one type closing together. A fund's commitment stays
+  <code>weight × Σ draws</code>. Since no two secondaries close in the same year here, weights are all 1.0 and
+  nothing changes — but the composition should be a test rather than an accident.</p>
+</section>
+
+<section id="decide">
+  <h2>10 · Decisions</h2>
+  <p class="kicker">Answer these and I'll build it. My own answer is first in each case.</p>
+
+  <ol>
+    <li><b>“× 3” — multiplier or three years?</b> I've assumed a multiplier (reading A). The grammar supports
+    both, so this only decides what goes in the cells.</li>
+    <li><b>Convention b for forward draws?</b> Normalise each drawn year by its own plan date, not by the closing
+    date. I recommend b; a is 2.4% richer at the programme level and systematically so.</li>
+    <li><b>Are years 13–15 and 17–20 meant to go unspent?</b> Under reading A the secondaries schedule stops
+    being drawn after year 16. Fine if the programme really ends there — but if those years should land somewhere,
+    the plan needs more funds or wider ranges.</li>
+    <li><b>Does an explicit plan switch carry-forward off for that fund type?</b> I'd say yes: once you have named
+    the years, having the engine also pool leftovers behind your back defeats the point. Buyout would keep
+    <code>carry_forward</code> as it is, and in practice never needs it.</li>
+    <li><b>Option A, B or C for where the plan lives?</b> I'd put it in a <code>Draws</code> column on
+    <code>Spec</code>, with the code-level mapping underneath for tests and overrides.</li>
+  </ol>
+
+  <p>One last thing worth flagging, which is yours to judge rather than mine. Letting a 2011 subscription draw
+  2013's budget means the backtest commits capital against a pacing allowance that, in the real world, hadn't
+  been granted yet. The dollars are honest — nothing is sized on a balance the investor couldn't see — but the
+  <i>decision</i> is one only a committee willing to pre-spend its own pacing plan would take. That is a fair
+  description of how secondaries subscriptions actually get approved, so I think it's realistic. It's worth
+  writing down as a stated assumption of the backtest rather than leaving it implicit in a spreadsheet column.</p>
+</section>
+
+<footer class="end">
+  pmsim · commitment draw plans · design note, nothing implemented. Figures from the sample workbook
+  (USD Conservative, $100, X = 5.4%) except §1's rate table, which uses your own <code>Commitments</code> sheet.
+</footer>
+
+</main>
+</div>
+</div>

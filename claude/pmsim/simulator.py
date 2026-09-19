@@ -52,12 +52,16 @@ FUND_COLUMNS = [
 COMMITMENT_COLUMNS = [
     "fund_type", "closing_date", "policy_year", "sizing_base_usd", "rate", "commitment_usd",
     "usd_rate", "sizing_base", "commitment_base",
-    "current_year_rate", "expected_value", "weight", "current_year_usd", "carried_usd", "carried_years",
+    "own_year_rate", "expected_value", "weight", "own_year_usd", "other_years_usd", "drawn_years",
+]
+DRAW_COLUMNS = [  # one row per schedule year a fund draws: the audit trail behind its commitment
+    "fund_type", "policy_year", "multiplier", "rate", "plan_date", "expected_value",
+    "funding_date", "liquid_only_usd", "commitment_usd", "usd_rate", "commitment_base",
 ]
 EVENT_COLUMNS = ["observation_date", "period", "unit_call", "unit_distribution", "unit_nav_mark"]
-_TEXT_COLUMNS = {"fund", "fund_type", "carried_years"}
-_DATE_COLUMNS = {"date", "closing_date", "event_date", "observation_date"}
-_INT_COLUMNS = {"policy_year", "period"}
+_TEXT_COLUMNS = {"fund", "fund_type", "drawn_years"}
+_DATE_COLUMNS = {"date", "closing_date", "event_date", "observation_date", "plan_date", "funding_date"}
+_INT_COLUMNS = {"policy_year", "period", "year"}
 
 
 def _build_table(rows: list[dict[str, Any]], columns: list[str], index: list[str]) -> pd.DataFrame:
@@ -106,9 +110,12 @@ class SimulationResult:
     which is what commitments are sized on. ``commitments`` (index: date, fund) has one
     row per closing: that USD value, the dollars committed and their share of it (``rate``), the
     exchange rate and the base-currency equivalents, then how ``AnnualRatePolicy`` got there:
-    ``commitment_usd = weight × (current_year_usd + carried_usd)``, with ``current_year_usd =
-    current_year_rate / expected_value × sizing_base_usd``. ``shortfall`` names the first failed
-    observation, or is ``None``. ``funds_beyond_horizon`` lists funds whose closing falls
+    ``commitment_usd = weight × (own_year_usd + other_years_usd)``, and ``drawn_years`` naming
+    every schedule year that went into it. ``draws`` (index: date, fund, year) breaks each
+    commitment down one drawn year at a time — its rate, the two dates behind it (``plan_date``
+    normalises the rate, ``funding_date`` supplies the liquid value) and the dollars it
+    contributed, which sum to the fund's ``commitment_usd``. ``shortfall`` names the first
+    failed observation, or is ``None``. ``funds_beyond_horizon`` lists funds whose closing falls
     after the last observation; they are never committed.
     """
 
@@ -116,6 +123,7 @@ class SimulationResult:
     periods: pd.DataFrame
     funds: pd.DataFrame
     commitments: pd.DataFrame
+    draws: pd.DataFrame
     shortfall: Shortfall | None
     funds_beyond_horizon: tuple[str, ...]
 
@@ -261,6 +269,7 @@ class Simulator:
         period_rows: list[dict[str, Any]] = []
         fund_rows: list[dict[str, Any]] = []
         commitment_rows: list[dict[str, Any]] = []
+        draw_rows: list[dict[str, Any]] = []
         shortfall: Shortfall | None = None
         private_open = 0.0  # private NAV in base currency, as it stood at the previous close
 
@@ -288,6 +297,7 @@ class Simulator:
             for fund in cohort:
                 book.add(Commitment(fund, self.aligned_histories[fund.name], dollars_by_fund[fund.name]))
                 commitment_rows.append(self._commitment_row(t, day, fund, balances, dollars_by_fund[fund.name], rate))
+                draw_rows.extend(self._draw_rows(day, fund, balances, rate))
 
             # 5 ── The new cohort's own distributions are banked — they could not be in step 3,
             #      since those funds did not exist yet — and then every call is paid.
@@ -345,6 +355,7 @@ class Simulator:
             _build_table(period_rows, PERIOD_COLUMNS, ["date"]),
             _build_table(fund_rows, FUND_COLUMNS, ["date", "fund"]),
             _build_table(commitment_rows, COMMITMENT_COLUMNS, ["date", "fund"]),
+            _build_table(draw_rows, DRAW_COLUMNS, ["date", "fund", "year"]),
             shortfall,
             self.funds_beyond_horizon,
         )
@@ -457,14 +468,31 @@ class Simulator:
             "commitment_base": commitment_usd * rate,
 
             # filled in below by policies that can say how they got there
-            "current_year_rate": float("nan"), "expected_value": float("nan"), "weight": float("nan"),
-            "current_year_usd": float("nan"), "carried_usd": float("nan"), "carried_years": "",
+            "own_year_rate": float("nan"), "expected_value": float("nan"), "weight": float("nan"),
+            "own_year_usd": float("nan"), "other_years_usd": float("nan"), "drawn_years": "",
         }
         explain_commitment = getattr(self.policy, "explain_commitment", None)  # optional: a policy may say how it got there
         if callable(explain_commitment):
             info = explain_commitment(fund.name, balances)
-            for key in ("current_year_rate", "expected_value", "weight", "current_year_usd", "carried_usd"):
+            for key in ("own_year_rate", "expected_value", "weight", "own_year_usd", "other_years_usd"):
                 if key in info:
                     row[key] = float(info[key])
-            row["carried_years"] = str(info.get("carried_years", ""))
+            row["drawn_years"] = str(info.get("drawn_years", ""))
         return row
+
+    def _draw_rows(self, day: date, fund: Fund, balances: SizingBalances, rate: float) -> list[dict[str, Any]]:
+        """One row per schedule year the fund draws — empty for a policy that cannot break a commitment down."""
+        drawn_years = getattr(self.policy, "drawn_years", None)  # optional, like explain_commitment
+        if not callable(drawn_years):
+            return []
+        weight = self.policy.entitlements[fund.name].weight
+        return [{
+            "date": pd.Timestamp(day), "fund": fund.name, "year": drawn.year,
+            "fund_type": fund.fund_type, "policy_year": fund.closing_year,
+            "multiplier": drawn.multiplier, "rate": drawn.rate,
+            "plan_date": pd.Timestamp(drawn.plan_date), "expected_value": drawn.expected_value,
+            "funding_date": pd.Timestamp(drawn.funding_date), "liquid_only_usd": drawn.liquid_only_usd,
+            # the fund's weight is applied here, so these dollars add up to its commitment
+            "commitment_usd": weight * drawn.commitment_usd,
+            "usd_rate": rate, "commitment_base": weight * drawn.commitment_usd * rate,
+        } for drawn in drawn_years(fund.name, balances)]

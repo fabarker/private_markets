@@ -35,8 +35,10 @@ class SimulationSpec:
     magnitudes regardless. ``weights`` and ``carry_forward`` go to ``AnnualRatePolicy``: with
     carry-forward, a year in which no fund of a type closes is still sized — that year's
     rate on that year's balance — and its dollars wait for the next fund of the type;
-    without it such a year is not used. ``expected_return`` is the yearly return X the
-    pacing schedule was built on, as a decimal: the schedule is divided by the pacing model's
+    without it such a year is not used. ``draws`` states the schedule years a fund collects
+    outright, as ``{fund name: {calendar year: multiplier}}``, overriding the repository's own
+    draw plans; naming any fund of a type switches carry-forward off for that type.
+    ``expected_return`` is the yearly return X the pacing schedule was built on, as a decimal: the schedule is divided by the pacing model's
     expected liquid value — 1 on the first commitment date, growing at X — to become a share
     of the liquid value. Given here it overrides the repository's expected_returns table;
     with neither, the rates are taken to be shares of the liquid value already.
@@ -51,6 +53,7 @@ class SimulationSpec:
     inception_date: Any = None
     commitment_rates: Any = None
     expected_return: float | None = None
+    draws: Mapping[str, Mapping[int, float]] | None = None
     weights: Mapping[str, float] | None = None
     carry_forward: bool = False
     calls_are_negative: bool = True

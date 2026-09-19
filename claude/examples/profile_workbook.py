@@ -1,5 +1,6 @@
 """The portfolio workbook (Liquid, Liquid Spec, FX, Flows, Commitments, Spec), run for one profile.
 
+    python examples/profile_workbook.py                                   # or run it straight from PyCharm
     python -m examples.profile_workbook                                   # sample workbook → temp folder; USD Conservative from 1,000,000
     python -m examples.profile_workbook book.xlsx USD Conservative 1e6    # a real workbook: path, currency, risk, starting balance
     python -m examples.profile_workbook book.xlsx EUR Conservative 5e6
@@ -11,37 +12,46 @@ import sys
 import tempfile
 from pathlib import Path
 
-import numpy as np
-import pandas as pd
+# Make `import pmsim` work when PyCharm runs this file directly (not as `python -m ...`).
+ROOT = Path(__file__).resolve().parents[1]  # the claude/ directory
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
-from pmsim.data import load_profile_workbook
+import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
+
+from pmsim.data import load_profile_workbook  # noqa: E402
 
 # The Commitments sheet is an annual budget. A year in which no fund of a type closes is still sized — that year's
 # rate on that year's balance — and its dollars wait for the next fund of the type. False: such a year is not used.
 CARRY_FORWARD = True
 
 
-# The fund universe, exactly as the Spec sheet lists it: name, closing date (dd/mm/yyyy), type.
+# The fund universe, exactly as the Spec sheet lists it: name, closing date (dd/mm/yyyy), type,
+# and the schedule years the fund draws — counted from inception, blank for "just my own year".
+# A buyout fund closes every year, so each simply takes its own. The secondaries subscriptions
+# come too rarely for that, so each names the years it collects: four vintages' worth for the
+# first three, then three times a single year's for the last two.
 FUNDS = [
-    ("PEM2011", "31/12/2010", "BUYOUT"),
-    ("SEC_VI", "31/12/2011", "SECONDARIES"),
-    ("PEM2012", "31/12/2011", "BUYOUT"),
-    ("PEM2013", "31/12/2012", "BUYOUT"),
-    ("PEM2014", "31/12/2013", "BUYOUT"),
-    ("PEM2015", "31/12/2014", "BUYOUT"),
-    ("SEC_VII", "31/12/2015", "SECONDARIES"),
-    ("PEM2016", "31/12/2015", "BUYOUT"),
-    ("PEM2017", "30/12/2016", "BUYOUT"),
-    ("PEM2018", "29/12/2017", "BUYOUT"),
-    ("SEC_VIII", "31/12/2018", "SECONDARIES"),
-    ("PEM2019", "31/12/2018", "BUYOUT"),
-    ("PEM2020", "31/12/2019", "BUYOUT"),
-    ("PEM2021", "31/12/2020", "BUYOUT"),
-    ("PEM2022", "31/12/2021", "BUYOUT"),
-    ("SEC_IX", "31/12/2021", "SECONDARIES"),
-    ("PEM2023", "31/12/2022", "BUYOUT"),
-    ("PEM2024", "31/12/2023", "BUYOUT"),
-    ("SEC_X", "31/12/2025", "SECONDARIES"),
+    ("PEM2011", "31/12/2010", "BUYOUT", ""),
+    ("SEC_VI", "31/12/2011", "SECONDARIES", "1-4"),
+    ("PEM2012", "31/12/2011", "BUYOUT", ""),
+    ("PEM2013", "31/12/2012", "BUYOUT", ""),
+    ("PEM2014", "31/12/2013", "BUYOUT", ""),
+    ("PEM2015", "31/12/2014", "BUYOUT", ""),
+    ("SEC_VII", "31/12/2015", "SECONDARIES", "5-8"),
+    ("PEM2016", "31/12/2015", "BUYOUT", ""),
+    ("PEM2017", "30/12/2016", "BUYOUT", ""),
+    ("PEM2018", "29/12/2017", "BUYOUT", ""),
+    ("SEC_VIII", "31/12/2018", "SECONDARIES", "9-11"),
+    ("PEM2019", "31/12/2018", "BUYOUT", ""),
+    ("PEM2020", "31/12/2019", "BUYOUT", ""),
+    ("PEM2021", "31/12/2020", "BUYOUT", ""),
+    ("PEM2022", "31/12/2021", "BUYOUT", ""),
+    ("SEC_IX", "31/12/2021", "SECONDARIES", "12x3"),
+    ("PEM2023", "31/12/2022", "BUYOUT", ""),
+    ("PEM2024", "31/12/2023", "BUYOUT", ""),
+    ("SEC_X", "31/12/2025", "SECONDARIES", "16x3"),
 ]
 
 # Each portfolio's ExRet: the yearly return its pacing schedule was built on.
@@ -115,7 +125,7 @@ def sample_tables() -> dict[str, pd.DataFrame]:
     }, index=month_ends)
 
     flows = pd.DataFrame(
-        [row for name, closing, fund_type in FUNDS for row in fund_events(name, closing, fund_type)],
+        [row for name, closing, fund_type, _ in FUNDS for row in fund_events(name, closing, fund_type)],
         columns=["Vintage", "Date", "Value", "Type", "Scale"],
     ).round({"Value": 2})
 
@@ -131,7 +141,7 @@ def sample_tables() -> dict[str, pd.DataFrame]:
         for year in range(0, 21)
     ], columns=["Type", "Year", "Currency", "Risk", "Commitment", "Rate"])
 
-    spec = pd.DataFrame(FUNDS, columns=["Name", "Year", "Type"])
+    spec = pd.DataFrame(FUNDS, columns=["Name", "Year", "Type", "Draws"])
     liquid_spec = pd.DataFrame({"Liquid": list(LIQUID_SPEC), "ExRet": list(LIQUID_SPEC.values())})
 
     return {"Liquid": liquid, "Liquid Spec": liquid_spec, "FX": fx, "Flows": flows,
@@ -178,9 +188,18 @@ if __name__ == "__main__":
     print(f"\nRun ({result.base_currency} base, {len(result.periods)} observations) — {result.status}")
     if result.shortfall is not None:
         print(result.shortfall)
-    print(f"\nCommitments (sized in USD; carry-forward {'on' if CARRY_FORWARD else 'off'}; commitment = weight × (current_year_usd + carried_usd)):")
-    print(result.commitments[["policy_year", "sizing_base_usd", "current_year_rate", "expected_value", "current_year_usd",
-                              "carried_years", "carried_usd", "weight", "commitment_usd", "usd_rate", "commitment_base"]])
+    print(f"\nCommitments (sized in USD; carry-forward {'on' if CARRY_FORWARD else 'off'}; commitment = weight × (own_year_usd + other_years_usd)):")
+    print(result.commitments[["policy_year", "sizing_base_usd", "own_year_rate", "expected_value", "own_year_usd",
+                              "drawn_years", "other_years_usd", "weight", "commitment_usd", "usd_rate", "commitment_base"]])
+    # Each fund's commitment, one drawn schedule year at a time: a fund whose Draws cell names
+    # years collects those, and a forward year shows a plan_date later than its funding_date.
+    print(f"\nDrawn schedule years ({len(result.draws)} behind {len(result.commitments)} commitments):")
+    print(result.draws[["multiplier", "rate", "plan_date", "expected_value", "funding_date",
+                        "liquid_only_usd", "commitment_usd"]])
+    for fund_type, years in orchestrator.policy.unclaimed_schedule_years().items():
+        if years:
+            print(f"  {fund_type}: no fund draws {years} — that budget goes unspent.")
+
     print("\nThe five running values, last observations:")
     print(result.tracked_values().tail(6))
     print(f"\nFunds beyond the horizon (never committed): {result.funds_beyond_horizon}")

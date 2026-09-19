@@ -179,6 +179,14 @@ class Orchestrator:
         return float(table[matches[0]])
 
     @cached_property
+    def draw_plans(self) -> dict[str, dict[int, float]]:
+        """Which schedule years each fund draws, on calendar years: the spec's when given, else the repository's."""
+        if self.spec.draws is not None:
+            return {name: dict(plan) for name, plan in self.spec.draws.items()}
+        from_repository = getattr(self.repository, "draw_plans", None)  # optional: a repository need not have any
+        return {} if from_repository is None else {name: dict(plan) for name, plan in (from_repository() or {}).items()}
+
+    @cached_property
     def portfolio(self) -> Portfolio:
         return build_portfolio(self.repository.market_data(), self.spec, self.commitment_rates)
 
@@ -191,7 +199,7 @@ class Orchestrator:
         return AnnualRatePolicy(self.portfolio.commitment_rates, self.funds, self.spec.weights,
                                 carry_forward=self.spec.carry_forward,
                                 years=range(first_year, self.portfolio.last_date.year + 1),
-                                expected_return=self.expected_return)
+                                expected_return=self.expected_return, draws=self.draw_plans)
 
     @cached_property
     def simulator(self) -> Simulator:

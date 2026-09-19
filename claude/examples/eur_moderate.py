@@ -58,7 +58,7 @@ def starting_balance(repository: WorkbookRepository, start_usd: float) -> tuple[
 
 
 def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_currency: bool = START_IN_BASE_CURRENCY,
-        carry_forward: bool = CARRY_FORWARD):
+        carry_forward: bool = CARRY_FORWARD, draws=None):
     """Load the workbook, build the engine's inputs step by step, run, and report.
 
     Each step is its own local variable so a breakpoint shows one thing at a time:
@@ -73,12 +73,15 @@ def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_curre
     else:
         initial_value, rate, rate_date = starting_balance(repository, start_usd)
 
-    spec = repository.simulation_spec(initial_value, carry_forward=carry_forward)  # 3. currency, series, fx quote, expected return
+    # draws=None leaves the Spec sheet's Draws column in charge; pass {} to ignore it and
+    # let carry_forward decide the years instead.
+    settings = {"carry_forward": carry_forward} | ({} if draws is None else {"draws": draws})
+    spec = repository.simulation_spec(initial_value, **settings)                # 3. currency, series, fx quote, expected return
     orchestrator = Orchestrator(repository, spec)
 
     funds = orchestrator.funds                                                  # 4. one Fund per Spec row, unit histories from Flows
     portfolio = orchestrator.portfolio                                          # 5. levels compounded from returns; USD rate inverted
-    policy = orchestrator.policy                                                # 6. the schedule, X, and per fund: rate, weight, carried years
+    policy = orchestrator.policy                                                # 6. the schedule, X, and per fund: weight and the years it draws
 
     result = orchestrator.run()                                                 # 7. the period loop
 
@@ -115,9 +118,24 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, rat
         print(f"  {result.shortfall}")
     carry = "on" if orchestrator.spec.carry_forward else "off"
     print(f"\nCommitments, sized in USD on the liquid-only value (sizing_base_usd); carry-forward {carry}.")
-    print("  current_year_usd = current_year_rate / expected_value × sizing_base_usd · commitment_usd = weight × (current_year_usd + carried_usd)")
-    print(result.commitments[["policy_year", "sizing_base_usd", "current_year_rate", "expected_value", "current_year_usd",
-                              "carried_years", "carried_usd", "weight", "commitment_usd", "usd_rate", "commitment_base"]])
+    print("  own_year_usd = own_year_rate / expected_value × sizing_base_usd · commitment_usd = weight × (own_year_usd + other_years_usd)")
+    print(result.commitments[["policy_year", "sizing_base_usd", "own_year_rate", "expected_value", "own_year_usd",
+                              "drawn_years", "other_years_usd", "weight", "commitment_usd", "usd_rate", "commitment_base"]])
+
+    # Which schedule years each fund drew. A fund with a Draws cell on the Spec sheet collects the
+    # years it names; every other fund takes its own closing year, plus any carried to it.
+    planned = orchestrator.draw_plans
+    print(f"\nDraw plans from the Spec sheet's Draws column: {len(planned)} of {len(orchestrator.funds)} funds name their years.")
+    if not result.draws.empty:
+        forward = result.draws[result.draws["plan_date"] > result.draws["funding_date"]]
+        print(f"  {len(result.draws)} drawn years behind {len(result.commitments)} commitments; "
+              f"{len(forward)} of them a year the run had not reached, funded at the closing instead.")
+        print(result.draws[["multiplier", "rate", "plan_date", "expected_value", "funding_date",
+                            "liquid_only_usd", "commitment_usd", "commitment_base"]])
+    unclaimed = {t: years for t, years in orchestrator.policy.unclaimed_schedule_years().items() if years}
+    for fund_type, years in unclaimed.items():
+        print(f"  {fund_type}: no fund draws {years} — that budget goes unspent.")
+
     print(f"\nThe five running values ({result.base_currency}): liquid alone · liquid at the expected return · "
           f"liquid with the private flows · the private book · the total")
     tracked = result.tracked_values()
@@ -144,13 +162,14 @@ def write_csvs(orchestrator, result, out: Path) -> None:
     result.periods.to_csv(out / "periods.csv")
     result.funds.to_csv(out / "funds.csv")
     result.commitments.to_csv(out / "commitments.csv")
+    result.draws.to_csv(out / "draws.csv")
     orchestrator.map_events_to_observations().to_csv(out / "map_events_to_observations.csv")
     orchestrator.fund_summary().to_csv(out / "fund_summary.csv")
     result.tracked_values().to_csv(out / "tracked_values.csv")
     result.compare_with_liquid_only().to_csv(out / "liquid_only_comparison.csv")
     result.public_market_equivalent().to_csv(out / "public_market_equivalent.csv")
-    print(f"\nWrote periods.csv, funds.csv, commitments.csv, map_events_to_observations.csv, fund_summary.csv, "
-          f"tracked_values.csv, liquid_only_comparison.csv, public_market_equivalent.csv to {out}")
+    print(f"\nWrote periods.csv, funds.csv, commitments.csv, draws.csv, map_events_to_observations.csv, "
+          f"fund_summary.csv, tracked_values.csv, liquid_only_comparison.csv, public_market_equivalent.csv to {out}")
 
 
 def resolve_workbook(path: Path) -> Path:

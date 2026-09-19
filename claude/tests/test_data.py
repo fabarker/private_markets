@@ -12,6 +12,8 @@ from pmsim.data.tables import (
     normalize_fund_market_data,
     normalize_fund_specs,
     normalize_market_data,
+    parse_draw_plan,
+    relative_draw_plans_to_calendar,
 )
 from tests.conftest import check_identities
 
@@ -65,7 +67,7 @@ def test_orchestrator_exposes_the_assembled_pieces():
     orchestrator = Orchestrator(FrameRepository(*tables()), SPEC)
     assert [f.name for f in orchestrator.funds] == ["A", "B"]
     assert orchestrator.portfolio.base_currency == "GBP" and orchestrator.portfolio.requires_fx_conversion
-    assert (orchestrator.policy.entitlements["A"].current_year_rate, orchestrator.policy.entitlements["A"].weight) == (0.1, 0.6)
+    assert orchestrator.policy.entitlements["A"].weight == 0.6 and orchestrator.policy.rates.at[2027, "BUYOUT"] == 0.1
     assert orchestrator.simulator.timeline.n_observations == 3
     assert orchestrator.map_events_to_observations().loc[("A", pd.Timestamp("2027-03-01")), "observation_date"] == pd.Timestamp("2027-03-31")
     with pytest.raises(TypeError, match="SimulationSpec"):
@@ -208,7 +210,7 @@ def test_commitment_rates_long_wide_spec_and_missing():
     override = Orchestrator(FrameRepository(fund_spec, fund_market, market, wide),
                             SimulationSpec("GBP", "liquid_gbp", "gbp_per_usd", commitment_rates={"BUYOUT": {2027: 0.2}},
                                            weights={"A": .6, "B": .4}))
-    assert override.policy.entitlements["A"].current_year_rate == 0.2  # the spec's table, not the repository's
+    assert override.policy.rates.at[2027, "BUYOUT"] == 0.2  # the spec's table, not the repository's
     with pytest.raises(ValueError, match="commitment_rates are needed"):
         Orchestrator(FrameRepository(fund_spec, fund_market, market), SPEC).portfolio
 
@@ -262,3 +264,64 @@ def test_build_portfolio_directly():
     fund_spec, fund_market, market, rates = tables()
     portfolio = build_portfolio(normalize_market_data(market), SPEC, normalize_commitment_rates(rates))
     assert portfolio.liquid_levels.tolist() == [1e6, 1.1e6, 1.21e6] and portfolio.usd_rate.tolist() == [0.8, 0.8, 0.75]
+
+
+# ---------------------------------------------------------- draw plans
+@pytest.mark.parametrize("cell, expected", [
+    ("1-4", {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0}),
+    ("9-11", {9: 1.0, 10: 1.0, 11: 1.0}),
+    ("12x3", {12: 3.0}),
+    ("16X3", {16: 3.0}),
+    ("16*3", {16: 3.0}),
+    ("16×3", {16: 3.0}),
+    ("1-4, 7", {1: 1.0, 2: 1.0, 3: 1.0, 4: 1.0, 7: 1.0}),
+    ("12x3, 15", {12: 3.0, 15: 1.0}),
+    (" 1 - 2 x 1.5 ", {1: 1.5, 2: 1.5}),
+    ("7", {7: 1.0}),
+    (7, {7: 1.0}),
+    ("", None), ("-", None), ("none", None), ("N/A", None), (None, None), (np.nan, None),
+])
+def test_a_draw_plan_is_read_from_one_cell(cell, expected):
+    assert parse_draw_plan(cell, fund_name="SEC_VI") == expected
+
+
+@pytest.mark.parametrize("cell, message", [
+    ("abc", "cannot read 'abc'"),
+    ("1-4-7", "cannot read '1-4-7'"),
+    ("12x", "cannot read '12x'"),
+    ("4-1", "runs backwards"),
+    ("1, 1", "year 1 appears twice"),
+    ("1-4, 3", "year 3 appears twice"),
+])
+def test_an_unreadable_draw_plan_names_the_fund_and_the_term(cell, message):
+    with pytest.raises(ValueError, match=message):
+        parse_draw_plan(cell, fund_name="SEC_VI")
+
+
+def test_relative_draw_years_are_mapped_onto_calendar_years():
+    plans = relative_draw_plans_to_calendar({"SEC_VI": {1: 1.0, 4: 1.0}, "SEC_IX": {12: 3.0}}, inception_year=2009)
+    assert plans == {"SEC_VI": {2010: 1.0, 2013: 1.0}, "SEC_IX": {2021: 3.0}}
+
+
+def test_the_repository_and_the_spec_both_carry_draw_plans():
+    fund_spec, fund_market, market, rates = tables()
+    repository = FrameRepository(fund_spec, fund_market, market, rates, draw_plans={"A": {2027: 2.0}})
+    assert repository.draw_plans() == {"A": {2027: 2.0}}
+    assert Orchestrator(repository, SPEC).draw_plans == {"A": {2027: 2.0}}
+    # the spec wins when both say something, and an empty mapping in the spec means "no plans at all"
+    assert Orchestrator(repository, SimulationSpec(**{**vars(SPEC), "draws": {"B": {2027: 3.0}}})).draw_plans \
+        == {"B": {2027: 3.0}}
+    assert Orchestrator(repository, SimulationSpec(**{**vars(SPEC), "draws": {}})).draw_plans == {}
+    assert Orchestrator(FrameRepository(fund_spec, fund_market, market, rates), SPEC).draw_plans == {}
+
+
+def test_a_drawn_plan_reaches_the_policy_and_doubles_the_commitment():
+    fund_spec, fund_market, market, rates = tables()
+    plain = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates), SPEC).run()
+    doubled = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates),
+                           SimulationSpec(**{**vars(SPEC), "draws": {"A": {2027: 2.0}, "B": {2027: 1.0}}})).run()
+    a = (pd.Timestamp("2027-03-31"), "A")
+    assert doubled.commitments.loc[a, "commitment_usd"] == pytest.approx(2 * plain.commitments.loc[a, "commitment_usd"])
+    assert doubled.commitments.loc[a, "drawn_years"] == "2027x2"
+    b = (pd.Timestamp("2027-06-30"), "B")  # B's plan is its own year at 1: unchanged
+    assert doubled.commitments.loc[b, "commitment_usd"] == pytest.approx(plain.commitments.loc[b, "commitment_usd"])

@@ -13,10 +13,11 @@ schedule alone.
 
 The engine asks a policy one question: given the funds closing at this observation and a
 snapshot of the balances, how many dollars to commit to each. The policy reads and never
-moves cash, and keeps no state. ``AnnualRatePolicy`` is the default: a dollar budget per
-year and fund type from a pacing schedule, committed to the funds of the type closing that
-year, by weight; with carry-forward, the budgets of years in which no fund of the type
-closed wait, as dollars, for the next fund of the type.
+moves cash, and keeps no state. ``AnnualRatePolicy`` is the default: the pacing schedule
+gives a dollar budget per year and fund type, and each fund collects the budgets of the
+years it **draws**. Which years those are is its draw plan — by default its own closing
+year, plus, with carry-forward, the years its type passed without a closing; or, stated
+explicitly, any set of years at any multiple, including years after the closing.
 """
 from __future__ import annotations
 
@@ -33,6 +34,7 @@ from .inputs import Fund, coerce_rate_table
 
 WEIGHT_TOLERANCE = 1e-9
 FundGroups = dict[tuple[int, str], list[Fund]]  # funds by (closing year, fund type)
+DrawPlans = Mapping[str, Mapping[int, float]]  # fund name → calendar year → multiplier
 
 
 @dataclass(frozen=True)
@@ -52,6 +54,10 @@ class SizingBalances:
     ``liquid_account_usd`` is the simulated account that does pay the calls and bank the
     distributions; it and ``private_nav_usd`` are here for policies that want them, and
     ``AnnualRatePolicy`` uses neither.
+
+    ``year_ends`` holds completed calendar years only. That is the engine's guarantee against
+    look-ahead, and it is why a fund that draws a year the run has not reached is funded from
+    its closing observation instead.
     """
 
     t: int
@@ -78,13 +84,35 @@ class CommitmentPolicy(Protocol):
 
 
 @dataclass(frozen=True)
-class Entitlement:
-    """What a fund collects at its closing: its weight of this year's budget and of every budget carried to its year."""
+class DrawnYear:
+    """One schedule year a fund draws, and the dollars that year's commitment came to.
 
-    policy_year: int
-    current_year_rate: float
+    There are two dates, and they differ only for a year the run had not reached when the
+    fund closed. ``plan_date`` is where the pacing model puts the year, and is what the rate
+    is divided by, so the year contributes the share the schedule meant it to.
+    ``funding_date`` is the observation whose liquid-only value the dollars are taken from:
+    the year's own year end when the run has reached it, the closing observation otherwise,
+    and never anything later.
+    """
+
+    year: int
+    multiplier: float
+    rate: float
+    plan_date: date
+    expected_value: float
+    funding_date: date
+    liquid_only_usd: float
+    commitment_usd: float  # multiplier × rate / expected_value × liquid_only_usd
+
+
+@dataclass(frozen=True)
+class Entitlement:
+    """The schedule years a fund draws, each with a multiplier, and its weight of their total."""
+
+    policy_year: int  # the fund's closing year
+    fund_type: str
     weight: float
-    carried_year_rates: Mapping[int, float] = field(default_factory=dict)  # earlier years with no fund of the type → their rates
+    draws: Mapping[int, float] = field(default_factory=dict)  # calendar year → multiplier, in ascending year order
 
 
 def validate_expected_return(value: Any, *, label: str = "expected_return") -> float:
@@ -94,6 +122,12 @@ def validate_expected_return(value: Any, *, label: str = "expected_return") -> f
     if not -1.0 < value < 1.0:
         raise ValueError(f"{label} must be a decimal between -1 and 1 (write 5% as 0.05), got {value!r}")
     return float(value)
+
+
+def format_draw_plan(draws: Mapping[int, float]) -> str:
+    """``2010, 2011, 2012`` — a multiplier other than 1 shown against its year, as ``2021x3``."""
+    return ", ".join(f"{year}x{multiplier:g}" if multiplier != 1 else str(year)
+                     for year, multiplier in draws.items())
 
 
 def _weights_by_fund(groups: FundGroups, weights: Mapping[str, float]) -> dict[str, float]:
@@ -118,34 +152,74 @@ def _weights_by_fund(groups: FundGroups, weights: Mapping[str, float]) -> dict[s
     return shares
 
 
-def _entitlements(rates: pd.DataFrame, groups: FundGroups, weights: Mapping[str, float],
-                  carry_forward: bool) -> dict[str, Entitlement]:
-    """Walk each fund type's years in order: a year with a closing hands its funds every year carried to it.
+def _checked_draw_plans(plans: DrawPlans, groups: FundGroups, rates: pd.DataFrame) -> dict[str, dict[int, float]]:
+    """The plans, years put in ascending order, checked against the fund list and the rate table."""
+    funds_by_name = {f.name: f for group in groups.values() for f in group}
+    unknown = set(plans) - set(funds_by_name)
+    if unknown:
+        raise ValueError(f"draws name funds that are not in the fund list: {sorted(unknown)}")
 
-    Only the years and their rates are settled here. The dollars are not: a year's budget
-    depends on that year's liquid-only value, which the run supplies.
+    checked: dict[str, dict[int, float]] = {}
+    for name, plan in plans.items():
+        if not plan:
+            raise ValueError(f"draws for {name!r} is empty: leave the fund out to keep its default years")
+        years: dict[int, float] = {}
+        for year, multiplier in plan.items():
+            year, multiplier = int(year), float(multiplier)
+            if year not in rates.index:
+                raise ValueError(f"draws for {name!r} name year {year}, which commitment_rates has no row for")
+            if not math.isfinite(multiplier) or multiplier < 0:
+                raise ValueError(f"multiplier for year {year} of {name!r} must be a finite non-negative number")
+            years[year] = multiplier
+        checked[name] = dict(sorted(years.items()))
+
+    # A schedule year is one closing's to spend. Funds closing together share it by weight.
+    claimed_by: dict[tuple[str, int], int] = {}
+    for name, plan in checked.items():
+        fund = funds_by_name[name]
+        for year in plan:
+            first = claimed_by.setdefault((fund.fund_type, year), fund.closing_year)
+            if first != fund.closing_year:
+                raise ValueError(f"{fund.fund_type} year {year} is drawn by funds closing in both {first} and "
+                                 f"{fund.closing_year}; a schedule year belongs to one closing")
+    return checked
+
+
+def _entitlements(rates: pd.DataFrame, groups: FundGroups, weights: Mapping[str, float],
+                  carry_forward: bool, plans: Mapping[str, Mapping[int, float]]) -> dict[str, Entitlement]:
+    """Walk each fund type's years in order and settle which years each of its funds draws.
+
+    A fund named in ``plans`` draws exactly what its plan says. Otherwise it draws its own
+    closing year, plus — with carry-forward — every year of its type that passed without one.
+    A plan switches carry-forward off for its whole fund type: once the years are named,
+    pooling the remaining ones behind them would commit dollars nobody asked for.
+
+    Only the years and their multipliers are settled here. The dollars are not: each year's
+    depends on a liquid-only value the run supplies.
     """
     entitlements: dict[str, Entitlement] = {}
     for fund_type in rates.columns:
-        carried: dict[int, float] = {}
+        cohorts = {year: group for (year, of_type), group in groups.items() if of_type == fund_type}
+        planned = any(f.name in plans for group in cohorts.values() for f in group)
+        carry = carry_forward and not planned
+        waiting: dict[int, float] = {}
         for year in rates.index:
-            rate = float(rates.at[year, fund_type])
-            cohort = groups.get((int(year), fund_type), [])
-            for f in cohort:
-                entitlements[f.name] = Entitlement(int(year), rate, weights[f.name], dict(carried))
+            cohort = cohorts.get(int(year), [])
+            for fund in cohort:
+                draws = plans.get(fund.name) or dict(sorted({int(year): 1.0, **waiting}.items()))
+                entitlements[fund.name] = Entitlement(int(year), fund_type, weights[fund.name], dict(draws))
             if cohort:
-                carried = {}
-            elif carry_forward and rate > 0:
-                carried[int(year)] = rate
+                waiting = {}
+            elif carry and float(rates.at[year, fund_type]) > 0:
+                waiting[int(year)] = 1.0
     return entitlements
 
 
 class AnnualRatePolicy:
-    """A dollar budget per year and fund type, committed to the funds of that type closing that year.
+    """A dollar budget per year and fund type, collected by the funds that draw those years.
 
-    **The budget.** ``share × liquid-only value in USD``, on the day the year is sized: the
-    closing observation for a year with a fund of the type, the year's last observation
-    otherwise.
+    **The budget.** ``share × liquid-only value in USD``, on the day the year is funded: the
+    closing observation for the fund's own year, the year's last observation otherwise.
 
     **The share.** With ``expected_return`` the rate table is a pacing schedule: amounts per
     1 of liquid value on the day of the first commitment, from a model in which the liquid
@@ -160,16 +234,26 @@ class AnnualRatePolicy:
     currency, so the share has no unit and multiplies the liquid-only value in USD directly.
     Without ``expected_return`` the table is taken to hold shares of the liquid value already.
 
-    **Carry-forward.** With ``carry_forward``, a year in which no fund of a type closes is
-    still sized, on its own liquid-only value at its own year end, and the dollars
-    accumulate until the next year that has a fund of the type, whose funds collect them.
-    Dollars are carried, never percentages. A year before the first observation had no
-    portfolio to size on and carries nothing. Without it such a year is not used at all.
+    **Which years a fund draws.** By default its own closing year alone. With
+    ``carry_forward``, also every year in which no fund of its type closed: those years are
+    still sized, each on its own liquid-only value at its own year end, and their dollars
+    accumulate until the next fund of the type collects them. Dollars are carried, never
+    percentages. A year before the first observation had no portfolio to size on and carries
+    nothing.
 
-    ``weights`` split a year's budget, carried dollars included, among the funds of one type
-    closing that year; they must be given for all funds of such a group or none (equal
-    split), and sum to 1. ``years`` lists the calendar years the rate table must cover (the
-    simulator passes the horizon); fund closing years are always required.
+    ``draws`` states the years instead, per fund, as ``{calendar year: multiplier}``: a
+    secondaries subscription can take four vintages' worth of budget, or three times one
+    year's. Each drawn year is priced as its own dollar commitment and the dollars are added.
+    A year **after** the closing is funded from the closing observation, since the run has not
+    reached that year and a commitment is fixed the day it is made; its rate is still divided
+    by the pacing model's value on its own date, so it contributes the share the schedule
+    meant it to rather than one inflated by the growth expected in between. Naming any fund of
+    a type in ``draws`` switches carry-forward off for that type.
+
+    ``weights`` split a year's budget among the funds of one type closing that year; they must
+    be given for all funds of such a group or none (equal split), and sum to 1. ``years``
+    lists the calendar years the rate table must cover (the simulator passes the horizon);
+    fund closing years and drawn years are always required.
     """
 
     def __init__(
@@ -181,6 +265,7 @@ class AnnualRatePolicy:
         carry_forward: bool = False,
         years: Iterable[int] | None = None,
         expected_return: float | None = None,
+        draws: DrawPlans | None = None,
     ) -> None:
         self.rates = coerce_rate_table(rates)
         self.carry_forward = bool(carry_forward)
@@ -207,7 +292,8 @@ class AnnualRatePolicy:
         for fund in funds:
             groups.setdefault((fund.closing_year, fund.fund_type), []).append(fund)
         self.weights = _weights_by_fund(groups, weights)
-        self.entitlements = _entitlements(self.rates, groups, self.weights, self.carry_forward)
+        self.draws = _checked_draw_plans(dict(draws or {}), groups, self.rates)
+        self.entitlements = _entitlements(self.rates, groups, self.weights, self.carry_forward, self.draws)
 
     def expected_value(self, on: date, first_commitment_date: date | None) -> float:
         """The pacing model's liquid value on ``on``: 1 on the first commitment date, growing at the expected return."""
@@ -217,34 +303,70 @@ class AnnualRatePolicy:
             raise ValueError("expected_return needs SizingBalances.first_commitment_date: the pacing model's value is 1 on that date")
         return (1.0 + self.expected_return) ** years_between(first_commitment_date, on)
 
-    def _budgets_usd(self, fund_name: str, balances: SizingBalances) -> tuple[float, float]:
-        """This year's budget and the budgets carried to it, in USD, before the fund's weight is applied."""
+    def unclaimed_schedule_years(self) -> dict[str, list[int]]:
+        """Per fund type, the years with a rate above zero that no fund draws: the schedule's unspent budget."""
+        drawn: dict[str, set[int]] = {}
+        for entitlement in self.entitlements.values():
+            drawn.setdefault(entitlement.fund_type, set()).update(entitlement.draws)
+        return {
+            fund_type: [int(year) for year in self.rates.index
+                        if float(self.rates.at[year, fund_type]) > 0 and int(year) not in drawn.get(fund_type, set())]
+            for fund_type in self.rates.columns
+        }
+
+    def drawn_years(self, fund_name: str, balances: SizingBalances) -> list[DrawnYear]:
+        """Every schedule year the fund draws, with the dollars each one's commitment came to.
+
+        A year before the closing is funded from its own year end, as carry-forward has always
+        done. A year at or after the closing is funded from the closing observation, because
+        that is the last balance known when the commitment is fixed. The rate is always
+        divided by the pacing model's value on the drawn year's own date.
+        """
         entitlement = self.entitlements[fund_name]
         first = balances.first_commitment_date
-        current_year_usd = entitlement.current_year_rate / self.expected_value(balances.date, first) * balances.liquid_only_usd
-        carried = []
-        for year, rate in entitlement.carried_year_rates.items():
-            year_end = balances.year_end_on_or_before(year)
-            if year_end is not None:  # each carried year on its own year end: its own value, its own expected value
-                carried.append(rate / self.expected_value(year_end.date, first) * year_end.liquid_only_usd)
-        return current_year_usd, math.fsum(carried)
+        drawn: list[DrawnYear] = []
+        for year, multiplier in entitlement.draws.items():
+            rate = float(self.rates.at[year, entitlement.fund_type])
+            if year < entitlement.policy_year:
+                year_end = balances.year_end_on_or_before(year)
+                if year_end is None:
+                    continue  # a year before the run began had no portfolio to size on
+                plan_date = funding_date = year_end.date
+                liquid_only_usd = year_end.liquid_only_usd
+            else:
+                funding_date, liquid_only_usd = balances.date, balances.liquid_only_usd
+                # the fund's own year is dated by the closing; a later year by the model's own calendar
+                plan_date = balances.date if year == entitlement.policy_year else date(year, 12, 31)
+            expected_value = self.expected_value(plan_date, first)
+            drawn.append(DrawnYear(year, multiplier, rate, plan_date, expected_value, funding_date,
+                                   liquid_only_usd, multiplier * rate / expected_value * liquid_only_usd))
+        return drawn
+
+    def _budgets_usd(self, fund_name: str, balances: SizingBalances) -> tuple[float, float]:
+        """The dollars from the fund's own closing year, and the dollars from every other year it draws."""
+        drawn = self.drawn_years(fund_name, balances)
+        own_year = self.entitlements[fund_name].policy_year
+        return (math.fsum(d.commitment_usd for d in drawn if d.year == own_year),
+                math.fsum(d.commitment_usd for d in drawn if d.year != own_year))
 
     def size_commitments(self, cohort: Sequence[Fund], balances: SizingBalances) -> Mapping[str, float]:
         sized = {}
         for fund in cohort:
-            current_year_usd, carried_usd = self._budgets_usd(fund.name, balances)
-            sized[fund.name] = self.entitlements[fund.name].weight * (current_year_usd + carried_usd)
+            own_year_usd, other_years_usd = self._budgets_usd(fund.name, balances)
+            sized[fund.name] = self.entitlements[fund.name].weight * (own_year_usd + other_years_usd)
         return sized
 
     def explain_commitment(self, fund_name: str, balances: SizingBalances) -> dict[str, Any]:
-        """How a fund's dollars were arrived at, for the commitments table: weight × (current_year_usd + carried_usd)."""
+        """How a fund's dollars were arrived at, for the commitments table: weight × (own_year_usd + other_years_usd)."""
         entitlement = self.entitlements[fund_name]
-        current_year_usd, carried_usd = self._budgets_usd(fund_name, balances)
+        own_year_usd, other_years_usd = self._budgets_usd(fund_name, balances)
         expected_value = (float("nan") if self.expected_return is None
                           else self.expected_value(balances.date, balances.first_commitment_date))
+        own_year_rate = (float(self.rates.at[entitlement.policy_year, entitlement.fund_type])
+                         if entitlement.policy_year in entitlement.draws else float("nan"))
         return {
-            "policy_year": entitlement.policy_year, "current_year_rate": entitlement.current_year_rate,
+            "policy_year": entitlement.policy_year, "own_year_rate": own_year_rate,
             "expected_value": expected_value, "weight": entitlement.weight,
-            "current_year_usd": current_year_usd, "carried_usd": carried_usd,
-            "carried_years": ", ".join(str(year) for year in entitlement.carried_year_rates),
+            "own_year_usd": own_year_usd, "other_years_usd": other_years_usd,
+            "drawn_years": format_draw_plan(entitlement.draws),
         }

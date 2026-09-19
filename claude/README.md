@@ -192,10 +192,19 @@ was committed, `liquid_only_usd` (the dollars the rate was applied to), `commitm
 `commitments` (index `date`, `fund`): `fund_type`, `closing_date`, `policy_year`, then the
 decision in dollars — `sizing_base_usd`, `rate`, `commitment_usd` — then `usd_rate` and the
 same figures in base currency, `sizing_base` and `commitment_base`; and from
-`AnnualRatePolicy` how it got there — `current_year_rate`, `expected_value`, `weight`,
-`current_year_usd`, `carried_usd` and `carried_years` — with `current_year_usd =
-current_year_rate / expected_value × sizing_base_usd` and `commitment_usd = weight ×
-(current_year_usd + carried_usd)`. `rate` is always `commitment_usd / sizing_base_usd`.
+`AnnualRatePolicy` how it got there — `own_year_rate`, `expected_value`, `weight`,
+`own_year_usd`, `other_years_usd` and `drawn_years` — with `own_year_usd = own_year_rate /
+expected_value × sizing_base_usd` and `commitment_usd = weight × (own_year_usd +
+other_years_usd)`. `rate` is always `commitment_usd / sizing_base_usd`.
+
+`draws` (index `date`, `fund`, `year`): one row per schedule year a fund drew, which is the
+audit trail behind its commitment — `fund_type`, `policy_year`, `multiplier`, `rate`, then
+the two dates and what each supplies (`plan_date` and `expected_value` normalise the rate;
+`funding_date` and `liquid_only_usd` supply the value), then `commitment_usd` with the
+fund's weight already applied, `usd_rate` and `commitment_base`. A fund's rows sum to its
+`commitment_usd`, and a row whose `plan_date` is later than its `funding_date` is a year the
+run had not reached when the fund closed. Empty for a policy that cannot break a commitment
+down.
 
 `result.tracked_values()` is the first five columns of `periods` on their own — the running
 value of each thing the simulation holds, in base currency, one row per observation:
@@ -257,11 +266,11 @@ money out negative) is exported for use on its own.
 ## Policy
 
 `AnnualRatePolicy(rates, funds, weights=None, carry_forward=False, years=None,
-expected_return=None)` turns the rate table into a dollar budget per year and fund type —
-`share × the liquid-only value in USD` — and commits it to the funds of that type closing
-that year. The closing year's budget is sized at the closing observation. Weights split a
-year's budget among the funds of one type closing that year; give them for all funds of
-such a group or none (equal split), summing to 1. Fund types are independent.
+expected_return=None, draws=None)` turns the rate table into a dollar budget per year and
+fund type — `share × the liquid-only value in USD` — collected by the funds that **draw**
+those years. By default a fund draws its own closing year, sized at the closing observation.
+Weights split a year's budget among the funds of one type closing that year; give them for
+all funds of such a group or none (equal split), summing to 1. Fund types are independent.
 
 **Pacing schedule and expected return.** The commitment rates come from a pacing model in
 which the liquid portfolio is worth 1 on the day of the first commitment and then grows at
@@ -285,14 +294,24 @@ currency, so the share has no unit and multiplies the dollar value directly. A s
 `expected_return` the table is taken to hold shares of the liquid value already; applying a
 pacing schedule that way counts the growth twice, by a factor of `(1 + X)^years`.
 
+**Which years a fund draws.** A fund collects a set of schedule years, each with a
+multiplier — its *draw plan*. Every drawn year is priced as its own dollar commitment and
+the dollars are added; dollars are combined, never rates. Three ways to fill that set:
+
+| setting | years drawn |
+| --- | --- |
+| `carry_forward=False` | `{closing year: 1}` |
+| `carry_forward=True` | `{closing year: 1}` plus every year of the type that passed without a closing |
+| `draws={fund: {year: multiplier}}` | exactly what the plan says, including years *after* the closing |
+
 **Carry-forward.** Without it, a year in which no fund of a type closes is simply not used.
 With `carry_forward=True` that year is still sized — its share of **its own** liquid-only
 value, at the year's last observation — and the **dollars** accumulate until the next year
 that has a fund of the type, whose funds collect them by weight:
 
 ```text
-commitment_usd = weight × ( carried_usd + current_year_usd )
-carried_usd    = Σ over carried years  share(year end) × liquid-only value in USD at that year's last observation
+commitment_usd  = weight × ( own_year_usd + other_years_usd )
+other_years_usd = Σ over the other years drawn  share(plan date) × liquid-only value in USD on the funding date
 ```
 
 Dollars are carried, never percentages: three carried years are three budgets, each from its
@@ -304,6 +323,31 @@ own year's liquid-only value. Shares of 10%, 8% and 12% with that value at 1,000
 carries nothing; a year with no observation of its own uses the last balance known by its
 end. `examples/eur_moderate.py` and `examples/profile_workbook.py` switch it on with
 `CARRY_FORWARD = True` at the top; the library default is off.
+
+**Draw plans.** `draws` names the years instead, per fund. It comes from an optional `Draws`
+column on the workbook's `Spec` sheet, written in years since inception like the
+`Commitments` sheet: `1-4` draws years 1 to 4 once each, `12x3` draws three times year 12's
+commitment, `1-4, 7` combines terms, and blank keeps the default years. Naming any fund of a
+type switches carry-forward off for that whole type. `SimulationSpec(draws=…)` overrides the
+sheet, in calendar years.
+
+A plan may name a year the run has not reached when the fund closes, which splits one date
+into two:
+
+```text
+funding date = the year end of min(drawn year, closing year)   the liquid-only value; never a later date
+plan date    = the drawn year's own year end, or 31 December of it when the run has not got there
+budget_usd   = multiplier × schedule[year, type] / expected_value(plan date) × liquid-only value in USD on the funding date
+```
+
+The funding date is the no-look-ahead guarantee: `SizingBalances.year_ends` holds completed
+calendar years only, so a commitment is never sized on a balance the investor could not have
+known. The plan date is what keeps a forward year honest — the pacing model earmarked that
+amount for the larger portfolio it expects in that year, so dividing by the closing date's
+expected value instead would commit `(1 + X)^years ahead` too much. For a fund that draws
+only its own year and earlier ones the two dates coincide, so carry-forward's numbers are
+unchanged. `result.draws` shows both dates per drawn year, and
+`policy.unclaimed_schedule_years()` names the years, per fund type, that no fund draws.
 
 Any object with `size_commitments(cohort, balances) -> {fund name: US-dollar amount}` is a
 policy. The `SizingBalances` it receives are in US dollars only, so a fixed dollar ticket, a

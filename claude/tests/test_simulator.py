@@ -22,7 +22,7 @@ def test_without_funds_the_liquid_balance_is_the_index(currency, rate, identitie
     result = Simulator(portfolio).run()
     assert result.status == "completed" and result.shortfall is None and result.funds_beyond_horizon == ()
     np.testing.assert_allclose(result.periods["liquid_close"], [100, 90, 99])
-    np.testing.assert_allclose(result.periods["return_factor"], [1.0, 0.9, 1.1])
+    np.testing.assert_allclose(result.periods["period_return"], [0.0, -0.1, 0.1])  # percent changes, 0 in the first period
     assert (result.periods[["private_close", "calls", "distributions", "commitments"]] == 0).all().all()
     assert result.funds.empty and result.commitments.empty and result.totals_by_fund_type().empty
     assert list(result.funds.index.names) == ["date", "fund"] and "nav_base" in result.funds.columns
@@ -191,7 +191,7 @@ def test_first_date_closing_and_same_day_call_are_processed_once(identities):
     portfolio = usd(levels(("2027-01-01", 1000), ("2027-04-01", 1100)), {"BUYOUT": {2027: 0.2}})
     result = Simulator(portfolio, [Fund("A", "BUYOUT", "2027-01-01", unit_calls=[("2027-01-01", 0.5)])]).run()
     p = result.periods
-    assert p["return_factor"].tolist() == [1.0, 1.1]
+    assert p["period_return"].tolist() == [0.0, pytest.approx(0.1)]
     np.testing.assert_allclose(p["commitments"], [200, 0])
     np.testing.assert_allclose(p["calls"], [100, 0])
     np.testing.assert_allclose(p["liquid_close"], [900, 990])

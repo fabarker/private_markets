@@ -306,7 +306,7 @@
   <div class="classes">
     <article class="cls liquid">
       <header>LiquidAccount</header>
-      <div class="fields">balance: float<br>return_factors: ndarray</div>
+      <div class="fields">balance: float<br>returns: ndarray</div>
       <div class="methods">apply_return(t) -&gt; pnl<br>deposit(amount)<br>withdraw(amount) -&gt; shortfall</div>
       <div class="role">The cash pot, in base currency. The only mutable balance. <code>withdraw</code> reports what it could not cover instead of going quietly negative.</div>
     </article>
@@ -336,7 +336,7 @@
       <header>Simulator</header>
       <div class="fields">portfolio: Portfolio<br>funds: tuple[Fund, ...]<br>policy: CommitmentPolicy<br>stop_on_shortfall = True<br>cash_tolerance = 1e-9</div>
       <div class="methods">run() -&gt; SimulationResult<br>map_events_to_observations() -&gt; DataFrame</div>
-      <div class="role">Builds the timeline, return return_factors, exchange-rate array and fund paths at construction; owns the one loop. <code>map_events_to_observations()</code> shows where every fund event pooled.</div>
+      <div class="role">Builds the timeline, the period returns, the exchange-rate array, the liquid-only path and the fund histories at construction; owns the one loop. <code>map_events_to_observations()</code> shows where every fund event pooled.</div>
     </article>
     <article class="cls engine">
       <header>SimulationResult <small>frozen</small></header>
@@ -348,7 +348,7 @@
 
   <h3>Who holds whom</h3>
   <ul>
-    <li><code>Simulator</code> takes one <code>Portfolio</code>, many <code>Fund</code>s and one <code>CommitmentPolicy</code>. From the portfolio it derives a <code>Timeline</code>, return return_factors and an exchange-rate array; from each fund a <code>AlignedFundHistory</code>.</li>
+    <li><code>Simulator</code> takes one <code>Portfolio</code>, many <code>Fund</code>s and one <code>CommitmentPolicy</code>. From the portfolio it derives a <code>Timeline</code>, the period returns, the liquid-only path and an exchange-rate array; from each fund a <code>AlignedFundHistory</code>.</li>
     <li><code>CommitmentBook</code> owns many <code>Commitment</code>s; each references its <code>Fund</code> and <code>AlignedFundHistory</code>. Paths are immutable, prepared once, and shared.</li>
     <li>The policy sees a <code>SizingBalances</code> snapshot and the closing cohort, never the portfolios. Sizing is pure and testable without a simulator.</li>
     <li>Nothing references the <code>Simulator</code>. The result is a value; the simulator can be discarded after <code>run()</code>, or run again for an identical result.</li>
@@ -440,7 +440,7 @@ budget_usd        = share(d) × liquid-only value in USD on d
   <p class="kicker">The original's cash ordering, kept. Numbered because the order is the contract.</p>
   <ol class="steps">
     <li><div><div class="what">Snapshot the opening state</div><div class="how">liquid_open = liquid.balance &nbsp;·&nbsp; nav_usd_open = book.nav_at(t − 1) &nbsp;·&nbsp; private_open = last period's private_close</div><div class="why">Opening private NAV is last period's closing NAV in base currency, at last period's rate. At <code>t = 0</code> both are zero: there are no pre-existing commitments.</div></div></li>
-    <li><div><div class="what">Apply the liquid return</div><div class="how">pnl = liquid.apply_return(t) &nbsp;·&nbsp; balance × level[t] / level[t − 1]</div><div class="why">The factor at <code>t = 0</code> is 1. Returns are ratios of consecutive levels: no annualising, no assumed periods per year.</div></div></li>
+    <li><div><div class="what">Apply the liquid return</div><div class="how">pnl = liquid.apply_return(t) &nbsp;·&nbsp; balance × returns[t] &nbsp;·&nbsp; returns[t] = level[t] / level[t − 1] − 1</div><div class="why">The account runs off the period return itself &mdash; the percent change between consecutive observations &mdash; and the first period, having no preceding observation, returns 0. No annualising, no assumed number of periods per year.</div></div></li>
     <li><div><div class="what">Bank distributions from existing commitments</div><div class="how">distributions = book.distributions_in_period(t) × fx[t] &nbsp;·&nbsp; liquid.deposit(distributions)</div><div class="why">Only commitments made before this observation exist yet, so this can never include a fund being sized in step 4.</div></div></li>
     <li><div><div class="what">Size and fix commitments for the closing cohort</div><div class="how">cohort = funds with closing_period == t &nbsp;·&nbsp; balances = SizingBalances(t, date, liquid_only[t] ÷ fx[t], …) &nbsp;·&nbsp; for fund, dollars in policy.size_commitments(cohort, balances): book.add(Commitment(fund, path, dollars))</div><div class="why">All funds closing at this observation are sized in one call, in US dollars, on the liquid-only value: the initial value compounded by the liquid returns, which no call or distribution ever touches. The engine converts it before it asks, so a percentage, a fixed dollar ticket and a dollar minimum all mean the same thing whatever the base currency, and every commitment is known from the liquid returns, the initial value, the exchange rates and the schedule alone. A commitment creates a book entry; it moves no cash. The policy's output is checked: finite, non-negative, only for funds closing now.</div></div></li>
     <li><div><div class="what">Bank the new cohort's distributions, then pay this period's calls</div><div class="how">liquid.deposit(Σ new.distributions_in_period(t) × fx[t]) &nbsp;·&nbsp; calls = book.calls_in_period(t) × fx[t] &nbsp;·&nbsp; missing = liquid.withdraw(calls)</div><div class="why">A fund that distributes inside its own closing period could not be in step 3 (it did not exist yet); its distributions are banked here, after sizing, so they can help pay calls without inflating the base they were sized from. Calls include the cohort's, as in the original. Aggregated before withdrawal, so fund order cannot change the outcome.</div></div></li>
@@ -511,7 +511,7 @@ total_close − total_open = liquid_pnl + private_valuation_pnl</code></pre>
 <section id="benchmark">
   <h2>Benchmarking a run</h2>
   <p class="kicker">Every call is paid by selling the liquid portfolio and every distribution buys it back, so a run already is a public-market-equivalent calculation against the investor's own portfolio.</p>
-  <p>Two read-only methods on <code>SimulationResult</code> report it. They are computed in <code>benchmark.py</code> from the <code>periods</code> and <code>funds</code> tables alone &mdash; the liquid index is the compounded <code>return_factor</code> &mdash; so nothing in the loop is involved. <code>compare_with_liquid_only()</code> sets <code>total_close</code> beside the same liquid portfolio with no private programme. <code>public_market_equivalent()</code> gives, for the programme, each fund type and each fund: the flows compounded to the last observation by the index, the value added, the Kaplan&ndash;Schoar PME, the IRR, and direct alpha (the IRR of the index-compounded flows: the yearly rate of out- or under-performance). With <code>I</code> the liquid index and <code>T</code> the last observation, the link between the two is exact:</p>
+  <p>Two read-only methods on <code>SimulationResult</code> report it. They are computed in <code>benchmark.py</code> from the <code>periods</code> and <code>funds</code> tables alone &mdash; the liquid index is compounded from <code>period_return</code> &mdash; so nothing in the loop is involved. <code>compare_with_liquid_only()</code> sets <code>total_close</code> beside the same liquid portfolio with no private programme. <code>public_market_equivalent()</code> gives, for the programme, each fund type and each fund: the flows compounded to the last observation by the index, the value added, the Kaplan&ndash;Schoar PME, the IRR, and direct alpha (the IRR of the index-compounded flows: the yearly rate of out- or under-performance). With <code>I</code> the liquid index and <code>T</code> the last observation, the link between the two is exact:</p>
 <pre><code>with_programme(T) − liquid_only(T) = Σ (distributions(t) − calls(t)) × I(T)/I(t)  +  private_close(T)
                                    = fv_calls × (ks_pme − 1)</code></pre>
   <p>The programme's <code>value_added</code> equals the comparison's last row, and the funds' and fund types' add up to it; the tests assert all three, including through a shortfall. Private NAV counts at its carrying value, so part of any value added is unrealised. Ratios are NaN where they are undefined: nothing called yet, or every flow on one date.</p>
@@ -583,8 +583,8 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
 <span class="c"># state.py</span>
 <span class="k">@dataclass</span>
 <span class="k">class</span> <span class="l">LiquidAccount</span>:
-    balance: float; return_factors: ndarray
-    <span class="k">def</span> apply_return(self, t):     pnl = self.balance * (self.return_factors[t] - 1); self.balance += pnl; <span class="k">return</span> pnl
+    balance: float; returns: ndarray                            <span class="c"># the period's percent change; returns[0] = 0</span>
+    <span class="k">def</span> apply_return(self, t):     pnl = self.balance * self.returns[t]; self.balance += pnl; <span class="k">return</span> pnl
     <span class="k">def</span> deposit(self, x):  self.balance += x
     <span class="k">def</span> withdraw(self, x): short = max(0.0, x - self.balance); self.balance -= x; <span class="k">return</span> short
 
@@ -636,7 +636,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     <span class="k">def</span> __init__(self, portfolio, funds=(), policy=None, *, stop_on_shortfall=True, cash_tolerance=1e-9):
         self.timeline = Timeline(portfolio.liquid_levels.index)
         levels = portfolio.liquid_levels.to_numpy()
-        self.return_factors = np.concatenate([[1.0], levels[1:] / levels[:-1]])
+        self.returns = np.concatenate([[0.0], levels[1:] / levels[:-1] - 1.0])   <span class="c"># percent changes</span>
         self.fx = self.timeline.last_value_on_or_before(portfolio.usd_rate) <span class="k">if</span> portfolio.requires_fx_conversion <span class="k">else</span> np.ones(self.timeline.n_observations)
         self.aligned_histories = {f.name: f.align_history(self.timeline) <span class="k">for</span> f <span class="k">in</span> funds}
         self.policy = policy <span class="k">or</span> AnnualRatePolicy(portfolio.commitment_rates, funds, years=self.timeline.calendar_years)
@@ -644,7 +644,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
         ...
 
     <span class="k">def</span> run(self) -&gt; SimulationResult:
-        liquid = LiquidAccount(float(self.portfolio.liquid_levels.iloc[0]), self.return_factors)
+        liquid = LiquidAccount(float(self.portfolio.liquid_levels.iloc[0]), self.returns)
         book, fx, private_open, shortfall = CommitmentBook(), self.fx, 0.0, None
         <span class="k">for</span> t <span class="k">in</span> range(self.timeline.n_observations):
             liquid_open, nav_usd_open = liquid.balance, book.nav_at(t - 1)                    <span class="c"># 1</span>
@@ -681,7 +681,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     <thead><tr><th>Original</th><th>Becomes</th><th>Note</th></tr></thead>
     <tbody>
       <tr><td><code>current_total_liquid_assets</code></td><td><code>Portfolio.liquid_levels.iloc[0]</code></td><td>The first level is the starting balance; no separate parameter.</td></tr>
-      <tr><td><code>liquid_portfolio_yearly_returns</code>, <code>num_years</code></td><td><code>Portfolio.liquid_levels</code> → <code>Timeline</code> + return_factors</td><td>Dated levels replace annual returns. Their dates are the grid; ratios are the returns.</td></tr>
+      <tr><td><code>liquid_portfolio_yearly_returns</code>, <code>num_years</code></td><td><code>Portfolio.liquid_levels</code> → <code>Timeline</code> + period returns</td><td>Dated levels replace annual returns. Their dates are the grid; the percent change between consecutive levels is the period return.</td></tr>
       <tr><td><code>initial_vintages</code> (dict class → [Vintage])</td><td>&mdash;</td><td>Not an input in this system: there are no pre-existing commitments at inception; a fund closing before the first observation is rejected.</td></tr>
       <tr><td><code>self._schema</code> / <code>Vintage(type, schema, commitment)</code></td><td><code>Fund</code> (unit history) + <code>Commitment</code> (dollars)</td><td>Same split, made explicit: the fund holds the unit data, the engine holds the dollars.</td></tr>
       <tr><td><code>annual_commitments[class, year]</code></td><td><code>Portfolio.commitment_rates[year, type]</code> via <code>AnnualRatePolicy</code></td><td>Same table, indexed by calendar year and type string. Applied at each fund's closing, not every year.</td></tr>

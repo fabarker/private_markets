@@ -97,7 +97,7 @@ def test_value_added_is_the_same_number_three_ways(make_result):
             assert pme.loc[level, column].sum() == pytest.approx(programme[column], abs=1e-9)
 
 
-def test_growth_to_horizon_compounds_the_return_factors():
+def test_growth_to_horizon_compounds_the_period_returns():
     growth = growth_to_horizon(two_types_with_marks().periods)
     np.testing.assert_allclose(growth, [1060 / 1000, 1060 / 1030, 1060 / 990, 1.0])
 

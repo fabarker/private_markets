@@ -3,7 +3,7 @@
 ``Simulator(portfolio, funds).run()`` walks the liquid index's observations. Each period:
 
 1. snapshot the opening balances;
-2. apply the liquid return (``level[t] / level[t-1]``; 1 at ``t = 0``);
+2. apply the liquid return, the period's percent change (``level[t] / level[t-1] − 1``; 0 at ``t = 0``);
 3. bank distributions from existing commitments;
 4. size and fix commitments for the funds closing at this observation — in US dollars, on
    the liquid-only value: the initial value compounded by the liquid returns, converted at
@@ -34,7 +34,7 @@ from .state import Commitment, LiquidAccount, CommitmentBook
 from .timeline import AlignedFundHistory, Timeline
 
 PERIOD_COLUMNS = [
-    "liquid_open", "private_open", "total_open", "return_factor", "usd_rate",
+    "liquid_open", "private_open", "total_open", "period_return", "usd_rate",
     "liquid_pnl", "distributions", "sizing_base", "sizing_base_usd", "commitments", "commitments_usd", "calls",
     "liquid_close", "private_close", "total_close", "private_valuation_pnl", "fx_translation",
 ]
@@ -175,7 +175,8 @@ class Simulator:
                     f"{first}; there are no pre-existing commitments"
                 )
         levels = portfolio.liquid_levels.to_numpy(dtype=float)
-        self.return_factors: np.ndarray = np.concatenate([[1.0], levels[1:] / levels[:-1]])
+        # the period return as a percent change; the first period has no preceding observation, so 0
+        self.returns: np.ndarray = np.concatenate([[0.0], levels[1:] / levels[:-1] - 1.0])
         self.fx: np.ndarray = (
             self.timeline.last_value_on_or_before(portfolio.usd_rate, name="usd_rate")
             if portfolio.requires_fx_conversion
@@ -213,8 +214,8 @@ class Simulator:
 
     # ------------------------------------------------------------------ run
     def run(self) -> SimulationResult:
-        timeline, fx, return_factors = self.timeline, self.fx, self.return_factors
-        liquid = LiquidAccount(float(self.portfolio.liquid_levels.iloc[0]), return_factors)
+        timeline, fx, returns = self.timeline, self.fx, self.returns
+        liquid = LiquidAccount(float(self.portfolio.liquid_levels.iloc[0]), returns)
         book = CommitmentBook()
         period_rows: list[dict[str, Any]] = []
         fund_rows: list[dict[str, Any]] = []
@@ -259,7 +260,7 @@ class Simulator:
             period_rows.append({
                 "date": stamp,
                 "liquid_open": liquid_open, "private_open": private_open, "total_open": liquid_open + private_open,
-                "return_factor": float(return_factors[t]), "usd_rate": float(fx[t]),
+                "period_return": float(returns[t]), "usd_rate": float(fx[t]),
                 "liquid_pnl": pnl, "distributions": distributions,
                 "sizing_base": float(self.liquid_only[t]), "sizing_base_usd": balances.liquid_only_usd,
                 "commitments": committed_usd * fx[t], "commitments_usd": committed_usd,

@@ -271,7 +271,7 @@ value_added(T) = FV(calls) × (KS-PME − 1)</code></pre>
       <dt>Change</dt>
       <dd><p>Report, for every run: the liquid-only path beside <code>total_close</code>; value added in currency and as a share of the counterfactual; KS-PME and Direct Alpha (the annualised form &mdash; the IRR of the flows once each is compounded to <code>T</code> by the index) for the programme, by fund type and by fund. Value added includes unrealised NAV, so read it with <a href="#s10">10</a>.</p></dd>
       <dt>Built</dt>
-      <dd><p><code>pmsim/benchmark.py</code>, reached through <code>SimulationResult.compare_with_liquid_only()</code> and <code>SimulationResult.public_market_equivalent()</code> &mdash; programme, each fund type, each fund; KS-PME, IRR and direct alpha. No new data: <code>periods.return_factor</code> compounds to the index, and nothing in the loop changed. <code>examples/eur_moderate.py</code> prints both tables and writes them as CSV. The tests assert the identity above on every benchmarked run, including through a shortfall.</p></dd>
+      <dd><p><code>pmsim/benchmark.py</code>, reached through <code>SimulationResult.compare_with_liquid_only()</code> and <code>SimulationResult.public_market_equivalent()</code> &mdash; programme, each fund type, each fund; KS-PME, IRR and direct alpha. No new data: <code>periods.period_return</code> compounds to the index, and nothing in the loop changed. <code>examples/eur_moderate.py</code> prints both tables and writes them as CSV. The tests assert the identity above on every benchmarked run, including through a shortfall.</p></dd>
     </dl>
   </article>
 

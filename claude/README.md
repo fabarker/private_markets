@@ -119,7 +119,7 @@ cash-adjusted estimate. A negative running value is a data error naming the fund
 **Each period, in this order:**
 
 1. snapshot opening balances;
-2. apply the liquid return `level[t] / level[t-1]` (1 at the first date);
+2. apply the liquid return, the period's percent change `level[t] / level[t-1] − 1` (0 at the first date);
 3. bank distributions from existing commitments;
 4. size all funds closing at this observation **in US dollars**, on the **liquid-only value**:
    the initial value compounded by the liquid returns, converted at today's rate. The dollar
@@ -178,7 +178,7 @@ simulation finer; the rule does not change.
 ## Results
 
 `periods` (index `date`, base currency unless noted): `liquid_open`, `private_open`,
-`total_open`, `return_factor`, `usd_rate`, `liquid_pnl`, `distributions`, `sizing_base`
+`total_open`, `period_return` (the period's percent change), `usd_rate`, `liquid_pnl`, `distributions`, `sizing_base`
 (the liquid-only value) and `sizing_base_usd` (the same in dollars: what commitments are
 sized on), `commitments`, `commitments_usd`, `calls`, `liquid_close`, `private_close`,
 `total_close`, `private_valuation_pnl`, `fx_translation`.

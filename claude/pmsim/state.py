@@ -15,11 +15,11 @@ class LiquidAccount:
     """The liquid pot, in base currency. The only balance that changes during a run."""
 
     balance: float
-    return_factors: np.ndarray  # level[t] / level[t-1]; return_factors[0] == 1
+    returns: np.ndarray  # the period's return as a percent change: level[t] / level[t-1] − 1, and 0 in the first period
 
     def apply_return(self, t: int) -> float:
         """Apply period ``t``'s return and report the P&L."""
-        pnl = self.balance * (float(self.return_factors[t]) - 1.0)
+        pnl = self.balance * float(self.returns[t])
         self.balance += pnl
         return pnl
 

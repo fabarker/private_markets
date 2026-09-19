@@ -8,8 +8,8 @@ With ``I`` the liquid index and ``T`` the last observation, the relationship is 
                                   =  FV(calls) × (KS-PME − 1)
 
 Everything here is computed from a result's ``periods`` and ``funds`` tables, in base
-currency; nothing in the simulation loop is involved. The index comes from
-``periods.return_factor``, so no extra data is needed.
+currency; nothing in the simulation loop is involved. The index is compounded from
+``periods.period_return``, so no extra data is needed.
 """
 from __future__ import annotations
 
@@ -33,7 +33,7 @@ def _require_periods(periods: pd.DataFrame) -> None:
 def growth_to_horizon(periods: pd.DataFrame) -> pd.Series:
     """``I(T)/I(t)`` per observation: what 1 put into the liquid portfolio at ``t`` is worth at the last observation."""
     _require_periods(periods)
-    index = periods["return_factor"].cumprod()
+    index = (1.0 + periods["period_return"]).cumprod()
     return index.iloc[-1] / index
 
 
@@ -47,7 +47,7 @@ def compare_with_liquid_only(periods: pd.DataFrame) -> pd.DataFrame:
     """
     _require_periods(periods)
     table = pd.DataFrame({
-        "liquid_only": periods["liquid_open"].iloc[0] * periods["return_factor"].cumprod(),
+        "liquid_only": periods["liquid_open"].iloc[0] * (1.0 + periods["period_return"]).cumprod(),
         "with_programme": periods["total_close"],
     })
     table["value_added"] = table["with_programme"] - table["liquid_only"]

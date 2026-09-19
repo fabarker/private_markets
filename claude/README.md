@@ -299,7 +299,7 @@ in the commitments table.
 
 ## The portfolio workbook
 
-The workbook — `Liquid`, `FX`, `Flows`, `Commitments`, `Spec`, `Expected Returns` — is loaded
+The workbook — `Liquid`, `Liquid Spec`, `FX`, `Flows`, `Commitments`, `Spec` — is loaded
 one *profile* at a time. A profile is a currency and a risk level; it selects the liquid
 return column, the pacing-schedule rows, its expected return, and (for a non-USD currency)
 the FX column.
@@ -324,7 +324,7 @@ compare a real file against.
 | `Flows` | `Vintage`, `Date`, `Value`, `Type` (`Flow`/`NAV`), `Scale` | `Vintage` is the fund name; unit = `Value ÷ Scale`; negative flows are calls |
 | `Commitments` | `Type`, `Year`, `Currency`, `Risk`, `Commitment`, `Rate` | the pacing schedule: rows of the profile; `Year` is **years since inception** (0 = the year of the first Liquid date) and is mapped onto calendar years; `Rate` is the decimal used, an amount per 1 of liquid value on the first commitment date |
 | `Spec` | `Name`, `Year`, `Type` | `Year` holds the closing date, read day-first (`31/12/2010`) |
-| `Expected Returns` | `Portfolio`, `Expected Return` | **required.** One row per portfolio, named as its Liquid column (`EUR Moderate`); the yearly return X its pacing schedule was built on, as a decimal (`0.05` is 5%; a value of 1 or more is rejected as a percentage typed as a number). The schedule means nothing without it |
+| `Liquid Spec` | `Liquid`, `ExRet` | **required.** One row per portfolio, named as its Liquid column (`EUR Moderate`); `ExRet` is the yearly return X its pacing schedule was built on. Format the cells as percentages — Excel stores 5.4% as `0.054`, which is what is read; a bare `5.4` is rejected as a percentage typed as a number. The schedule means nothing without it |
 
 Sheet names are matched ignoring case, spaces, hyphens and underscores (`ExpectedReturns`
 works) and can be overridden with `SheetLayout(...)`; `expected_return=` overrides the sheet
@@ -362,7 +362,7 @@ result = orchestrator.run()
 | `fund_market_data` | `fund_name`, `type`, `value`, `date`, `scale` | long form; `type` is `Flow` or `NAV` (also `Call`, `Distribution`); **unit = value ÷ scale** |
 | `market_data` | `date` + one column per series | wide, or long with `date`, `series`, `value`; blanks are fine (sparse FX) |
 | `commitment_rates` | `year` + one column per fund type | optional (or pass them in the spec); or long with `year`, `type`, `rate`; every year, 0 for none |
-| `expected_returns` | `portfolio`, `expected_return` | optional; the portfolio is looked up by the spec's `liquid_series` name; `SimulationSpec(expected_return=...)` overrides it. With neither, the rates are taken to be shares of the liquid value already |
+| `expected_returns` | `portfolio`, `expected_return` (`liquid`, `exret` also accepted) | optional; the portfolio is looked up by the spec's `liquid_series` name; `SimulationSpec(expected_return=...)` overrides it. With neither, the rates are taken to be shares of the liquid value already |
 
 Column names are matched by alias (`Fund Name`, `fund`, `name` → `fund_name`; `Strategy`
 → fund type; `Amount` → value; `Divisor`/`Commitment` → scale, and so on). `Flow` rows

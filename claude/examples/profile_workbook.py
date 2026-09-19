@@ -1,4 +1,4 @@
-"""The portfolio workbook (Liquid, FX, Flows, Commitments, Spec, Expected Returns), run for one profile.
+"""The portfolio workbook (Liquid, Liquid Spec, FX, Flows, Commitments, Spec), run for one profile.
 
     python -m examples.profile_workbook                                   # sample workbook → temp folder; USD Conservative from 1,000,000
     python -m examples.profile_workbook book.xlsx USD Conservative 1e6    # a real workbook: path, currency, risk, starting balance
@@ -65,12 +65,14 @@ def sample_tables() -> dict[str, pd.DataFrame]:
         "Year": ["31/12/2010", "31/12/2011", "31/12/2011", "31/12/2012", "31/12/2015"],
         "Type": ["BUYOUT", "SECONDARIES", "BUYOUT", "BUYOUT", "SECONDARIES"],
     })
-    expected_returns = pd.DataFrame({   # the yearly return X each portfolio's pacing schedule was built on
-        "Portfolio": ["USD Conservative", "USD Moderate", "USD Aggressive", "EUR Conservative", "EUR Moderate"],
-        "Expected Return": [0.04, 0.05, 0.06, 0.035, 0.045],
+    liquid_spec = pd.DataFrame({   # ExRet: the yearly return X each portfolio's pacing schedule was built on
+        "Liquid": ["USD Conservative", "USD Moderate", "USD Aggressive",
+                   "EUR Conservative", "EUR Moderate", "EUR Aggressive",
+                   "GBP Conservative", "GBP Moderate", "GBP Aggressive"],
+        "ExRet": [0.054, 0.064, 0.074, 0.047, 0.059, 0.070, 0.054, 0.064, 0.075],
     })
-    return {"Liquid": liquid, "FX": fx, "Flows": flows, "Commitments": commitments, "Spec": spec,
-            "Expected Returns": expected_returns}
+    return {"Liquid": liquid, "Liquid Spec": liquid_spec, "FX": fx, "Flows": flows,
+            "Commitments": commitments, "Spec": spec}
 
 
 def write_sample_workbook(path) -> Path:
@@ -78,8 +80,9 @@ def write_sample_workbook(path) -> Path:
     tables = sample_tables()
     with pd.ExcelWriter(path) as writer:
         tables["Liquid"].to_excel(writer, sheet_name="Liquid")          # date as the index: a blank first header, like the real sheet
+        tables["Liquid Spec"].to_excel(writer, sheet_name="Liquid Spec", index=False)
         tables["FX"].to_excel(writer, sheet_name="FX")
-        for sheet in ("Flows", "Commitments", "Spec", "Expected Returns"):
+        for sheet in ("Flows", "Commitments", "Spec"):
             tables[sheet].to_excel(writer, sheet_name=sheet, index=False)
     return path
 

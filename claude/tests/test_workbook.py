@@ -39,7 +39,7 @@ def eur(workbook):
 
 # --------------------------------------------------------------- the sheets
 def test_repository_reads_the_sheets_and_selects_the_profile(usd, eur):
-    assert usd.sheet_names == ["Liquid", "FX", "Flows", "Commitments", "Spec", "Expected Returns"]
+    assert usd.sheet_names == ["Liquid", "Liquid Spec", "FX", "Flows", "Commitments", "Spec"]
     assert usd.profile == "USD Conservative" and usd.liquid_column == "USD Conservative"
     assert usd.fx_column is None and usd.inception_year == 2009
     assert eur.profile == "EUR Conservative" and eur.fx_column == "EURUSD" and eur.fx_quote == "usd_per_base"
@@ -166,9 +166,9 @@ def test_usd_conservative_runs_end_to_end(workbook):
     pem2012 = c.loc[(pd.Timestamp("2011-12-31"), "PEM2012")]
     assert pem2012["current_year_rate"] == 0.022  # same date, different type: no weights needed
     # the pacing model's value is 1 when PEM2011 is committed; a year later it expects 1.04 (this profile's X is 4%)
-    assert orchestrator.simulator.first_commitment_date == date(2010, 12, 31) and orchestrator.expected_return == 0.04
-    assert pem2011["expected_value"] == 1.0 and pem2012["expected_value"] == pytest.approx(1.04)
-    assert pem2012["commitment_usd"] == pytest.approx(0.022 / 1.04 * pem2012["sizing_base_usd"])
+    assert orchestrator.simulator.first_commitment_date == date(2010, 12, 31) and orchestrator.expected_return == 0.054
+    assert pem2011["expected_value"] == 1.0 and pem2012["expected_value"] == pytest.approx(1.054)
+    assert pem2012["commitment_usd"] == pytest.approx(0.022 / 1.054 * pem2012["sizing_base_usd"])
     levels_usd = orchestrator.portfolio.liquid_levels  # a USD profile: the liquid-only value is the level series itself
     assert pem2012["sizing_base_usd"] == pytest.approx(levels_usd.loc["2011-12-31"])
     # PEM2011's June 2011 call pooled onto the June month end, scaled by its commitment
@@ -205,11 +205,11 @@ def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(wor
     balance_at_end_of_2010 = result.periods.loc[pd.Timestamp("2010-12-31"), "sizing_base_usd"]
     # 2010's budget was sized on 31 Dec 2010, the first commitment date, where the expected value is 1; 2011's a year on, at 1.045
     assert sec_vi["carried_years"] == "2010" and sec_vi["carried_usd"] == pytest.approx(0.009 * balance_at_end_of_2010)
-    assert sec_vi["expected_value"] == pytest.approx(1.045) and orchestrator.expected_return == 0.045
-    assert sec_vi["commitment_usd"] == pytest.approx(sec_vi["carried_usd"] + 0.009 / 1.045 * sec_vi["sizing_base_usd"])
+    assert sec_vi["expected_value"] == pytest.approx(1.059) and orchestrator.expected_return == 0.059  # EUR Moderate's ExRet
+    assert sec_vi["commitment_usd"] == pytest.approx(sec_vi["carried_usd"] + 0.009 / 1.059 * sec_vi["sizing_base_usd"])
     _, without = eur_moderate.run(workbook, start_usd=100.0, carry_forward=False)
     assert without.commitments.loc[(pd.Timestamp("2011-12-31"), "SEC_VI"), "commitment_usd"] == \
-        pytest.approx(0.009 / 1.045 * sec_vi["sizing_base_usd"])
+        pytest.approx(0.009 / 1.059 * sec_vi["sizing_base_usd"])
     assert {p.name for p in (tmp_path / "out").iterdir()} == {
         "periods.csv", "funds.csv", "commitments.csv", "map_events_to_observations.csv", "fund_summary.csv",
         "liquid_only_comparison.csv", "public_market_equivalent.csv"}
@@ -228,7 +228,7 @@ def test_january_start_puts_inception_in_the_previous_year_without_needing_its_r
     with pd.ExcelWriter(path) as writer:
         tables["Liquid"].to_excel(writer, sheet_name="Liquid")
         tables["FX"].to_excel(writer, sheet_name="FX")
-        for sheet in ("Flows", "Commitments", "Spec", "Expected Returns"):
+        for sheet in ("Liquid Spec", "Flows", "Commitments", "Spec"):
             tables[sheet].to_excel(writer, sheet_name=sheet, index=False)
     orchestrator = load_profile_workbook(path, "EUR", "Conservative", 1_000_000)
     assert orchestrator.repository.inception_year == 2010  # schedule Year 0: the first Liquid year, not the inception row's
@@ -249,7 +249,7 @@ def test_date_column_need_not_be_first(tmp_path):
     with pd.ExcelWriter(path) as writer:
         liquid.to_excel(writer, sheet_name="Liquid", index=False)
         fx.to_excel(writer, sheet_name="FX", index=False)
-        for sheet in ("Flows", "Commitments", "Spec", "Expected Returns"):
+        for sheet in ("Liquid Spec", "Flows", "Commitments", "Spec"):
             tables[sheet].to_excel(writer, sheet_name=sheet, index=False)
     repository = WorkbookRepository(path, "EUR", "Conservative")
     assert repository.inception_year == 2009 and repository.liquid_column == "EUR Conservative"
@@ -262,15 +262,16 @@ def test_date_column_need_not_be_first(tmp_path):
     check_identities(Orchestrator(repository, repository.simulation_spec(1_000_000)).run())
 
 
-def test_expected_returns_sheet_gives_each_portfolio_its_x(usd, eur, tmp_path):
-    table = usd.expected_returns()
-    assert table.to_dict() == {"USD Conservative": 0.04, "USD Moderate": 0.05, "USD Aggressive": 0.06,
-                               "EUR Conservative": 0.035, "EUR Moderate": 0.045}
+def test_liquid_spec_sheet_gives_each_portfolio_its_expected_return(usd, eur, tmp_path):
+    table = usd.expected_returns()  # Liquid | ExRet, one row per portfolio
+    assert table.to_dict() == {"USD Conservative": 0.054, "USD Moderate": 0.064, "USD Aggressive": 0.074,
+                               "EUR Conservative": 0.047, "EUR Moderate": 0.059, "EUR Aggressive": 0.070,
+                               "GBP Conservative": 0.054, "GBP Moderate": 0.064, "GBP Aggressive": 0.075}
     assert table.index.name == "portfolio" and table.name == "expected_return"
-    assert usd.expected_return == 0.04 and eur.expected_return == 0.035
-    assert usd.simulation_spec(100).expected_return == 0.04 and usd.simulation_spec(100, expected_return=0.07).expected_return == 0.07
+    assert usd.expected_return == 0.054 and eur.expected_return == 0.047  # only this profile's row is used
+    assert usd.simulation_spec(100).expected_return == 0.054 and usd.simulation_spec(100, expected_return=0.07).expected_return == 0.07
 
-    def workbook_with(expected_returns, sheet_name="Expected Returns"):
+    def workbook_with(liquid_spec, sheet_name="Liquid Spec"):
         path = tmp_path / f"{sheet_name or 'none'}-{len(list(tmp_path.iterdir()))}.xlsx"
         tables = sample_tables()
         with pd.ExcelWriter(path) as writer:
@@ -278,23 +279,26 @@ def test_expected_returns_sheet_gives_each_portfolio_its_x(usd, eur, tmp_path):
             tables["FX"].to_excel(writer, sheet_name="FX")
             for sheet in ("Flows", "Commitments", "Spec"):
                 tables[sheet].to_excel(writer, sheet_name=sheet, index=False)
-            if expected_returns is not None:
-                expected_returns.to_excel(writer, sheet_name=sheet_name, index=False)
+            if liquid_spec is not None:
+                liquid_spec.to_excel(writer, sheet_name=sheet_name, index=False)
         return path
 
-    squashed = workbook_with(pd.DataFrame({"portfolio name": ["usd conservative"], "X": [0.03]}), sheet_name="ExpectedReturns")
-    assert WorkbookRepository(squashed, "USD", "Conservative").expected_return == 0.03  # sheet, columns and name matched loosely
+    # the sheet name and both column names are matched loosely, so the older Portfolio / Expected Return spelling still reads
+    aliased = workbook_with(pd.DataFrame({"portfolio name": ["usd conservative"], "Expected Return": [0.03]}), sheet_name="LiquidSpec")
+    assert WorkbookRepository(aliased, "USD", "Conservative").expected_return == 0.03
+    typed_as_text = workbook_with(pd.DataFrame({"Liquid": ["USD Conservative"], "ExRet": ["5.4%"]}))
+    assert WorkbookRepository(typed_as_text, "USD", "Conservative").expected_return == pytest.approx(0.054)
     # the schedule means nothing without the return it assumed, so the sheet is required
-    with pytest.raises(ValueError, match=r"no sheet named 'Expected Returns'"):
+    with pytest.raises(ValueError, match=r"no sheet named 'Liquid Spec'"):
         load_profile_workbook(workbook_with(None), "USD", "Conservative", 1_000_000)
-    with pytest.raises(ValueError, match=r"Expected Returns: no row for portfolio 'EUR Moderate'; portfolios are \['USD Conservative'\]"):
-        load_profile_workbook(workbook_with(pd.DataFrame({"Portfolio": ["USD Conservative"], "Expected Return": [0.04]})),
+    with pytest.raises(ValueError, match=r"Liquid Spec: no row for portfolio 'EUR Moderate'; portfolios are \['USD Conservative'\]"):
+        load_profile_workbook(workbook_with(pd.DataFrame({"Liquid": ["USD Conservative"], "ExRet": [0.054]})),
                               "EUR", "Moderate", 1_000_000)
-    with pytest.raises(ValueError, match=r"expected return of 'USD Conservative' must be a decimal .* \(write 5% as 0.05\), got 4.0"):
-        load_profile_workbook(workbook_with(pd.DataFrame({"Portfolio": ["USD Conservative"], "Expected Return": [4]})),
+    with pytest.raises(ValueError, match=r"expected return of 'USD Conservative' must be a decimal .* \(write 5% as 0.05\), got 5.4"):
+        load_profile_workbook(workbook_with(pd.DataFrame({"Liquid": ["USD Conservative"], "ExRet": [5.4]})),
                               "USD", "Conservative", 1_000_000)
     with pytest.raises(ValueError, match=r"each portfolio needs one expected return; duplicated: \['USD Conservative'\]"):
-        load_profile_workbook(workbook_with(pd.DataFrame({"Portfolio": ["USD Conservative"] * 2, "Expected Return": [0.04, 0.05]})),
+        load_profile_workbook(workbook_with(pd.DataFrame({"Liquid": ["USD Conservative"] * 2, "ExRet": [0.054, 0.064]})),
                               "USD", "Conservative", 1_000_000)
 
 
@@ -307,9 +311,9 @@ def test_layout_override_and_missing_sheets(tmp_path):
         tables["Flows"].to_excel(writer, sheet_name="Fund Data", index=False)
         tables["Commitments"].to_excel(writer, sheet_name="Schedule", index=False)
         tables["Spec"].to_excel(writer, sheet_name="Funds", index=False)
-        tables["Expected Returns"].to_excel(writer, sheet_name="PacingAssumptions", index=False)
+        tables["Liquid Spec"].to_excel(writer, sheet_name="PacingAssumptions", index=False)
     layout = SheetLayout(liquid="returns", fx="spot", flows="fund-data", commitments="schedule", spec="funds",
-                         expected_returns="pacing assumptions")
+                         liquid_spec="pacing assumptions")
     result = run_profile_workbook(path, "USD", "Conservative", 1_000_000, layout=layout)
     assert result.status == "completed"
     with pytest.raises(ValueError, match=r"no sheet named 'Liquid'; sheets are \['Returns'"):

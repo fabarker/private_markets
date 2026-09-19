@@ -4,7 +4,7 @@
     result = load_profile_workbook("portfolio.xlsx", "USD", "Conservative", initial_value=1_000_000).run()
 
 A ``DataRepository`` hands over four normalized tables (``tables.py``). ``WorkbookRepository``
-reads them from the portfolio workbook (Liquid, FX, Flows, Commitments, Spec, Expected Returns),
+reads them from the portfolio workbook (Liquid, Liquid Spec, FX, Flows, Commitments, Spec),
 one profile at a time; ``FrameRepository`` takes them as DataFrames and is the shape a
 database adapter will take. ``Orchestrator`` joins a repository with a ``SimulationSpec``
 into ``Fund`` and ``Portfolio`` objects and runs the ``Simulator``.

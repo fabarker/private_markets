@@ -18,9 +18,9 @@ a database adapter will take.
                   Year is years since inception (0 = the year of the first Liquid date); Rate is decimal
     Spec          Name | Year | Type
                   Year holds the fund's closing date (dd/mm/yyyy)
-    Expected Returns   Portfolio | Expected Return
-                  one row per portfolio, named as its Liquid column; the yearly return X its pacing
-                  schedule was built on, as a decimal (0.05 is 5%)
+    Liquid Spec   Liquid | ExRet
+                  one row per portfolio, named as its Liquid column; ExRet is the yearly return X
+                  its pacing schedule was built on (5.4%, which Excel stores as 0.054)
 
 A profile is a (currency, risk) pair. It selects the Liquid return column, the Commitments
 rows, its expected return and — when the currency is not USD — the FX column to invert. What comes out is the
@@ -110,11 +110,11 @@ class SheetLayout:
     flows: str = "Flows"
     commitments: str = "Commitments"
     spec: str = "Spec"
-    expected_returns: str = "Expected Returns"
+    liquid_spec: str = "Liquid Spec"
 
 
 def _sheet_key(name: Any) -> str:
-    """Sheet names compared ignoring case, spaces, hyphens and underscores: ExpectedReturns is Expected Returns."""
+    """Sheet names compared ignoring case, spaces, hyphens and underscores: LiquidSpec is Liquid Spec."""
     return re.sub(r"[\s\-_]+", "", str(name).strip().lower())
 
 
@@ -290,8 +290,8 @@ class WorkbookRepository:
                                           currency=self.currency, risk=self.risk, inception_year=self.inception_year)
 
     def expected_returns(self) -> pd.Series:
-        """Required: the Commitments sheet is a pacing schedule, and means nothing without the return it assumed."""
-        return normalize_expected_returns(self.raw_sheet(self.layout.expected_returns))
+        """The Liquid Spec sheet. Required: the Commitments sheet is a pacing schedule, and means nothing without its X."""
+        return normalize_expected_returns(self.raw_sheet(self.layout.liquid_spec))
 
     @cached_property
     def expected_return(self) -> float:
@@ -299,7 +299,7 @@ class WorkbookRepository:
         table = self.expected_returns()
         matches = [name for name in table.index if canonical_name(name) == canonical_name(self.profile)]
         if not matches:
-            raise ValueError(f"{self.layout.expected_returns}: no row for portfolio {self.profile!r}; "
+            raise ValueError(f"{self.layout.liquid_spec}: no row for portfolio {self.profile!r}; "
                              f"portfolios are {list(table.index)}")
         return float(table[matches[0]])
 

@@ -100,7 +100,7 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, rat
         print(f"\nStarting balance: USD {start_usd:,.2f} = {CURRENCY} {initial_value:,.4f} "
               f"at {repository.fx_column} {rate:.4f} (first available rate, {rate_date.date()}), held at inception {inception}")
 
-    print(f"\nExpected return X for {repository.profile}: {orchestrator.expected_return:.2%} a year (Expected Returns sheet). "
+    print(f"\nExpected return X for {repository.profile}: {orchestrator.expected_return:.2%} a year (Liquid Spec sheet). "
           f"The pacing model's liquid value is 1 on the first commitment date, {orchestrator.simulator.first_commitment_date}.")
     print(f"Pacing schedule for {repository.profile} (calendar year × type), per 1 of liquid value on that date:")
     print(repository.commitment_rates().T)

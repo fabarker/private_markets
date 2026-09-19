@@ -12,7 +12,8 @@ Normalization lives here and every repository applies it:
     commitment_rates   calendar year (index) × fund type (columns) — from a wide sheet
                        (year + one column per type) or a long one (year, type, rate); optional
     expected_returns   portfolio name → the yearly expected return its pacing schedule was built
-                       on, as a decimal (0.05 is 5%); optional
+                       on, as a decimal (0.054 is 5.4%); optional. The workbook's Liquid Spec
+                       sheet holds it as Liquid | ExRet
 
 Column names are matched case-, space- and hyphen-insensitively against ALIASES.
 """
@@ -50,8 +51,8 @@ ALIASES: dict[str, frozenset[str]] = {
     "year": frozenset({"year", "calendar_year", "policy_year"}),
     "rate": frozenset({"rate", "commitment_rate", "target", "value"}),
     "series": frozenset({"series", "name", "ticker", "field", "variable", "item"}),
-    "portfolio": frozenset({"portfolio", "portfolio_name", "profile", "name"}),
-    "expected_return": frozenset({"expected_return", "expected_returns", "return", "x"}),
+    "portfolio": frozenset({"portfolio", "portfolio_name", "profile", "name", "liquid"}),
+    "expected_return": frozenset({"expected_return", "expected_returns", "expected_ret", "exret", "ex_ret", "return", "x"}),
 }
 
 
@@ -270,9 +271,27 @@ def normalize_commitment_rates(raw: Any) -> pd.DataFrame:
     return wide
 
 
+def _percent_to_decimal(values: Iterable[Any]) -> list[Any]:
+    """A cell typed as the text "5.4%" read as 0.054. A percentage-formatted number is already 0.054 and passes through."""
+    out = []
+    for value in values:
+        if isinstance(value, str) and value.strip().endswith("%"):
+            try:
+                out.append(float(value.strip()[:-1]) / 100.0)
+                continue
+            except ValueError:
+                pass
+        out.append(value)
+    return out
+
+
 def normalize_expected_returns(raw: Any) -> pd.Series:
-    """Portfolio name → yearly expected return as a decimal: the X each portfolio's pacing schedule was built on."""
-    table = "expected_returns"
+    """Portfolio name → yearly expected return as a decimal: the X each portfolio's pacing schedule was built on.
+
+    The workbook's Liquid Spec sheet is ``Liquid | ExRet``; the column names are matched by
+    alias, so ``Portfolio | Expected Return`` works too.
+    """
+    table = "expected returns"
     frame = _non_empty_rows(raw, table)
     portfolio_column = find_column(frame, "portfolio", table=table)
     return_column = find_column(frame, "expected_return", table=table)
@@ -280,8 +299,9 @@ def normalize_expected_returns(raw: Any) -> pd.Series:
     duplicates = sorted({name for name in portfolios if portfolios.count(name) > 1})
     if duplicates:
         raise ValueError(f"{table}: each portfolio needs one expected return; duplicated: {duplicates}")
+    numbers = _numbers(_percent_to_decimal(frame[return_column]), table=table, column=return_column)
     returns = [
         validate_expected_return(value, label=f"{table}: expected return of {portfolio!r}")
-        for portfolio, value in zip(portfolios, _numbers(frame[return_column], table=table, column=return_column))
+        for portfolio, value in zip(portfolios, numbers)
     ]
     return pd.Series(returns, index=pd.Index(portfolios, name="portfolio"), name="expected_return", dtype=float)

@@ -5,6 +5,7 @@ import pandas as pd
 import pytest
 
 from pmsim import AlignedFundHistory, Timeline
+from pmsim.dates import years_between
 
 GRID = Timeline(pd.to_datetime(["2027-01-31", "2027-02-28", "2027-03-31"]))
 
@@ -62,3 +63,12 @@ def test_fund_path_arrays_are_read_only_copies_of_one_length():
         AlignedFundHistory([0, 0], [0], [0], closing_period=0)
     with pytest.raises(ValueError, match="outside"):
         AlignedFundHistory([0], [0], [0], closing_period=2)
+
+
+def test_years_between_counts_anniversaries_so_year_ends_are_whole_years():
+    assert years_between("2010-12-31", "2010-12-31") == 0.0
+    assert years_between("2010-12-31", "2011-12-31") == 1.0 and years_between("2010-12-31", "2025-12-31") == 15.0
+    assert years_between("2010-12-31", "2012-06-30") == pytest.approx(1 + 182 / 366)  # 2012 is a leap year
+    assert years_between("2010-12-31", "2011-06-30") == pytest.approx(181 / 365)
+    assert years_between("2010-12-31", "2009-12-31") == -1.0  # before the start: negative
+    assert years_between(date(2012, 2, 29), "2013-02-28") == 1.0 and years_between(date(2012, 2, 29), "2016-02-29") == 4.0

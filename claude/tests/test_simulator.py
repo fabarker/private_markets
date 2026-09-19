@@ -36,26 +36,28 @@ def test_worked_example_in_usd(usd_portfolio, worked_funds, identities):
     result = Simulator(usd_portfolio, worked_funds, policy).run()
     p = result.periods
     assert result.status == "completed"
-    np.testing.assert_allclose(p["sizing_base"], [1_000_000, 1_100_000, 1_195_150])
-    np.testing.assert_allclose(p["commitments"], [0, 66_000, 47_806])
-    np.testing.assert_allclose(p["calls"], [0, 16_500, 11_951.5])
+    # sized on the liquid-only value: the index itself, not the account that has by then paid A's call
+    np.testing.assert_allclose(p["sizing_base"], [1_000_000, 1_100_000, 1_210_000])
+    np.testing.assert_allclose(p["commitments"], [0, 66_000, 48_400])
+    np.testing.assert_allclose(p["calls"], [0, 16_500, 12_100])
     np.testing.assert_allclose(p["distributions"], [0, 0, 3_300])
-    np.testing.assert_allclose(p["liquid_close"], [1_000_000, 1_083_500, 1_183_198.5])
-    np.testing.assert_allclose(p["private_close"], [0, 16_500, 25_151.5])
+    np.testing.assert_allclose(p["liquid_close"], [1_000_000, 1_083_500, 1_183_050])
+    np.testing.assert_allclose(p["private_close"], [0, 16_500, 25_300])
     np.testing.assert_allclose(p["total_close"], [1_000_000, 1_100_000, 1_208_350])
     assert (p["usd_rate"] == 1).all() and (p["fx_translation"] == 0).all()
     np.testing.assert_array_equal(p["sizing_base_usd"], p["sizing_base"])  # a dollar portfolio: one and the same
     c = result.commitments
     assert list(c.index) == [(D("2027-03-31"), "A"), (D("2027-06-30"), "B")]
-    assert c["commitment_usd"].tolist() == pytest.approx([66_000, 47_806])
+    assert c["commitment_usd"].tolist() == pytest.approx([66_000, 48_400])
     assert c["closing_date"].tolist() == [D("2027-02-15"), D("2027-05-10")]
     assert c["policy_year"].tolist() == [2027, 2027] and c["rate"].tolist() == pytest.approx([0.06, 0.04])
     assert c["weight"].tolist() == [0.6, 0.4] and c["current_year_rate"].tolist() == [0.1, 0.1]
-    assert c["current_year_usd"].tolist() == pytest.approx([110_000, 119_515])  # 10% of each closing's balance, before weight
+    assert c["current_year_usd"].tolist() == pytest.approx([110_000, 121_000])  # 10% of the liquid-only value, before weight
+    assert c["expected_value"].isna().all()  # no expected return given: the rates are shares of the liquid value already
     assert (c["carried_usd"] == 0).all() and (c["carried_years"] == "").all()
     f = result.funds
     assert f.loc[(D("2027-06-30"), "A"), "nav_usd"] == pytest.approx(13_200)
-    assert f.loc[(D("2027-06-30"), "B"), "calls_usd"] == pytest.approx(11_951.5)
+    assert f.loc[(D("2027-06-30"), "B"), "calls_usd"] == pytest.approx(12_100)
     assert (D("2027-03-31"), "B") not in f.index  # B does not exist before its closing
     identities(result)
 
@@ -66,23 +68,23 @@ def test_worked_example_in_gbp_translates_at_the_observation_rate(gbp_portfolio,
     p = result.periods
     assert result.base_currency == "GBP"
     np.testing.assert_allclose(p["usd_rate"], [0.80, 0.80, 0.75])
-    np.testing.assert_allclose(p["sizing_base"], [1_000_000, 1_100_000, 1_194_943.75])
-    np.testing.assert_allclose(p["sizing_base_usd"], [1_250_000, 1_375_000, 1_194_943.75 / 0.75])  # what the rate is applied to
-    np.testing.assert_allclose(p["commitments"], [0, 66_000, 47_797.75])
-    np.testing.assert_allclose(p["commitments_usd"], [0, 82_500, 47_797.75 / 0.75])
+    np.testing.assert_allclose(p["sizing_base"], [1_000_000, 1_100_000, 1_210_000])  # the liquid-only value, in sterling
+    np.testing.assert_allclose(p["sizing_base_usd"], [1_250_000, 1_375_000, 1_210_000 / 0.75])  # what the rate is applied to
+    np.testing.assert_allclose(p["commitments"], [0, 66_000, 48_400])
+    np.testing.assert_allclose(p["commitments_usd"], [0, 82_500, 48_400 / 0.75])
     np.testing.assert_allclose(p["distributions"], [0, 0, 3_093.75])
-    np.testing.assert_allclose(p["calls"], [0, 16_500, 11_949.4375])
-    np.testing.assert_allclose(p["liquid_close"], [1_000_000, 1_083_500, 1_182_994.3125])
-    np.testing.assert_allclose(p["private_close"], [0, 16_500, 24_324.4375])
+    np.testing.assert_allclose(p["calls"], [0, 16_500, 12_100])
+    np.testing.assert_allclose(p["liquid_close"], [1_000_000, 1_083_500, 1_182_843.75])
+    np.testing.assert_allclose(p["private_close"], [0, 16_500, 24_475])
     np.testing.assert_allclose(p["total_close"], [1_000_000, 1_100_000, 1_207_318.75])
     np.testing.assert_allclose(p["fx_translation"], [0, 0, -1_031.25])
     np.testing.assert_allclose(p["private_valuation_pnl"], [0, 0, -1_031.25])  # no marks: all of it is FX
     c = result.commitments
     assert c.loc[(D("2027-03-31"), "A"), "commitment_usd"] == pytest.approx(82_500)
-    assert c.loc[(D("2027-06-30"), "B"), "commitment_usd"] == pytest.approx(63_730.3333333)
+    assert c.loc[(D("2027-06-30"), "B"), "commitment_usd"] == pytest.approx(64_533.3333333)
     assert c["usd_rate"].tolist() == [0.80, 0.75]
     assert c.loc[(D("2027-03-31"), "A"), "sizing_base_usd"] == pytest.approx(1_375_000)  # 6% of it is the 82,500
-    assert c["commitment_base"].tolist() == pytest.approx([66_000, 47_797.75])  # reported, never decided
+    assert c["commitment_base"].tolist() == pytest.approx([66_000, 48_400])  # reported, never decided
     a = result.funds.xs("A", level="fund")
     np.testing.assert_allclose(a["nav_usd"], [20_625, 16_500])
     np.testing.assert_allclose(a["nav_base"], [16_500, 12_375])
@@ -129,6 +131,36 @@ def test_carried_budgets_are_sized_in_dollars_at_each_year_ends_exchange_rate(id
     assert row["carried_usd"] == pytest.approx(100_000 + 120_000)
     assert row["current_year_usd"] == pytest.approx(0.10 * 1_000_000 / 0.50)
     assert row["commitment_usd"] == pytest.approx(420_000) and row["commitment_base"] == pytest.approx(210_000)
+
+
+def test_pacing_schedule_is_normalised_by_the_expected_value_seeded_at_the_first_commitment(identities):
+    portfolio = usd(levels(("2027-12-31", 1_000_000), ("2028-12-31", 1_100_000), ("2029-12-31", 1_100_000), ("2030-12-31", 1_331_000)),
+                    {"BUYOUT": {2027: 0.0, 2028: 0.02, 2029: 0.021, 2030: 0.02205}})
+    funds = [Fund("P1", "BUYOUT", "2028-12-31", unit_calls=[("2028-12-31", 1.0)]),  # called in full: the account falls behind the index
+             Fund("P2", "BUYOUT", "2029-12-31"), Fund("P3", "BUYOUT", "2030-12-31")]
+    policy = AnnualRatePolicy(portfolio.commitment_rates, funds, expected_return=0.05, years=portfolio.calendar_years)
+    simulator = Simulator(portfolio, funds, policy)
+    assert simulator.first_commitment_date == date(2028, 12, 31)  # the pacing model's value is 1 here
+    result = simulator.run()
+    c = result.commitments
+    np.testing.assert_allclose(c["expected_value"], [1.0, 1.05, 1.1025])
+    np.testing.assert_allclose(c["rate"], [0.02, 0.02, 0.02])  # a schedule growing at X is a constant share of the liquid value
+    np.testing.assert_allclose(c["commitment_usd"], [22_000, 22_000, 26_620])
+    np.testing.assert_allclose(c["sizing_base_usd"], [1_100_000, 1_100_000, 1_331_000])  # the index, not the account P1 drew on
+    assert result.periods["liquid_close"].iloc[1] == pytest.approx(1_100_000 - 22_000)
+    identities(result)
+
+
+def test_every_commitment_follows_from_the_liquid_path_alone():
+    """The same liquid returns, initial value and schedule give the same commitments whatever the funds call or distribute."""
+    portfolio = usd(levels(("2027-12-31", 1_000_000), ("2028-12-31", 1_100_000), ("2029-12-31", 1_250_000)),
+                    {"BUYOUT": {2027: 0.0, 2028: 0.05, 2029: 0.05}})
+    quiet = [Fund("P1", "BUYOUT", "2028-12-31"), Fund("P2", "BUYOUT", "2029-12-31")]
+    busy = [Fund("P1", "BUYOUT", "2028-12-31", unit_calls=[("2028-12-31", 1.0)], unit_distributions=[("2029-06-30", 2.5)],
+                 unit_nav=[("2029-06-30", 0.0)]),
+            Fund("P2", "BUYOUT", "2029-12-31", unit_calls=[("2029-12-31", 0.5)])]
+    first, second = (Simulator(portfolio, funds).run().commitments["commitment_usd"].tolist() for funds in (quiet, busy))
+    assert first == second == pytest.approx([55_000, 62_500])
 
 
 def test_runs_with_carry_forward_repeat_exactly():
@@ -216,10 +248,13 @@ def test_sizing_happens_in_dollars_whatever_the_base_currency(gbp_portfolio, wor
     result = Simulator(gbp_portfolio, worked_funds, policy).run()
     at_a_closing, at_b_closing = policy.seen  # asked only when a fund closes
     # the sterling balance reaches the policy converted at that day's rate; private NAV is dollars as they are
-    assert at_a_closing.liquid_usd == pytest.approx(1_100_000 / 0.80) and at_a_closing.private_nav_usd == 0
-    assert at_b_closing.liquid_usd == pytest.approx(result.periods["sizing_base"].iloc[2] / 0.75)
+    assert at_a_closing.liquid_only_usd == pytest.approx(1_100_000 / 0.80) and at_a_closing.private_nav_usd == 0
+    assert at_b_closing.liquid_only_usd == pytest.approx(1_210_000 / 0.75)  # the index, untouched by A's call and distribution
+    # the account has paid £10,000 of calls and banked £1,875: it is shown, in dollars, but it is not what gets sized on
+    assert at_b_closing.liquid_account_usd == pytest.approx(((1_100_000 - 10_000) * 1.1 + 1_875) / 0.75)
     assert at_b_closing.private_nav_usd == pytest.approx(50_000 * 0.25)  # A's NAV, untouched by the 0.80 → 0.75 move
-    assert at_b_closing.total_usd == pytest.approx(at_b_closing.liquid_usd + 12_500)
+    assert at_b_closing.total_usd == pytest.approx(at_b_closing.liquid_account_usd + 12_500)
+    assert at_b_closing.first_commitment_date == date(2027, 3, 31) and list(at_b_closing.year_ends) == []  # no year completed yet
     c, p = result.commitments, result.periods
     assert c["commitment_usd"].tolist() == [50_000.0, 50_000.0]  # exactly the dollars decided, whatever the rate
     assert c["commitment_base"].tolist() == pytest.approx([50_000 * 0.80, 50_000 * 0.75])  # the same dollars, in sterling
@@ -278,16 +313,15 @@ def test_first_date_shortfall_leaves_one_recorded_period():
     assert len(result.periods) == 1 and len(result.commitments) == 1
 
 
-def test_full_cash_use_is_not_a_shortfall_and_zero_base_gives_zero_commitment(identities):
+def test_full_cash_use_is_not_a_shortfall_and_an_empty_account_does_not_shrink_commitments(identities):
     portfolio = usd(levels(("2027-01-01", 100), ("2027-02-01", 100), ("2027-03-01", 100)), {"A": {2027: 1.0}, "B": {2027: 1.0}})
     funds = [Fund("F", "A", "2027-01-01", unit_calls=[("2027-01-15", 1.0)]), Fund("G", "B", "2027-02-15")]
     result = Simulator(portfolio, funds).run()
-    assert result.status == "completed"
+    assert result.status == "completed"  # exactly zero cash is not a shortfall
     np.testing.assert_array_equal(result.periods["liquid_close"], [100, 0, 0])
-    assert result.commitments.loc[(D("2027-03-01"), "G"), "commitment_usd"] == 0
     g = result.commitments.loc[(D("2027-03-01"), "G")]
-    assert g["current_year_rate"] == 1.0 and g["current_year_usd"] == 0  # the year's rate was used, and bought nothing
-    assert np.isnan(g["rate"])  # there was no balance to be a share of
+    # F's call emptied the account, but commitments are sized on the liquid-only value, which no call touches
+    assert g["sizing_base_usd"] == 100 and g["commitment_usd"] == 100 and g["rate"] == 1.0
     identities(result)
 
 
@@ -374,11 +408,11 @@ def test_exposures_and_by_type(gbp_portfolio, worked_funds):
     result = Simulator(gbp_portfolio, worked_funds, policy).run()
     exposures = result.nav_by_fund()
     assert list(exposures.columns) == ["A", "B"] and exposures.index.equals(result.periods.index)
-    np.testing.assert_allclose(exposures["B"], [0, 0, 11_949.4375])
+    np.testing.assert_allclose(exposures["B"], [0, 0, 12_100])
     by_type = result.totals_by_fund_type()
     assert list(by_type.index.names) == ["date", "fund_type"]
-    assert by_type.loc[(D("2027-06-30"), "BUYOUT"), "nav_base"] == pytest.approx(24_324.4375)
-    assert by_type.loc[(D("2027-06-30"), "BUYOUT"), "commitment_usd"] == pytest.approx(82_500 + 47_797.75 / 0.75)
+    assert by_type.loc[(D("2027-06-30"), "BUYOUT"), "nav_base"] == pytest.approx(24_475)
+    assert by_type.loc[(D("2027-06-30"), "BUYOUT"), "commitment_usd"] == pytest.approx(82_500 + 48_400 / 0.75)
 
 
 # ----------------------------------------------------------- repeatability

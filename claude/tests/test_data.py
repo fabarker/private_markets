@@ -213,6 +213,35 @@ def test_commitment_rates_long_wide_spec_and_missing():
         Orchestrator(FrameRepository(fund_spec, fund_market, market), SPEC).portfolio
 
 
+# ------------------------------------------------------- expected returns
+def test_expected_return_comes_from_the_spec_then_the_repository_then_nothing():
+    fund_spec, fund_market, market, rates = tables()
+    without_table = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates), SPEC)
+    assert without_table.expected_return is None and without_table.policy.expected_return is None  # rates are shares already
+
+    returns = pd.DataFrame({"Portfolio": ["Liquid GBP", "liquid_usd"], "Expected Return": [0.05, 0.04]})
+    with_table = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates, returns), SPEC)
+    assert with_table.expected_return == 0.05 and with_table.policy.expected_return == 0.05  # looked up by the liquid series' name
+
+    override = SimulationSpec("GBP", "liquid_gbp", "gbp_per_usd", weights={"A": 0.6, "B": 0.4}, expected_return=0.08)
+    assert Orchestrator(FrameRepository(fund_spec, fund_market, market, rates, returns), override).expected_return == 0.08
+
+    other = pd.DataFrame({"Portfolio": ["something else"], "Expected Return": [0.05]})
+    with pytest.raises(ValueError, match=r"expected_returns has no row for portfolio 'liquid_gbp'; portfolios are \['something else'\]"):
+        Orchestrator(FrameRepository(fund_spec, fund_market, market, rates, other), SPEC).expected_return
+    with pytest.raises(ValueError, match="write 5% as 0.05"):
+        SimulationSpec("GBP", "liquid_gbp", "gbp_per_usd", expected_return=5)
+
+
+def test_expected_return_changes_the_second_commitment_of_the_worked_example():
+    fund_spec, fund_market, market, rates = tables()
+    returns = pd.DataFrame({"Portfolio": ["liquid_gbp"], "Expected Return": [0.05]})
+    c = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates, returns), SPEC).run().commitments
+    # A is the first commitment (31 Mar): expected value 1. B is 91 days into a year that runs to 31 Mar 2028 and holds a 29 Feb
+    assert c["expected_value"].tolist() == pytest.approx([1.0, 1.05 ** (91 / 366)])
+    assert c["commitment_usd"].tolist() == pytest.approx([82_500, 0.04 / 1.05 ** (91 / 366) * 1_210_000 / 0.75])
+
+
 # -------------------------------------------------------------- repository
 def test_frame_repository_normalizes_once_and_hands_out_copies():
     fund_spec, fund_market, market, rates = tables()

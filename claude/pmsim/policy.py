@@ -1,25 +1,34 @@
-"""Commitment sizing, in US dollars.
+"""Commitment sizing, in US dollars, on the liquid-only value.
 
-Private funds are committed to in dollars, so sizing happens exclusively in USD whatever
-the portfolio's base currency. The engine asks a policy one question: given the funds
-closing at this observation and a snapshot of the balances in USD, how many dollars to
-commit to each. For a non-USD portfolio the engine converts the liquid balance at the
-observation's exchange rate before it asks, and turns the answer into base currency only
-for reporting. The policy reads balances and never moves cash. ``AnnualRatePolicy`` is the
-default: a dollar budget per year and fund type — that year's rate times that year's liquid
-balance — committed to the funds of the type closing that year, by weight; with
-carry-forward, the budgets of years in which no fund of the type closed wait, as dollars,
-for the next fund of the type.
+Two rules fix what a commitment is sized on.
+
+It is sized in **US dollars**: private funds are committed to in dollars, whatever the
+portfolio's base currency, so the engine converts before it asks and turns the answer into
+base currency only for reporting.
+
+It is sized on the **liquid-only value**: the initial value compounded by the liquid returns,
+with no capital call or distribution in it. Private assets never interfere, so every
+commitment follows from the liquid returns, the initial value, the exchange rates and the
+schedule alone.
+
+The engine asks a policy one question: given the funds closing at this observation and a
+snapshot of the balances, how many dollars to commit to each. The policy reads and never
+moves cash, and keeps no state. ``AnnualRatePolicy`` is the default: a dollar budget per
+year and fund type from a pacing schedule, committed to the funds of the type closing that
+year, by weight; with carry-forward, the budgets of years in which no fund of the type
+closed wait, as dollars, for the next fund of the type.
 """
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
 from datetime import date
+from numbers import Real
 from typing import Any, Iterable, Mapping, Protocol, Sequence
 
 import pandas as pd
 
+from .dates import years_between
 from .inputs import Fund, coerce_rate_table
 
 WEIGHT_TOLERANCE = 1e-9
@@ -27,24 +36,40 @@ FundGroups = dict[tuple[int, str], list[Fund]]  # funds by (closing year, fund t
 
 
 @dataclass(frozen=True)
+class YearEndBalance:
+    """The liquid-only value at a calendar year's last observation: what that year's budget is sized on."""
+
+    date: date
+    liquid_only_usd: float
+
+
+@dataclass(frozen=True)
 class SizingBalances:
-    """What a policy may look at when sizing commitments at observation ``t``. Every amount is in US dollars."""
+    """What a policy may look at when sizing commitments at observation ``t``. Every amount is in US dollars.
+
+    ``liquid_only_usd`` is what commitments are sized on: the initial value compounded by the
+    liquid returns, at today's exchange rate. No call or distribution is in it.
+    ``liquid_account_usd`` is the simulated account that does pay the calls and bank the
+    distributions; it and ``private_nav_usd`` are here for policies that want them, and
+    ``AnnualRatePolicy`` uses neither.
+    """
 
     t: int
     date: date
-    liquid_usd: float  # liquid balance after this period's return and existing funds' distributions, at today's rate
-    private_nav_usd: float  # opening private NAV; private data is natively USD, so nothing is translated
-    # liquid_usd as it stood at the last observation of each completed calendar year: what a carried year's budget is sized on
-    year_end_liquid_usd: Mapping[int, float] = field(default_factory=dict)
+    liquid_only_usd: float
+    liquid_account_usd: float  # after this period's return and the existing funds' distributions
+    private_nav_usd: float  # opening private NAV; natively USD, so nothing is translated
+    year_ends: Mapping[int, YearEndBalance] = field(default_factory=dict)  # completed calendar years only
+    first_commitment_date: date | None = None  # the observation at which the run's first fund is committed
 
     @property
     def total_usd(self) -> float:
-        return self.liquid_usd + self.private_nav_usd
+        return self.liquid_account_usd + self.private_nav_usd
 
-    def liquid_usd_at_end_of(self, year: int) -> float | None:
-        """``liquid_usd`` at the last observation on or before the end of ``year``; None before the simulation began."""
-        known = [y for y in self.year_end_liquid_usd if y <= year]
-        return self.year_end_liquid_usd[max(known)] if known else None
+    def year_end_on_or_before(self, year: int) -> YearEndBalance | None:
+        """The last year end on or before ``year``: a year with no observation uses the one before. None before the run began."""
+        known = [y for y in self.year_ends if y <= year]
+        return self.year_ends[max(known)] if known else None
 
 
 class CommitmentPolicy(Protocol):
@@ -62,8 +87,17 @@ class Entitlement:
     carried_year_rates: Mapping[int, float] = field(default_factory=dict)  # earlier years with no fund of the type → their rates
 
 
+def validate_expected_return(value: Any, *, label: str = "expected_return") -> float:
+    """A yearly expected return as a decimal: 0.05 is 5%. At or above 1 it is taken for a percentage typed as a number."""
+    if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value):
+        raise ValueError(f"{label} must be a number such as 0.05 for 5% a year, got {value!r}")
+    if not -1.0 < value < 1.0:
+        raise ValueError(f"{label} must be a decimal between -1 and 1 (write 5% as 0.05), got {value!r}")
+    return float(value)
+
+
 def _weights_by_fund(groups: FundGroups, weights: Mapping[str, float]) -> dict[str, float]:
-    """Each fund's share of its group's pooled rate: given for all of a group or none (equal split), summing to 1."""
+    """Each fund's share of its group's budget: given for all of a group or none (equal split), summing to 1."""
     shares: dict[str, float] = {}
     for (year, fund_type), group in groups.items():
         given = [f for f in group if f.name in weights]
@@ -88,8 +122,8 @@ def _entitlements(rates: pd.DataFrame, groups: FundGroups, weights: Mapping[str,
                   carry_forward: bool) -> dict[str, Entitlement]:
     """Walk each fund type's years in order: a year with a closing hands its funds every year carried to it.
 
-    Only the years and their rates are settled here. The dollars are not: a carried year's
-    budget depends on that year's portfolio value, which is known only during the run.
+    Only the years and their rates are settled here. The dollars are not: a year's budget
+    depends on that year's liquid-only value, which the run supplies.
     """
     entitlements: dict[str, Entitlement] = {}
     for fund_type in rates.columns:
@@ -109,14 +143,28 @@ def _entitlements(rates: pd.DataFrame, groups: FundGroups, weights: Mapping[str,
 class AnnualRatePolicy:
     """A dollar budget per year and fund type, committed to the funds of that type closing that year.
 
-    A year's budget is ``rate[year, type]`` × the liquid balance in USD. The closing year's
-    budget is sized at the closing observation. With ``carry_forward``, a year in which no
-    fund of a type closes is still sized — at that year's last observation, on that year's
-    balance — and its dollars accumulate until the next year that has a fund of the type,
-    whose funds collect them. Dollars are carried, never percentages: three carried years
-    are three budgets, each from its own year's portfolio value. A year before the first
-    observation had no portfolio to size on and carries nothing. Without ``carry_forward`` a
-    year with no closing of the type is not used at all.
+    **The budget.** ``share × liquid-only value in USD``, on the day the year is sized: the
+    closing observation for a year with a fund of the type, the year's last observation
+    otherwise.
+
+    **The share.** With ``expected_return`` the rate table is a pacing schedule: amounts per
+    1 of liquid value on the day of the first commitment, from a model in which the liquid
+    portfolio then grows at the expected return X. The schedule rises because that portfolio
+    grows, so it is turned back into a share of the liquid value before it is used::
+
+        expected_value(d) = (1 + X) ** years from the first commitment date to d     # exactly 1 on that date
+        share(d)          = schedule[year, type] / expected_value(d)
+
+    which commits the model's planned amount scaled by how far the actual liquid value is
+    ahead of, or behind, the expected one. X and the schedule are in the portfolio's own
+    currency, so the share has no unit and multiplies the liquid-only value in USD directly.
+    Without ``expected_return`` the table is taken to hold shares of the liquid value already.
+
+    **Carry-forward.** With ``carry_forward``, a year in which no fund of a type closes is
+    still sized, on its own liquid-only value at its own year end, and the dollars
+    accumulate until the next year that has a fund of the type, whose funds collect them.
+    Dollars are carried, never percentages. A year before the first observation had no
+    portfolio to size on and carries nothing. Without it such a year is not used at all.
 
     ``weights`` split a year's budget, carried dollars included, among the funds of one type
     closing that year; they must be given for all funds of such a group or none (equal
@@ -132,9 +180,11 @@ class AnnualRatePolicy:
         *,
         carry_forward: bool = False,
         years: Iterable[int] | None = None,
+        expected_return: float | None = None,
     ) -> None:
         self.rates = coerce_rate_table(rates)
         self.carry_forward = bool(carry_forward)
+        self.expected_return = None if expected_return is None else validate_expected_return(expected_return)
         funds = list(funds)
         names = [f.name for f in funds]
         if len(set(names)) != len(names):
@@ -159,15 +209,25 @@ class AnnualRatePolicy:
         self.weights = _weights_by_fund(groups, weights)
         self.entitlements = _entitlements(self.rates, groups, self.weights, self.carry_forward)
 
+    def expected_value(self, on: date, first_commitment_date: date | None) -> float:
+        """The pacing model's liquid value on ``on``: 1 on the first commitment date, growing at the expected return."""
+        if self.expected_return is None:
+            return 1.0
+        if first_commitment_date is None:
+            raise ValueError("expected_return needs SizingBalances.first_commitment_date: the pacing model's value is 1 on that date")
+        return (1.0 + self.expected_return) ** years_between(first_commitment_date, on)
+
     def _budgets_usd(self, fund_name: str, balances: SizingBalances) -> tuple[float, float]:
         """This year's budget and the budgets carried to it, in USD, before the fund's weight is applied."""
         entitlement = self.entitlements[fund_name]
-        current_year_usd = entitlement.current_year_rate * balances.liquid_usd
-        carried_usd = math.fsum(
-            rate * (balances.liquid_usd_at_end_of(year) or 0.0)  # each carried year on its own year-end balance
-            for year, rate in entitlement.carried_year_rates.items()
-        )
-        return current_year_usd, carried_usd
+        first = balances.first_commitment_date
+        current_year_usd = entitlement.current_year_rate / self.expected_value(balances.date, first) * balances.liquid_only_usd
+        carried = []
+        for year, rate in entitlement.carried_year_rates.items():
+            year_end = balances.year_end_on_or_before(year)
+            if year_end is not None:  # each carried year on its own year end: its own value, its own expected value
+                carried.append(rate / self.expected_value(year_end.date, first) * year_end.liquid_only_usd)
+        return current_year_usd, math.fsum(carried)
 
     def size_commitments(self, cohort: Sequence[Fund], balances: SizingBalances) -> Mapping[str, float]:
         sized = {}
@@ -180,8 +240,11 @@ class AnnualRatePolicy:
         """How a fund's dollars were arrived at, for the commitments table: weight × (current_year_usd + carried_usd)."""
         entitlement = self.entitlements[fund_name]
         current_year_usd, carried_usd = self._budgets_usd(fund_name, balances)
+        expected_value = (float("nan") if self.expected_return is None
+                          else self.expected_value(balances.date, balances.first_commitment_date))
         return {
             "policy_year": entitlement.policy_year, "current_year_rate": entitlement.current_year_rate,
-            "weight": entitlement.weight, "current_year_usd": current_year_usd, "carried_usd": carried_usd,
+            "expected_value": expected_value, "weight": entitlement.weight,
+            "current_year_usd": current_year_usd, "carried_usd": carried_usd,
             "carried_years": ", ".join(str(year) for year in entitlement.carried_year_rates),
         }

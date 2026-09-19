@@ -7,7 +7,7 @@ terminal, from the claude directory:
     python -m examples.eur_moderate                                    # uses the settings below
     python -m examples.eur_moderate /path/to/portfolio.xlsx [out_dir]  # overrides them
 
-If WORKBOOK does not exist, a sample workbook in the same five-sheet layout is generated
+If WORKBOOK does not exist, a sample workbook in the same layout is generated
 next to it and used instead, so the script runs on a fresh checkout — the notice printed
 at the top says which file was used.
 
@@ -73,12 +73,12 @@ def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_curre
     else:
         initial_value, rate, rate_date = starting_balance(repository, start_usd)
 
-    spec = repository.simulation_spec(initial_value, carry_forward=carry_forward)  # 3. currency, series, fx quote, carry-forward
+    spec = repository.simulation_spec(initial_value, carry_forward=carry_forward)  # 3. currency, series, fx quote, expected return
     orchestrator = Orchestrator(repository, spec)
 
     funds = orchestrator.funds                                                  # 4. one Fund per Spec row, unit histories from Flows
     portfolio = orchestrator.portfolio                                          # 5. levels compounded from returns; USD rate inverted
-    policy = orchestrator.policy                                                # 6. per fund: this year's rate, weight, years carried to it
+    policy = orchestrator.policy                                                # 6. the schedule, X, and per fund: rate, weight, carried years
 
     result = orchestrator.run()                                                 # 7. the period loop
 
@@ -100,7 +100,9 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, rat
         print(f"\nStarting balance: USD {start_usd:,.2f} = {CURRENCY} {initial_value:,.4f} "
               f"at {repository.fx_column} {rate:.4f} (first available rate, {rate_date.date()}), held at inception {inception}")
 
-    print(f"\nCommitment rates for {repository.profile} (calendar year × type):")
+    print(f"\nExpected return X for {repository.profile}: {orchestrator.expected_return:.2%} a year (Expected Returns sheet). "
+          f"The pacing model's liquid value is 1 on the first commitment date, {orchestrator.simulator.first_commitment_date}.")
+    print(f"Pacing schedule for {repository.profile} (calendar year × type), per 1 of liquid value on that date:")
     print(repository.commitment_rates().T)
     print("\nFunds loaded:")
     print(orchestrator.fund_summary())
@@ -112,8 +114,9 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, rat
     if result.shortfall is not None:
         print(f"  {result.shortfall}")
     carry = "on" if orchestrator.spec.carry_forward else "off"
-    print(f"\nCommitments (sized in USD; carry-forward {carry}; commitment = weight × (current_year_usd + carried_usd)):")
-    print(result.commitments[["policy_year", "sizing_base_usd", "current_year_rate", "current_year_usd",
+    print(f"\nCommitments, sized in USD on the liquid-only value (sizing_base_usd); carry-forward {carry}.")
+    print("  current_year_usd = current_year_rate / expected_value × sizing_base_usd · commitment_usd = weight × (current_year_usd + carried_usd)")
+    print(result.commitments[["policy_year", "sizing_base_usd", "current_year_rate", "expected_value", "current_year_usd",
                               "carried_years", "carried_usd", "weight", "commitment_usd", "usd_rate", "commitment_base"]])
     print(f"\nFirst observations ({result.base_currency}):")
     print(result.periods[PERIOD_COLUMNS].head(3))

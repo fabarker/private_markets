@@ -2,7 +2,7 @@
 
 ``Orchestrator`` joins a repository and a ``SimulationSpec`` into ``Fund`` and ``Portfolio``
 objects, builds the policy and the simulator, and runs them. ``load_profile_workbook`` is
-the front door for the five-sheet Excel workbook: one call from a path and a profile to
+the front door for the Excel portfolio workbook: one call from a path and a profile to
 an orchestrator ready to run.
 """
 from __future__ import annotations
@@ -161,6 +161,24 @@ class Orchestrator:
         return rates
 
     @cached_property
+    def expected_return(self) -> float | None:
+        """The yearly return the pacing schedule was built on: the spec's, else the repository's row for the liquid series.
+
+        None only when the repository has no expected_returns table at all; a table that
+        exists but does not list this portfolio is an error, not a silent fallback.
+        """
+        if self.spec.expected_return is not None:
+            return float(self.spec.expected_return)
+        table = self.repository.expected_returns()
+        if table is None:
+            return None
+        matches = [name for name in table.index if canonical_name(name) == canonical_name(self.spec.liquid_series)]
+        if not matches:
+            raise ValueError(f"expected_returns has no row for portfolio {self.spec.liquid_series!r}; "
+                             f"portfolios are {list(table.index)}")
+        return float(table[matches[0]])
+
+    @cached_property
     def portfolio(self) -> Portfolio:
         return build_portfolio(self.repository.market_data(), self.spec, self.commitment_rates)
 
@@ -172,7 +190,8 @@ class Orchestrator:
         first_year = levels.index[1 if self.spec.liquid_kind == "returns" else 0].year
         return AnnualRatePolicy(self.portfolio.commitment_rates, self.funds, self.spec.weights,
                                 carry_forward=self.spec.carry_forward,
-                                years=range(first_year, self.portfolio.last_date.year + 1))
+                                years=range(first_year, self.portfolio.last_date.year + 1),
+                                expected_return=self.expected_return)
 
     @cached_property
     def simulator(self) -> Simulator:
@@ -209,7 +228,7 @@ class Orchestrator:
 
 def load_profile_workbook(path: Any, currency: str, risk: str, initial_value: float, *,
                           layout: SheetLayout = SheetLayout(), **overrides: Any) -> Orchestrator:
-    """An ``Orchestrator`` for one profile of the five-sheet workbook; ``overrides`` are ``SimulationSpec`` settings."""
+    """An ``Orchestrator`` for one profile of the portfolio workbook; ``overrides`` are ``SimulationSpec`` settings."""
     repository = WorkbookRepository(path, currency, risk, layout)
     return Orchestrator(repository, repository.simulation_spec(initial_value, **overrides))
 

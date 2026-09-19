@@ -35,11 +35,11 @@ def test_pme_on_the_worked_example(usd_portfolio, worked_funds):
     assert list(pme.index) == [("programme", "all"), ("fund_type", "BUYOUT"), ("fund", "A"), ("fund", "B")]
 
     programme = pme.loc[("programme", "all")]
-    assert programme["calls"] == pytest.approx(16_500 + 11_951.5) and programme["distributions"] == pytest.approx(3_300)
-    assert programme["nav"] == pytest.approx(25_151.5)
-    assert programme["fv_calls"] == pytest.approx(16_500 * 1.1 + 11_951.5) and programme["fv_distributions"] == pytest.approx(3_300)
+    assert programme["calls"] == pytest.approx(16_500 + 12_100) and programme["distributions"] == pytest.approx(3_300)
+    assert programme["nav"] == pytest.approx(25_300)
+    assert programme["fv_calls"] == pytest.approx(16_500 * 1.1 + 12_100) and programme["fv_distributions"] == pytest.approx(3_300)
     assert programme["value_added"] == pytest.approx(-1_650)
-    assert programme["ks_pme"] == pytest.approx(28_451.5 / 30_101.5)
+    assert programme["ks_pme"] == pytest.approx(28_600 / 30_250)
     pd.testing.assert_series_equal(pme.loc[("fund_type", "BUYOUT")], programme, check_names=False)  # one type: same figures
 
     a = pme.loc[("fund", "A")]  # 18,150 of index-compounded calls against 16,500 back, a quarter later
@@ -59,7 +59,7 @@ def test_gbp_example_is_benchmarked_in_base_currency(gbp_portfolio, worked_funds
     comparison, pme = result.compare_with_liquid_only(), result.public_market_equivalent()
     assert comparison["value_added"].iloc[-1] == pytest.approx(1_207_318.75 - 1_210_000)
     programme = pme.loc[("programme", "all")]
-    assert programme["calls"] == pytest.approx(16_500 + 11_949.4375) and programme["nav"] == pytest.approx(24_324.4375)
+    assert programme["calls"] == pytest.approx(16_500 + 12_100) and programme["nav"] == pytest.approx(24_475)
     assert programme["value_added"] == pytest.approx(-2_681.25)  # 1,650 forgone return + 1,031.25 lost to the weaker dollar
 
 

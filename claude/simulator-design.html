@@ -163,7 +163,7 @@
     <li><b>1</b> loop, in <code>Simulator.run()</code></li>
     <li><b>1</b> currency boundary, crossed in <b>one</b> place</li>
     <li>dates converted to periods <b>once</b>, by a <code>Timeline</code></li>
-    <li><code>pmsim</code> · <b>7</b> engine modules + a data layer · <b>180</b> tests</li>
+    <li><code>pmsim</code> · <b>7</b> engine modules + a data layer · <b>198</b> tests</li>
   </ul>
 </header>
 
@@ -178,6 +178,7 @@
     <li><a href="#dates">Dates become periods</a></li>
     <li><a href="#frequency">Observation frequency</a></li>
     <li><a href="#currency">Currency</a></li>
+    <li><a href="#sizing">Commitment sizing</a></li>
     <li><a href="#loop">The period loop</a></li>
     <li><a href="#example">Worked example</a></li>
     <li><a href="#benchmark">Benchmarking a run</a></li>
@@ -218,7 +219,7 @@
       <path d="M408,144 L252,144" class="sv-line" marker-end="url(#arr)"></path>
       <text x="290" y="164" text-anchor="middle" class="sv-mono">distributions</text>
       <path d="M140,178 L140,214 L408,214 L408,180" class="sv-line" stroke-dasharray="4 3" marker-end="url(#arr)"></path>
-      <text x="200" y="234" class="sv-mono">commit in USD: rate[year, type] × (liquid ÷ fx[t])</text>
+      <text x="200" y="234" class="sv-mono">commit in USD: share × (liquid-only value ÷ fx[t])</text>
     </svg>
     <figcaption>Every period the liquid pot earns its return and receives distributions; funds closing that period are sized from it and their commitments fixed in dollars; then calls are paid. Everything that crosses the dashed line is multiplied or divided by the exchange rate of that observation date. The policy only reads balances; it never moves cash.</figcaption>
   </figure>
@@ -244,7 +245,7 @@
       <dl>
         <dt>base_currency</dt><dd>The currency of the liquid index and of every report, e.g. "GBP". This setting decides whether conversion happens: "USD" means none; anything else requires <code>usd_rate</code>.</dd>
         <dt>liquid_levels</dt><dd>Dated total-return levels in base currency. The dates <em>are</em> the simulation grid; the first level <em>is</em> the starting balance.</dd>
-        <dt>commitment_rates</dt><dd>DataFrame, calendar year × fund_type. Unit commitment per 1 of sizing base: 0.10 means commit 10%. Every year from first to last observation, 0 for no target.</dd>
+        <dt>commitment_rates</dt><dd>DataFrame, calendar year × fund_type: the pacing schedule. With the portfolio's expected return it is turned into shares of the liquid-only value (see Commitment sizing); without one it is taken to hold such shares already. Every year from first to last observation, 0 for no target.</dd>
         <dt>usd_rate</dt><dd>Dated price of 1 USD in base currency. Required when <code>base_currency</code> is not USD; rejected when it is. May be sparse.</dd>
       </dl>
     </article>
@@ -327,9 +328,9 @@
   <div class="classes">
     <article class="cls engine">
       <header>CommitmentPolicy <small>protocol</small></header>
-      <div class="fields">SizingBalances(t, date, liquid_usd, private_nav_usd, year_end_liquid_usd)<br><span class="m">.total_usd = liquid_usd + private_nav_usd</span><br><span class="m">.liquid_usd_at_end_of(year)</span></div>
+      <div class="fields">SizingBalances(t, date, liquid_only_usd, liquid_account_usd, private_nav_usd, year_ends, first_commitment_date)<br><span class="m">.total_usd = liquid_account_usd + private_nav_usd</span><br><span class="m">.year_end_on_or_before(year)</span></div>
       <div class="methods">size_commitments(cohort, balances) -&gt; {fund: usd_amount}<br><span class="m">explain_commitment(fund, balances) -&gt; dict  (optional)</span></div>
-      <div class="role">Given the funds closing now and a snapshot of balances in US dollars, decide dollar commitments. Sizing happens exclusively in USD: a policy is never shown, and never returns, a base-currency amount. <code>AnnualRatePolicy(rates, funds, weights, carry_forward, years)</code> is the default: a dollar budget per year and type, with the budgets of years that had no fund of the type carried forward as dollars. It precomputes an <code>Entitlement</code> per fund &mdash; this year's rate, the weight, the years carried to it &mdash; keeps no state, and reports the dollars through <code>explain_commitment()</code>.</div>
+      <div class="role">Given the funds closing now and a snapshot of balances in US dollars, decide dollar commitments. Sizing happens exclusively in USD: a policy is never shown, and never returns, a base-currency amount. <code>AnnualRatePolicy(rates, funds, weights, carry_forward, years, expected_return)</code> is the default: a dollar budget per year and type &mdash; the pacing schedule divided by the pacing model's expected value, times the liquid-only value &mdash; with the budgets of years that had no fund of the type carried forward as dollars. It precomputes an <code>Entitlement</code> per fund &mdash; this year's rate, the weight, the years carried to it &mdash; keeps no state, and reports the dollars through <code>explain_commitment()</code>.</div>
     </article>
     <article class="cls engine">
       <header>Simulator</header>
@@ -394,7 +395,7 @@
   <div class="tablewrap"><table>
     <thead><tr><th>Quantity</th><th>Native currency</th><th>Conversion</th></tr></thead>
     <tbody>
-      <tr class="rule-private"><td>Sizing base, commitment decision</td><td>USD</td><td>Sizing happens exclusively in dollars. The liquid balance is converted first, <code>liquid_usd = liquid ÷ fx[t]</code>, and the policy sees and returns USD only: <code>rate × liquid_usd</code>. Private NAV reaches it untranslated.</td></tr>
+      <tr class="rule-private"><td>Sizing base, commitment decision</td><td>USD</td><td>Sizing happens exclusively in dollars. The liquid-only value is converted first, <code>liquid_only_usd = liquid_only ÷ fx[t]</code>, and the policy sees and returns USD only: <code>share × liquid_only_usd</code>. Private NAV reaches it untranslated, and is not used for sizing.</td></tr>
       <tr class="rule-private"><td>Commitment amount</td><td>USD, fixed at closing</td><td>Decided in dollars and never changed afterwards. <code>commitment_base = commitment_usd × fx[closing_period]</code> is that day's translation, reported for information; its base-currency value floats from then on.</td></tr>
       <tr class="rule-private"><td>Calls, distributions in a period</td><td>USD</td><td>Multiplied by <code>fx[t]</code> on the observation they settle on, then applied to the liquid pot.</td></tr>
       <tr class="rule-private"><td>Private NAV at an observation</td><td>USD</td><td><code>nav_usd(t) × fx[t]</code>. A move in the rate between observations shows up as private valuation P&amp;L.</td></tr>
@@ -404,6 +405,36 @@
   <p>Two facts are fixed in the system rather than supplied per input: private-markets flows and NAV are always in US dollars (a module constant, <code>PRIVATE_CURRENCY = "USD"</code>), and the liquid index is always in <code>Portfolio.base_currency</code>. That one setting therefore tells the system whether to convert at all. When it is "USD" the rate array is all ones and a supplied <code>usd_rate</code> is rejected as contradictory; when it is anything else <code>usd_rate</code> is required. Both checks run when the <code>Portfolio</code> is constructed, before any simulator exists. The rate is quoted as base currency per 1 USD, so USD figures are multiplied to reach base and base figures divided to reach USD. Intra-period flows are converted at the observation-date rate, consistent with all flows settling at the observation.</p>
 </section>
 
+<section id="sizing">
+  <h2>Commitment sizing</h2>
+  <p class="kicker">Three rules decide every commitment. Together they mean the liquid returns, the initial value, the exchange rates and the pacing schedule are all the system needs to size all of them.</p>
+
+  <div class="rule"><p class="t">In US dollars</p><p>Private funds are committed to in dollars, so the decision is made in dollars whatever the base currency. The engine converts before it asks the policy, and base-currency figures are that day's translation, reported and never decided on.</p></div>
+
+  <div class="rule"><p class="t">On the liquid-only value</p><p>The initial value compounded by the liquid returns &mdash; the level series itself &mdash; with no capital call or distribution in it. Private assets never interfere: the account that pays the calls is a different number, used for the shortfall test and never for sizing. The same inputs give the same commitments whatever the funds then call or distribute, and a test asserts exactly that.</p></div>
+
+  <div class="rule"><p class="t">As a share of the expected liquid value</p><p>The commitment rates come from a pacing model in which the liquid portfolio is worth 1 on the day of the first commitment and then grows at its expected return X. A schedule entry is an amount per 1 of liquid value <em>on that day</em>, not a share of the value in its own year; it rises because the modelled portfolio grows. It is turned back into a share before it is used:</p>
+<pre><code>expected_value(d) = (1 + X) ^ years from the first commitment date to d      <span class="c"># exactly 1 on that date</span>
+share(d)          = schedule[year, type] / expected_value(d)                 <span class="c"># no unit: X and the schedule are in the portfolio's own currency</span>
+budget_usd        = share(d) × liquid-only value in USD on d
+                  = schedule × (actual liquid value / expected liquid value) × the dollars the portfolio was worth on the first commitment date</code></pre>
+  <p>The run commits the model's planned amount, scaled by how far the actual liquid value is ahead of, or behind, the expected one. Years are counted in anniversaries, so 31 December to 31 December is exactly 1 and the model's annual steps are hit exactly; between them the elapsed share of the year is used. Applying the schedule to the current value without this step would count the growth twice, by a factor of <code>(1 + X)^years</code>.</p></div>
+
+  <p>X is one number per portfolio, in the workbook's <code>Expected Returns</code> sheet (<code>Portfolio</code>, <code>Expected Return</code>; 0.05 is 5%). The sheet is required by <code>WorkbookRepository</code> &mdash; the schedule means nothing without the return it assumed &mdash; and <code>SimulationSpec(expected_return=…)</code> overrides it for a run. A policy built by hand without <code>expected_return</code> takes its table to hold shares already, which is what the worked example below does.</p>
+
+  <h3>With carry-forward</h3>
+  <p>A year in which no fund of a type closes is still sized, by the same three rules, at that year's last observation: its own share, of its own liquid-only value, at its own expected value. The dollars then wait, and accumulate, until the next year that has a fund of the type, whose funds collect <code>weight × (carried_usd + current_year_usd)</code>. Dollars are carried, never percentages.</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th>Sized on</th><th class="num">schedule</th><th class="num">expected value (X = 5%)</th><th class="num">share</th><th class="num">liquid-only USD</th><th class="num">budget USD</th></tr></thead>
+    <tbody>
+      <tr><td>31 Dec 2028 &middot; first commitment</td><td class="num">2.000%</td><td class="num">1.0000</td><td class="num">2.00%</td><td class="num">1,100,000</td><td class="num">22,000</td></tr>
+      <tr><td>31 Dec 2029</td><td class="num">2.100%</td><td class="num">1.0500</td><td class="num">2.00%</td><td class="num">1,100,000</td><td class="num">22,000</td></tr>
+      <tr><td>31 Dec 2030</td><td class="num">2.205%</td><td class="num">1.1025</td><td class="num">2.00%</td><td class="num">1,331,000</td><td class="num">26,620</td></tr>
+    </tbody>
+  </table></div>
+  <p>A schedule that grows at X is a constant share of the liquid value. Commit each year to a fund closing that day and these are the three commitments; with no fund until 2030 and carry-forward on, the 2030 fund collects all three budgets, 70,620.</p>
+</section>
+
 <section id="loop">
   <h2>The period loop</h2>
   <p class="kicker">The original's cash ordering, kept. Numbered because the order is the contract.</p>
@@ -411,9 +442,9 @@
     <li><div><div class="what">Snapshot the opening state</div><div class="how">liquid_open = liquid.balance &nbsp;·&nbsp; nav_usd_open = book.nav_at(t − 1) &nbsp;·&nbsp; private_open = last period's private_close</div><div class="why">Opening private NAV is last period's closing NAV in base currency, at last period's rate. At <code>t = 0</code> both are zero: there are no pre-existing commitments.</div></div></li>
     <li><div><div class="what">Apply the liquid return</div><div class="how">pnl = liquid.apply_return(t) &nbsp;·&nbsp; balance × level[t] / level[t − 1]</div><div class="why">The factor at <code>t = 0</code> is 1. Returns are ratios of consecutive levels: no annualising, no assumed periods per year.</div></div></li>
     <li><div><div class="what">Bank distributions from existing commitments</div><div class="how">distributions = book.distributions_in_period(t) × fx[t] &nbsp;·&nbsp; liquid.deposit(distributions)</div><div class="why">Only commitments made before this observation exist yet, so this can never include a fund being sized in step 4.</div></div></li>
-    <li><div><div class="what">Size and fix commitments for the closing cohort</div><div class="how">cohort = funds with closing_period == t &nbsp;·&nbsp; balances = SizingBalances(t, date, liquid.balance ÷ fx[t], nav_usd_open) &nbsp;·&nbsp; for fund, dollars in policy.size_commitments(cohort, balances): book.add(Commitment(fund, path, dollars))</div><div class="why">All funds closing at this observation are sized in one call from the same balance, in US dollars: the engine converts the liquid balance before it asks, so a percentage, a fixed dollar ticket and a dollar minimum all mean the same thing whatever the base currency. A commitment creates a book entry; it moves no cash. The policy's output is checked: finite, non-negative, only for funds closing now.</div></div></li>
+    <li><div><div class="what">Size and fix commitments for the closing cohort</div><div class="how">cohort = funds with closing_period == t &nbsp;·&nbsp; balances = SizingBalances(t, date, liquid_only[t] ÷ fx[t], …) &nbsp;·&nbsp; for fund, dollars in policy.size_commitments(cohort, balances): book.add(Commitment(fund, path, dollars))</div><div class="why">All funds closing at this observation are sized in one call, in US dollars, on the liquid-only value: the initial value compounded by the liquid returns, which no call or distribution ever touches. The engine converts it before it asks, so a percentage, a fixed dollar ticket and a dollar minimum all mean the same thing whatever the base currency, and every commitment is known from the liquid returns, the initial value, the exchange rates and the schedule alone. A commitment creates a book entry; it moves no cash. The policy's output is checked: finite, non-negative, only for funds closing now.</div></div></li>
     <li><div><div class="what">Bank the new cohort's distributions, then pay this period's calls</div><div class="how">liquid.deposit(Σ new.distributions_in_period(t) × fx[t]) &nbsp;·&nbsp; calls = book.calls_in_period(t) × fx[t] &nbsp;·&nbsp; missing = liquid.withdraw(calls)</div><div class="why">A fund that distributes inside its own closing period could not be in step 3 (it did not exist yet); its distributions are banked here, after sizing, so they can help pay calls without inflating the base they were sized from. Calls include the cohort's, as in the original. Aggregated before withdrawal, so fund order cannot change the outcome.</div></div></li>
-    <li><div><div class="what">Value, record, and stop if the pot ran dry</div><div class="how">private_close = book.nav_at(t) × fx[t] &nbsp;·&nbsp; append period, fund and commitment rows &nbsp;·&nbsp; if missing &gt; cash_tolerance and stop_on_shortfall: break</div><div class="why">The failed period is recorded with its negative balance visible and named in <code>result.shortfall</code>. With <code>stop_on_shortfall=False</code> the balance goes negative and the run continues &mdash; the "how much would I have to borrow" view. Exactly zero cash is valid; a zero sizing base gives a zero commitment and still uses the rate.</div></div></li>
+    <li><div><div class="what">Value, record, and stop if the pot ran dry</div><div class="how">private_close = book.nav_at(t) × fx[t] &nbsp;·&nbsp; append period, fund and commitment rows &nbsp;·&nbsp; if missing &gt; cash_tolerance and stop_on_shortfall: break</div><div class="why">The failed period is recorded with its negative balance visible and named in <code>result.shortfall</code>. With <code>stop_on_shortfall=False</code> the balance goes negative and the run continues &mdash; the "how much would I have to borrow" view. Exactly zero cash is valid, and an empty account does not shrink the next commitment: that is sized on the liquid-only value.</div></div></li>
   </ol>
   <p>Accounting identities, asserted by the tests on every period of every run:</p>
 <pre><code>liquid_close = liquid_open + liquid_pnl + distributions − calls
@@ -444,11 +475,11 @@ total_close − total_open = liquid_pnl + private_valuation_pnl</code></pre>
       <tr class="rule-engine"><td>usd_rate</td><td class="num">0.80</td><td class="num">0.80</td><td class="num">0.75</td></tr>
       <tr class="rule-liquid"><td>liquid_pnl</td><td class="num">0.00</td><td class="num">100,000.00</td><td class="num">108,350.00</td></tr>
       <tr class="rule-private"><td>distributions</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">3,093.75</td></tr>
-      <tr class="rule-liquid"><td>sizing_base</td><td class="num">1,000,000.00</td><td class="num">1,100,000.00</td><td class="num">1,194,943.75</td></tr>
-      <tr class="rule-private"><td>commitments (base)</td><td class="num">0.00</td><td class="num">66,000.00</td><td class="num">47,797.75</td></tr>
-      <tr class="rule-private"><td>calls</td><td class="num">0.00</td><td class="num">16,500.00</td><td class="num">11,949.44</td></tr>
-      <tr class="rule-liquid"><td>liquid_close</td><td class="num">1,000,000.00</td><td class="num">1,083,500.00</td><td class="num">1,182,994.31</td></tr>
-      <tr class="rule-private"><td>private_close</td><td class="num">0.00</td><td class="num">16,500.00</td><td class="num">24,324.44</td></tr>
+      <tr class="rule-liquid"><td>sizing_base (liquid-only)</td><td class="num">1,000,000.00</td><td class="num">1,100,000.00</td><td class="num">1,210,000.00</td></tr>
+      <tr class="rule-private"><td>commitments (base)</td><td class="num">0.00</td><td class="num">66,000.00</td><td class="num">48,400.00</td></tr>
+      <tr class="rule-private"><td>calls</td><td class="num">0.00</td><td class="num">16,500.00</td><td class="num">12,100.00</td></tr>
+      <tr class="rule-liquid"><td>liquid_close</td><td class="num">1,000,000.00</td><td class="num">1,083,500.00</td><td class="num">1,182,843.75</td></tr>
+      <tr class="rule-private"><td>private_close</td><td class="num">0.00</td><td class="num">16,500.00</td><td class="num">24,475.00</td></tr>
       <tr class="total"><td>total_close</td><td class="num">1,000,000.00</td><td class="num">1,100,000.00</td><td class="num">1,207,318.75</td></tr>
       <tr class="rule-private"><td>private_valuation_pnl</td><td class="num">0.00</td><td class="num">0.00</td><td class="num neg">−1,031.25</td></tr>
       <tr class="rule-engine"><td>fx_translation</td><td class="num">0.00</td><td class="num">0.00</td><td class="num neg">−1,031.25</td></tr>
@@ -460,7 +491,7 @@ total_close − total_open = liquid_pnl + private_valuation_pnl</code></pre>
     <thead><tr><th>date</th><th>fund</th><th>closing</th><th class="num">rate</th><th class="num">sizing base USD</th><th class="num">commitment USD</th><th class="num">fx</th><th class="num">sizing base GBP</th><th class="num">commitment GBP</th></tr></thead>
     <tbody>
       <tr><td>31 Mar</td><td>A</td><td>15 Feb</td><td class="num">0.06</td><td class="num">1,375,000.00</td><td class="num">82,500.00</td><td class="num">0.80</td><td class="num">1,100,000.00</td><td class="num">66,000.00</td></tr>
-      <tr><td>30 Jun</td><td>B</td><td>10 May</td><td class="num">0.04</td><td class="num">1,593,258.33</td><td class="num">63,730.33</td><td class="num">0.75</td><td class="num">1,194,943.75</td><td class="num">47,797.75</td></tr>
+      <tr><td>30 Jun</td><td>B</td><td>10 May</td><td class="num">0.04</td><td class="num">1,613,333.33</td><td class="num">64,533.33</td><td class="num">0.75</td><td class="num">1,210,000.00</td><td class="num">48,400.00</td></tr>
     </tbody>
   </table></div>
 
@@ -470,10 +501,11 @@ total_close − total_open = liquid_pnl + private_valuation_pnl</code></pre>
     <tbody>
       <tr><td>31 Mar</td><td>A</td><td class="num">82,500.00</td><td class="num">20,625.00</td><td class="num">0.00</td><td class="num">20,625.00</td><td class="num">16,500.00</td><td class="num">0.00</td><td class="num">16,500.00</td></tr>
       <tr><td>30 Jun</td><td>A</td><td class="num">82,500.00</td><td class="num">0.00</td><td class="num">4,125.00</td><td class="num">16,500.00</td><td class="num">0.00</td><td class="num">3,093.75</td><td class="num">12,375.00</td></tr>
-      <tr><td>30 Jun</td><td>B</td><td class="num">63,730.33</td><td class="num">15,932.58</td><td class="num">0.00</td><td class="num">15,932.58</td><td class="num">11,949.44</td><td class="num">0.00</td><td class="num">11,949.44</td></tr>
+      <tr><td>30 Jun</td><td>B</td><td class="num">64,533.33</td><td class="num">16,133.33</td><td class="num">0.00</td><td class="num">16,133.33</td><td class="num">12,100.00</td><td class="num">0.00</td><td class="num">12,100.00</td></tr>
     </tbody>
   </table></div>
-  <p>Fund A's dollar NAV fell from 20,625 to 16,500 only because it distributed 4,125 &mdash; no valuation change. But in sterling its NAV fell by more than the distribution, because the pound strengthened: that extra −1,031.25 is the <code>fx_translation</code> row, and it is the entire private valuation P&amp;L this period. The same funds with <code>base_currency="USD"</code> give the single-currency figures: commitments 66,000 and 47,806, closing total 1,208,350.</p>
+  <p>Fund A's dollar NAV fell from 20,625 to 16,500 only because it distributed 4,125 &mdash; no valuation change. But in sterling its NAV fell by more than the distribution, because the pound strengthened: that extra −1,031.25 is the <code>fx_translation</code> row, and it is the entire private valuation P&amp;L this period. The same funds with <code>base_currency="USD"</code> give the single-currency figures: commitments 66,000 and 48,400, closing total 1,208,350.</p>
+  <p>Fund B is sized on the liquid-only value, 1,210,000 &mdash; the index itself &mdash; and not on the account, which by 30 June has paid A's call and banked its distribution and stands at 1,194,943.75. The account is what pays B's call; it is never what B is sized on.</p>
 </section>
 
 <section id="benchmark">
@@ -488,9 +520,9 @@ total_close − total_open = liquid_pnl + private_valuation_pnl</code></pre>
   <div class="tablewrap"><table>
     <thead><tr><th>row</th><th class="num">calls</th><th class="num">distributions</th><th class="num">nav</th><th class="num">fv_calls</th><th class="num">value_added</th><th class="num">ks_pme</th><th class="num">irr</th><th class="num">direct_alpha</th></tr></thead>
     <tbody>
-      <tr class="rule-engine"><td>programme</td><td class="num">28,449.44</td><td class="num">3,093.75</td><td class="num">24,324.44</td><td class="num">30,099.44</td><td class="num neg">−2,681.25</td><td class="num">0.911</td><td class="num neg">−22.8%</td><td class="num neg">−47.3%</td></tr>
+      <tr class="rule-engine"><td>programme</td><td class="num">28,600.00</td><td class="num">3,093.75</td><td class="num">24,475.00</td><td class="num">30,250.00</td><td class="num neg">−2,681.25</td><td class="num">0.911</td><td class="num neg">−22.8%</td><td class="num neg">−47.3%</td></tr>
       <tr class="rule-private"><td>fund A</td><td class="num">16,500.00</td><td class="num">3,093.75</td><td class="num">12,375.00</td><td class="num">18,150.00</td><td class="num neg">−2,681.25</td><td class="num">0.852</td><td class="num neg">−22.8%</td><td class="num neg">−47.3%</td></tr>
-      <tr class="rule-private"><td>fund B</td><td class="num">11,949.44</td><td class="num">0.00</td><td class="num">11,949.44</td><td class="num">11,949.44</td><td class="num">0.00</td><td class="num">1.000</td><td class="num">n/a</td><td class="num">n/a</td></tr>
+      <tr class="rule-private"><td>fund B</td><td class="num">12,100.00</td><td class="num">0.00</td><td class="num">12,100.00</td><td class="num">12,100.00</td><td class="num">0.00</td><td class="num">1.000</td><td class="num">n/a</td><td class="num">n/a</td></tr>
     </tbody>
   </table></div>
   <p>Liquid only ends at 1,210,000.00 and the run at 1,207,318.75. Fund A's 16,500 was called on 31 March into a fund carried at cost while the index rose 10% &mdash; 1,650 forgone &mdash; and the dollar fell, the 1,031.25 of <code>fx_translation</code> above: 2,681.25 in all. Fund B was called and valued on the same day, so its PME is exactly 1 and there is nothing to annualise. One quarter annualises to dramatic rates; the example is here because its arithmetic can be checked by hand, not because it is realistic.</p>
@@ -590,10 +622,13 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
                 <span class="k">elif</span> self.carry_forward <span class="k">and</span> rate &gt; 0: carried[year] = rate
 
     <span class="k">def</span> size_commitments(self, cohort, balances):              <span class="c"># dollars are carried, never percentages</span>
-        <span class="k">return</span> {f.name: e.weight * (e.current_year_rate * balances.liquid_usd
-                                   + sum(rate * balances.liquid_usd_at_end_of(year) <span class="k">for</span> year, rate <span class="k">in</span> e.carried_year_rates.items()))
+        <span class="k">return</span> {f.name: e.weight * (self.share(e.current_year_rate, balances.date, balances) * balances.liquid_only_usd
+                                   + sum(self.share(rate, ye.date, balances) * ye.liquid_only_usd            <span class="c"># each carried year on its own year end</span>
+                                         <span class="k">for</span> year, rate <span class="k">in</span> e.carried_year_rates.items() <span class="k">for</span> ye <span class="k">in</span> [balances.year_end_on_or_before(year)]))
                 <span class="k">for</span> f <span class="k">in</span> cohort <span class="k">for</span> e <span class="k">in</span> [self.entitlements[f.name]]}
-    <span class="k">def</span> explain_commitment(self, fund_name, balances): ...       <span class="c"># current_year_usd, carried_usd, carried_years, weight</span>
+    <span class="k">def</span> share(self, schedule_rate, on, balances):              <span class="c"># the pacing schedule as a share of the liquid value</span>
+        <span class="k">return</span> schedule_rate / (1 + self.expected_return) ** years_between(balances.first_commitment_date, on)
+    <span class="k">def</span> explain_commitment(self, fund_name, balances): ...       <span class="c"># expected_value, current_year_usd, carried_usd, carried_years, weight</span>
 
 
 <span class="c"># simulator.py</span>
@@ -617,7 +652,8 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
             distributions = book.distributions_in_period(t) * fx[t]                                  <span class="c"># 3</span>
             liquid.deposit(distributions)
             cohort = self._closings_by_period.get(t, [])                                              <span class="c"># 4</span>
-            balances = SizingBalances(t, self.timeline.observation_date(t), liquid.balance / fx[t], nav_usd_open)   <span class="c"># USD in, USD out</span>
+            balances = SizingBalances(t, self.timeline.observation_date(t), self.liquid_only_usd[t], liquid.balance / fx[t], nav_usd_open,
+                                      completed_year_ends, self.first_commitment_date)   <span class="c"># USD in, USD out; sized on the liquid-only value</span>
             <span class="k">for</span> name, dollars <span class="k">in</span> self._size_commitments(cohort, balances).items():
                 book.add(Commitment(self._fund[name], self.aligned_histories[name], dollars))
             new = book.commitments_closing_in(t)                                                        <span class="c"># 5</span>
@@ -666,7 +702,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     <li><b>Silent negative liquidity</b> &mdash; <code>LiquidAccount.withdraw</code> reports the shortfall; the run stops by default.</li>
     <li><b>Zero-commitment placeholder vintages</b> every year &mdash; gone; a <code>Commitment</code> exists only once a fund closes.</li>
     <li><b>Quadratic rescans</b> of every vintage every year &mdash; each path is prepared once; the loop indexes arrays.</li>
-    <li><b>New vintages' same-period distributions lost</b> &mdash; the original read a placeholder vintage's distributions before it had a commitment, so they were always zero. Here the cohort's closing-period distributions are banked in step 5, after sizing and before calls: kept, and kept out of the sizing base.</li>
+    <li><b>New vintages' same-period distributions lost</b> &mdash; the original read a placeholder vintage's distributions before it had a commitment, so they were always zero. Here the cohort's closing-period distributions are banked in step 5, before calls: kept. They could never reach the sizing base anyway, which is the liquid-only value.</li>
   </ul>
 </section>
 
@@ -676,7 +712,8 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
   <div class="tablewrap"><table>
     <thead><tr><th>Need</th><th>Seam</th><th>Shape</th></tr></thead>
     <tbody>
-      <tr><td>Carry the budgets of years with no fund of a type forward to the next fund of that type</td><td><code>AnnualRatePolicy(carry_forward=True)</code></td><td>Built and tested. Each such year is still sized &mdash; its rate on its own year-end liquid balance, in USD &mdash; and the <em>dollars</em> accumulate until the next year with a fund of the type, whose funds collect <code>weight × (carried_usd + current_year_usd)</code>. The engine only supplies the year-end balances; the policy keeps no state. 10%, 8%, 12% on 1,000,000, 1,250,000 and then 1,250,000 / 1,500,000 at the two 2029 closings, weights 60/40: 210,000 and 152,000.</td></tr>
+      <tr><td>A pacing schedule built on an expected return</td><td><code>AnnualRatePolicy(expected_return=X)</code>, the workbook's <code>Expected Returns</code> sheet</td><td>Built and tested. The schedule is divided by the pacing model's expected liquid value &mdash; 1 on the first commitment date, growing at X &mdash; to become a share of the liquid-only value. 2.0%, 2.1%, 2.205% with X = 5% is a constant 2%: 22,000, 22,000 and 26,620 on 1,100,000, 1,100,000 and 1,331,000.</td></tr>
+      <tr><td>Carry the budgets of years with no fund of a type forward to the next fund of that type</td><td><code>AnnualRatePolicy(carry_forward=True)</code></td><td>Built and tested. Each such year is still sized &mdash; its share of its own year-end liquid-only value, in USD &mdash; and the <em>dollars</em> accumulate until the next year with a fund of the type, whose funds collect <code>weight × (carried_usd + current_year_usd)</code>. The engine only supplies the year-end balances; the policy keeps no state. 10%, 8%, 12% on 1,000,000, 1,250,000 and then 1,250,000 / 1,500,000 at the two 2029 closings, weights 60/40: 210,000 and 152,000.</td></tr>
       <tr><td>Two funds of one type in one year</td><td><code>AnnualRatePolicy(weights={…})</code></td><td>Built: explicit weights summing to 1 within the year × type group; default is an equal split.</td></tr>
       <tr><td>Pacing to a target private allocation</td><td>A policy: <code>TargetAllocation(target=0.25)</code></td><td>Sizes from the gap between <code>balances.private_nav / balances.total</code> and the target. Not built.</td></tr>
       <tr><td>Funds closing after the last observation</td><td><code>result.funds_beyond_horizon</code></td><td>Built: never committed, listed so the pipeline is visible, still counted in the weight split.</td></tr>
@@ -690,7 +727,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
 
 <section id="build">
   <h2>As built: modules and tests</h2>
-  <p class="kicker">The <code>pmsim</code> package in this folder, its examples, and the 180 tests that pin the contract.</p>
+  <p class="kicker">The <code>pmsim</code> package in this folder, its examples, and the 198 tests that pin the contract.</p>
 <pre><code>claude/
   pmsim/
     dates.py        as_date, coerce_dated_series           date coercion shared by the rest
@@ -713,16 +750,17 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     test_data.py · test_workbook.py     the data layer
   README.md · pyproject.toml · simulator-design.html (this note)
 
-../.venv/bin/python -m pytest -q          <span class="c"># from claude/: 180 passed</span>
+../.venv/bin/python -m pytest -q          <span class="c"># from claude/: 198 passed</span>
 ../.venv/bin/python -m examples.basic</code></pre>
   <h3>What the tests pin</h3>
   <ul>
     <li><b>Identities:</b> all three accounting identities, opening = previous closing, and fund-table-to-period reconciliation, checked by a shared helper on every run that has one.</li>
-    <li><b>Worked examples:</b> the sterling tables above to the penny including <code>fx_translation</code>; the same funds in USD give 66,000 / 47,806 / 1,208,350; carry-forward sizes 2027 and 2028 on their own year-end balances and gives 210,000 / 152,000 (pooled percentages would have given 225,000 / 180,000).</li>
+    <li><b>Worked examples:</b> the sterling tables above to the penny including <code>fx_translation</code>; the same funds in USD give 66,000 / 48,400 / 1,208,350; carry-forward sizes 2027 and 2028 on their own year-end balances and gives 210,000 / 152,000 (pooled percentages would have given 225,000 / 180,000).</li>
     <li><b>Timing:</b> a closing between observations maps to the next one and keeps its calendar-year rate; a December closing observed in January uses December's rate; a first-date closing and same-day call are processed once; new-cohort distributions are banked after sizing; same-day gross flows both survive; an off-grid mark drives valuation P&amp;L.</li>
     <li><b>Observation frequency:</b> intramonth flows pool onto the month end; monthly, quarterly and single-date grids agree; weekend flows move to the next pricing day; irregular grids; intramonth closings sized at the month end; <code>map_events_to_observations</code>.</li>
     <li><b>Currency:</b> GBP without a rate and USD with one both fail at <code>Portfolio</code> construction; sparse rates carry forward; commitments are fixed in USD at the closing rate.</li>
-    <li><b>Failure:</b> a shortfall stops at the failed observation with the exact deficit and per-fund calls, or continues with a negative balance when allowed; a first-date shortfall leaves one recorded period; exactly zero cash is valid; a zero sizing base gives a zero commitment; <code>cash_tolerance</code> absorbs rounding only.</li>
+    <li><b>Failure:</b> a shortfall stops at the failed observation with the exact deficit and per-fund calls, or continues with a negative balance when allowed; a first-date shortfall leaves one recorded period; exactly zero cash is valid; an empty account does not shrink the next commitment; <code>cash_tolerance</code> absorbs rounding only.</li>
+    <li><b>Sizing:</b> commitments are sized on the liquid-only value &mdash; the same liquid returns, initial value and schedule give the same commitments whatever the funds call or distribute; a pacing schedule is divided by the expected value, which is exactly 1 on the first commitment date and <code>(1+X)^k</code> on its anniversaries; carried years use their own year end's value and expected value; an expected return of 1 or more is rejected as a percentage typed as a number.</li>
     <li><b>Validation:</b> duplicate names, funds closing before inception, missing rate years or types, bad weights, invalid policy output, negative or non-finite values, intraday dates, history before the closing.</li>
     <li><b>Benchmark:</b> the worked example's comparison and PME figures by hand; value added is the same number three ways &mdash; total less liquid-only, index-compounded flows plus NAV, and <code>fv_calls × (ks_pme − 1)</code> &mdash; and adds up across funds and fund types, including through a shortfall; <code>annualised_irr</code> on known cases and where it is undefined.</li>
     <li><b>Repeatability:</b> permuting the fund list gives bit-identical tables; two runs match exactly; input objects are unchanged and copied from the caller's data.</li>

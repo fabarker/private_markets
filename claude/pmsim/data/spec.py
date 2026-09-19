@@ -10,6 +10,8 @@ from dataclasses import dataclass
 from numbers import Real
 from typing import Any, Mapping
 
+from ..policy import validate_expected_return
+
 FX_QUOTES = ("base_per_usd", "usd_per_base")
 LIQUID_KINDS = ("levels", "returns")
 
@@ -33,7 +35,11 @@ class SimulationSpec:
     magnitudes regardless. ``weights`` and ``carry_forward`` go to ``AnnualRatePolicy``: with
     carry-forward, a year in which no fund of a type closes is still sized — that year's
     rate on that year's balance — and its dollars wait for the next fund of the type;
-    without it such a year is not used.
+    without it such a year is not used. ``expected_return`` is the yearly return X the
+    pacing schedule was built on, as a decimal: the schedule is divided by the pacing model's
+    expected liquid value — 1 on the first commitment date, growing at X — to become a share
+    of the liquid value. Given here it overrides the repository's expected_returns table;
+    with neither, the rates are taken to be shares of the liquid value already.
     """
 
     base_currency: str
@@ -44,6 +50,7 @@ class SimulationSpec:
     initial_value: float | None = None
     inception_date: Any = None
     commitment_rates: Any = None
+    expected_return: float | None = None
     weights: Mapping[str, float] | None = None
     carry_forward: bool = False
     calls_are_negative: bool = True
@@ -63,3 +70,5 @@ class SimulationSpec:
                 raise ValueError("initial_value (the starting liquid balance) must be a positive number when liquid_kind is 'returns'")
         elif self.inception_date is not None:
             raise ValueError("inception_date only applies when liquid_kind is 'returns'")
+        if self.expected_return is not None:
+            validate_expected_return(self.expected_return)

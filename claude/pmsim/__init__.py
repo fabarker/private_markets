@@ -9,7 +9,7 @@ the one loop; a CommitmentPolicy decides how much to commit when funds close.
 """
 from .benchmark import annualised_irr, compare_with_liquid_only, public_market_equivalent
 from .inputs import PRIVATE_CURRENCY, Fund, Portfolio
-from .policy import AnnualRatePolicy, CommitmentPolicy, Entitlement, SizingBalances
+from .policy import AnnualRatePolicy, CommitmentPolicy, Entitlement, SizingBalances, YearEndBalance
 from .simulator import Shortfall, SimulationResult, Simulator
 from .state import Commitment, CommitmentBook, LiquidAccount
 from .timeline import AlignedFundHistory, Timeline
@@ -18,7 +18,7 @@ __all__ = [
     "PRIVATE_CURRENCY", "Fund", "Portfolio",
     "Timeline", "AlignedFundHistory",
     "LiquidAccount", "Commitment", "CommitmentBook",
-    "SizingBalances", "CommitmentPolicy", "AnnualRatePolicy", "Entitlement",
+    "SizingBalances", "YearEndBalance", "CommitmentPolicy", "AnnualRatePolicy", "Entitlement",
     "Simulator", "SimulationResult", "Shortfall",
     "compare_with_liquid_only", "public_market_equivalent", "annualised_irr",
 ]

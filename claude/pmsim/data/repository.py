@@ -7,7 +7,7 @@ that protocol. Two repositories implement it:
 ``FrameRepository`` takes the tables as DataFrames — for tests, notebooks, and as the shape
 a database adapter will take.
 
-``WorkbookRepository`` reads the five-sheet portfolio workbook, one *profile* at a time:
+``WorkbookRepository`` reads the Excel portfolio workbook, one *profile* at a time:
 
     Liquid        <blank> | one column of monthly returns per profile, named "<CCY> <Risk>"
                   (USD Conservative, USD Moderate, EUR Conservative, ...)
@@ -18,14 +18,18 @@ a database adapter will take.
                   Year is years since inception (0 = the year of the first Liquid date); Rate is decimal
     Spec          Name | Year | Type
                   Year holds the fund's closing date (dd/mm/yyyy)
+    Expected Returns   Portfolio | Expected Return
+                  one row per portfolio, named as its Liquid column; the yearly return X its pacing
+                  schedule was built on, as a decimal (0.05 is 5%)
 
 A profile is a (currency, risk) pair. It selects the Liquid return column, the Commitments
-rows, and — when the currency is not USD — the FX column to invert. What comes out is the
+rows, its expected return and — when the currency is not USD — the FX column to invert. What comes out is the
 same four tables, and ``WorkbookRepository.simulation_spec()`` builds the matching
 ``SimulationSpec``.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from functools import cached_property
 from pathlib import Path
@@ -44,6 +48,7 @@ from .tables import (
     canonical_name,
     find_column,
     normalize_commitment_rates,
+    normalize_expected_returns,
     normalize_fund_market_data,
     normalize_fund_specs,
     normalize_market_data,
@@ -63,16 +68,21 @@ class DataRepository(Protocol):
     def commitment_rates(self) -> pd.DataFrame | None:
         """Calendar year × fund type, or None when the source has no rate table."""
 
+    def expected_returns(self) -> pd.Series | None:
+        """Portfolio name → the yearly expected return its pacing schedule was built on; None when the source has none."""
+
 
 # ------------------------------------------------------------------ DataFrames
 class FrameRepository:
     """The tables handed over as DataFrames. Normalized once, at construction, so bad data fails early."""
 
-    def __init__(self, fund_specs: Any, fund_market_data: Any, market_data: Any, commitment_rates: Any = None) -> None:
+    def __init__(self, fund_specs: Any, fund_market_data: Any, market_data: Any, commitment_rates: Any = None,
+                 expected_returns: Any = None) -> None:
         self._fund_specs = normalize_fund_specs(fund_specs)
         self._fund_market_data = normalize_fund_market_data(fund_market_data)
         self._market_data = normalize_market_data(market_data)
         self._commitment_rates = None if commitment_rates is None else normalize_commitment_rates(commitment_rates)
+        self._expected_returns = None if expected_returns is None else normalize_expected_returns(expected_returns)
 
     def fund_specs(self) -> pd.DataFrame:
         return self._fund_specs.copy()
@@ -86,17 +96,26 @@ class FrameRepository:
     def commitment_rates(self) -> pd.DataFrame | None:
         return None if self._commitment_rates is None else self._commitment_rates.copy()
 
+    def expected_returns(self) -> pd.Series | None:
+        return None if self._expected_returns is None else self._expected_returns.copy()
 
-# -------------------------------------------------- the five-sheet Excel workbook
+
+# ------------------------------------------------------- the Excel portfolio workbook
 @dataclass(frozen=True)
 class SheetLayout:
-    """Sheet names of the five-sheet workbook. Matched case-, space- and hyphen-insensitively."""
+    """Sheet names of the portfolio workbook. Matched ignoring case, spaces, hyphens and underscores."""
 
     liquid: str = "Liquid"
     fx: str = "FX"
     flows: str = "Flows"
     commitments: str = "Commitments"
     spec: str = "Spec"
+    expected_returns: str = "Expected Returns"
+
+
+def _sheet_key(name: Any) -> str:
+    """Sheet names compared ignoring case, spaces, hyphens and underscores: ExpectedReturns is Expected Returns."""
+    return re.sub(r"[\s\-_]+", "", str(name).strip().lower())
 
 
 def _column_named(frame: pd.DataFrame, name: str, *, table: str) -> Any:
@@ -146,7 +165,7 @@ def calendar_rates_for_profile(raw: Any, *, currency: str, risk: str, inception_
 
 
 class WorkbookRepository:
-    """The five-sheet Excel workbook for one profile. Reads every sheet once; needs openpyxl for .xlsx."""
+    """The Excel portfolio workbook for one profile. Reads every sheet once; needs openpyxl for .xlsx."""
 
     def __init__(self, path: Any, currency: str, risk: str, layout: SheetLayout = SheetLayout()) -> None:
         if not isinstance(currency, str) or not currency.strip():
@@ -172,7 +191,7 @@ class WorkbookRepository:
     def raw_sheet(self, name: str, *, required: bool = True) -> pd.DataFrame | None:
         """A copy of the sheet whose name matches ``name`` loosely, or None when absent and not required."""
         for actual, frame in self._book.items():
-            if canonical_name(actual) == canonical_name(name):
+            if _sheet_key(actual) == _sheet_key(name):
                 return frame.copy()
         if required:
             raise ValueError(f"{self.path.name}: no sheet named {name!r}; sheets are {self.sheet_names}")
@@ -270,12 +289,27 @@ class WorkbookRepository:
         return calendar_rates_for_profile(self.raw_sheet(self.layout.commitments),
                                           currency=self.currency, risk=self.risk, inception_year=self.inception_year)
 
+    def expected_returns(self) -> pd.Series:
+        """Required: the Commitments sheet is a pacing schedule, and means nothing without the return it assumed."""
+        return normalize_expected_returns(self.raw_sheet(self.layout.expected_returns))
+
+    @cached_property
+    def expected_return(self) -> float:
+        """This profile's X: the yearly return the pacing model assumed for its liquid portfolio."""
+        table = self.expected_returns()
+        matches = [name for name in table.index if canonical_name(name) == canonical_name(self.profile)]
+        if not matches:
+            raise ValueError(f"{self.layout.expected_returns}: no row for portfolio {self.profile!r}; "
+                             f"portfolios are {list(table.index)}")
+        return float(table[matches[0]])
+
     # ------------------------------------------------------------------- spec
     def simulation_spec(self, initial_value: float, **overrides: Any) -> SimulationSpec:
-        """The ``SimulationSpec`` for this profile: returns compounded from ``initial_value``, FX inverted as needed."""
+        """The ``SimulationSpec`` for this profile: returns compounded from ``initial_value``, FX inverted, its expected return."""
         settings: dict[str, Any] = dict(
             base_currency=self.currency, liquid_series=self.liquid_column, liquid_kind="returns",
             initial_value=initial_value, fx_series=self.fx_column, fx_quote=self.fx_quote,
+            expected_return=self.expected_return,
         )
         settings.update(overrides)
         return SimulationSpec(**settings)

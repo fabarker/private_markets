@@ -152,7 +152,7 @@
 <header class="top">
   <p class="eyebrow">Methodology review · private_markets/claude · 19 September 2026</p>
   <h1>Private Markets Backtest Realism</h1>
-  <p class="lede">Where the historical simulation departs from what an investor would actually have known, held and paid &mdash; ranked by how far each gap can move the answer. Written against the engine as built (<code>pmsim</code>) and the five-sheet workbook it loads.</p>
+  <p class="lede">Where the historical simulation departs from what an investor would actually have known, held and paid &mdash; ranked by how far each gap can move the answer. Written against the engine as built (<code>pmsim</code>) and the portfolio workbook it loads.</p>
   <ul class="keyfacts">
     <li><b>1</b> setting, now resolved</li>
     <li><b>14</b> suggestions, ranked · <b>1</b> implemented</li>
@@ -204,7 +204,7 @@
   <p class="kicker">Not a realism point, but it moves the result more than anything below it. <span class="chip done">Resolved</span></p>
   <div class="check">
     <p><b>What this section found.</b> Without carry-forward, a year's rate is used only if a fund of that type closes in that year and is dropped otherwise. PEM closes every December, so BUYOUT is unaffected. Secondaries funds close every three or four years &mdash; so of the sixteen annual SECONDARIES rates for 2010&ndash;2025, five land on a closing year and eleven were never used: the secondaries programme came out at about a third of the size the schedule implies.</p>
-    <p><b>What carry-forward does now.</b> Every year is sized, whether or not a fund is available: that year's rate on that year's liquid balance, in US dollars, at the year's last observation &mdash; 31 December on a month-end grid, the same day PEM closes. If no fund of the type closes that year the <em>dollars</em> wait, and accumulate, until the next fund of the type, which collects them with its own year's budget. Dollars are carried, never percentages, so each year's budget reflects that year's portfolio value rather than the value on the day the fund finally closes.</p>
+    <p><b>What carry-forward does now.</b> Every year is sized, whether or not a fund is available: that year's share of that year's liquid-only value, in US dollars, at the year's last observation &mdash; 31 December on a month-end grid, the same day PEM closes. If no fund of the type closes that year the <em>dollars</em> wait, and accumulate, until the next fund of the type, which collects them with its own year's budget. Dollars are carried, never percentages, so each year's budget reflects that year's portfolio value rather than the value on the day the fund finally closes.</p>
     <div class="tablewrap"><table>
       <thead><tr><th>Fund</th><th>Closes</th><th class="num">Own year's rate</th><th>Without carry-forward</th><th>With carry-forward: budgets collected, each sized at its own year end</th></tr></thead>
       <tbody>
@@ -361,7 +361,7 @@ value_added(T) = FV(calls) × (KS-PME − 1)</code></pre>
         </div>
         <figcaption>Filled dots are valuation dates; open dots are when each mark reaches the investor, about 75 days later.</figcaption>
       </figure>
-      <p>Under today's rule &mdash; sizing on the liquid balance only &mdash; this distorts the reported total value and the private share, not the commitments. It becomes decision-critical the moment anything is sized on total value or a target allocation (<a href="#s7">7</a>) or an allocation limit is tested (<a href="#s5">5</a>). It matters most in a fall: hindsight marks write the book down a quarter before the investor saw it, so the as-valued private share understates the squeeze the investor actually felt.</p></dd>
+      <p>Under today's rule &mdash; sizing on the liquid-only value, which no private NAV enters &mdash; this distorts the reported total value and the private share, not the commitments. It becomes decision-critical the moment anything is sized on total value or a target allocation (<a href="#s7">7</a>) or an allocation limit is tested (<a href="#s5">5</a>). It matters most in a fall: hindsight marks write the book down a quarter before the investor saw it, so the as-valued private share understates the squeeze the investor actually felt.</p></dd>
       <dt>Change</dt>
       <dd><p>One parameter on the rule the engine already uses:</p>
 <pre><code>as-valued (now)   nav(t) = latest mark dated ≤ t          + calls − distributions since that mark
@@ -422,7 +422,7 @@ coverage(t)       = liquid(t) / unfunded(t)</code></pre>
     </div>
     <dl class="anat">
       <dt>Now</dt>
-      <dd><p><code>AnnualRatePolicy</code> applies a fixed glide path &mdash; the Commitments sheet, by years since inception &mdash; to the liquid balance on the closing date.</p></dd>
+      <dd><p><code>AnnualRatePolicy</code> follows a fixed pacing schedule &mdash; the Commitments sheet, by years since inception. Each entry is divided by the pacing model's expected liquid value (1 on the first commitment date, growing at the portfolio's expected return) and applied to the liquid-only value on the closing date, so the plan scales with how far the liquid portfolio is ahead of or behind expectation &mdash; and with nothing else.</p></dd>
       <dt>Gap</dt>
       <dd><ul>
         <li><b>Nobody follows a schedule blind.</b> Real pacing looks at the private share against its target, at unfunded commitments and at liquidity, and slows or accelerates.</li>
@@ -546,7 +546,7 @@ hedge P&amp;L = h × nav_usd × ( F − S(τ) )                           <span 
 proposed   calls_base[t] = commitment_usd × Σ unit_call(i) × fx[d(i)]</code></pre>
       <p>Commitment dollars are a scalar per fund, so this is a second pair of precomputed arrays on <code>AlignedFundHistory</code>; the loop is unchanged. With monthly FX only, leave it.</p></dd>
       <dt>Lag</dt>
-      <dd><p><b>Size on the balance you knew.</b> A fund closing on 31 December is sized on that day's balance, after December's return, though the commitment was decided and signed earlier. Same-bar look-ahead: tiny &mdash; a 2.2% commitment on a balance a few percent different &mdash; and unbiased on average, but free to remove. Pass the previous observation's close, or the trailing average from <a href="#s7">7</a>, as <code>SizingBalances.liquid_usd</code>.</p></dd>
+      <dd><p><b>Size on the balance you knew.</b> A fund closing on 31 December is sized on that day's liquid-only value, after December's return, though the commitment was decided and signed earlier. Same-bar look-ahead: tiny &mdash; a 2.2% commitment on a balance a few percent different &mdash; and unbiased on average, but free to remove. Pass the previous observation's close, or the trailing average from <a href="#s7">7</a>, as <code>SizingBalances.liquid_only_usd</code>.</p></dd>
       <dt>Dietz</dt>
       <dd><p><b>Time-weight flows inside the period.</b> The return is applied to the whole opening balance and flows settle at the period end, so cash called on the 3rd still earns the month in the liquid portfolio. Modified Dietz corrects it:</p>
 <pre><code>liquid_pnl(t) = r(t) × ( liquid_open + Σ w(i) × flow(i) )        w(i) = days left after flow i / days in period</code></pre>
@@ -603,7 +603,7 @@ proposed   calls_base[t] = commitment_usd × Σ unit_call(i) × fx[d(i)]</code><
   </ol>
 </section>
 
-<p class="footnote">Written against <code>pmsim</code> at commit <code>37ad348</code>; the as-built design is in <code>simulator-design.html</code> beside this file. Since it was written, suggestion 1 has been implemented in <code>pmsim/benchmark.py</code>, commitments are sized exclusively in US dollars, and carry-forward accumulates dollars year by year; none of the other suggestions has been implemented. The SECONDARIES rates in the carry-forward table are read from the USD Conservative rows of the Commitments sheet in your screenshot; every other magnitude is illustrative arithmetic with its assumption stated where it appears.</p>
+<p class="footnote">Written against <code>pmsim</code> at commit <code>37ad348</code>; the as-built design is in <code>simulator-design.html</code> beside this file. Since it was written: suggestion 1 has been implemented in <code>pmsim/benchmark.py</code>; commitments are sized exclusively in US dollars, on the liquid-only value (the initial value compounded by the liquid returns, with no private flow in it); the Commitments sheet is read as a pacing schedule and divided by the pacing model's expected liquid value, from the new <code>Expected Returns</code> sheet; and carry-forward accumulates dollars year by year. None of the other suggestions has been implemented. The SECONDARIES rates in the carry-forward table are read from the USD Conservative rows of the Commitments sheet in your screenshot; every other magnitude is illustrative arithmetic with its assumption stated where it appears.</p>
 
 </main>
 </div>

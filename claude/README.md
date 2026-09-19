@@ -17,7 +17,7 @@ This is the implementation of `simulator-design.html` (in this folder). Package 
 | `pmsim/dates.py` | date coercion shared by the above |
 | `pmsim/data/tables.py` | the normalized tables a data source must deliver, and the column aliases accepted |
 | `pmsim/data/spec.py` | `SimulationSpec` — what a run needs that the data does not say |
-| `pmsim/data/repository.py` | `DataRepository` protocol; `WorkbookRepository` (the five-sheet Excel workbook, one profile at a time) and `SheetLayout`; `FrameRepository` (DataFrames — the database route) |
+| `pmsim/data/repository.py` | `DataRepository` protocol; `WorkbookRepository` (the Excel portfolio workbook, one profile at a time) and `SheetLayout`; `FrameRepository` (DataFrames — the database route) |
 | `pmsim/data/orchestrator.py` | `Orchestrator`, `load_profile_workbook` — tables in, result out |
 
 ## Run
@@ -27,7 +27,7 @@ From this directory, with the project's virtual environment:
 ```bash
 ../.venv/bin/python -m pytest -q           # tests
 ../.venv/bin/python -m examples.basic      # worked example, carry-forward, shortfall
-../.venv/bin/python -m examples.profile_workbook [book.xlsx USD Conservative 1e6]   # the five-sheet portfolio workbook
+../.venv/bin/python -m examples.profile_workbook [book.xlsx USD Conservative 1e6]   # the Excel portfolio workbook
 ../.venv/bin/python -m examples.eur_moderate [book.xlsx [out/]]   # EUR Moderate from $100, converted at the first EURUSD
 ```
 
@@ -90,9 +90,10 @@ may be dated before the closing.
 - `liquid_levels` — dated total-return levels in base currency. **Their dates are the
   simulation grid and the first level is the starting balance.** Scale the index before
   input; later levels only supply returns and never overwrite the simulated balance.
-- `commitment_rates` — calendar year × fund type; `0.10` means commit 10% of the sizing
-  base. List every year from the first to the last observation (0 for no target) and every
-  fund type in the fund list.
+- `commitment_rates` — calendar year × fund type. Either shares of the liquid-only value
+  (`0.10` means commit 10% of it) or, with an expected return, a pacing schedule that is
+  turned into such shares first — see Policy. List every year from the first to the last
+  observation (0 for no target) and every fund type in the fund list.
 - `usd_rate` — dated price of 1 USD in base currency. Sparse is fine: the last rate on or
   before each observation is used, and one is required on or before the first.
 
@@ -120,14 +121,23 @@ cash-adjusted estimate. A negative running value is a data error naming the fund
 1. snapshot opening balances;
 2. apply the liquid return `level[t] / level[t-1]` (1 at the first date);
 3. bank distributions from existing commitments;
-4. size all funds closing at this observation **in US dollars**, from the same balance: the
-   liquid balance converted at today's rate. The dollar commitment is then fixed;
-5. bank the new cohort's own distributions (kept out of the sizing base), then pay every
-   commitment's calls;
+4. size all funds closing at this observation **in US dollars**, on the **liquid-only value**:
+   the initial value compounded by the liquid returns, converted at today's rate. The dollar
+   commitment is then fixed;
+5. bank the new cohort's own distributions, then pay every commitment's calls;
 6. value the book, record the period, stop if the calls exceeded the cash.
 
+**What commitments are sized on.** The liquid-only value: the initial value compounded by
+the liquid returns, with no capital call or distribution in it. Private assets never
+interfere — not the calls the account has paid, not the distributions it has banked — so
+every commitment follows from the liquid returns, the initial value, the exchange rates and
+the schedule alone, and the same inputs give the same commitments whatever the funds then
+do. It is `sizing_base` (base currency) and `sizing_base_usd` in the results, and the
+`liquid_only` path of `compare_with_liquid_only()`. The account that pays the calls is a
+different number, and the shortfall test runs on that one.
+
 **Currency.** Private figures are USD until they touch the liquid pot or a report.
-Commitments are sized exclusively in USD: for a non-USD portfolio the liquid balance is
+Commitments are sized exclusively in USD: for a non-USD portfolio the liquid-only value is
 converted at the closing observation's rate, the policy sees and returns dollars only, and
 the dollar commitment never changes. `commitment_base` and `sizing_base` are that day's
 translation, reported for information and never decided on. Calls, distributions and NAV
@@ -137,8 +147,8 @@ valuation P&L that is purely the currency moving.
 **Shortfall.** If calls exceed the cash available (beyond `cash_tolerance`, default 1e-9),
 the failed period is recorded with its negative balance visible, `result.shortfall` names
 it, and the run stops. With `stop_on_shortfall=False` the balance goes negative and the run
-continues — the "how much would I need to borrow" view. Exactly zero cash is valid; a zero
-sizing base gives a zero commitment and still uses the rate.
+continues — the "how much would I need to borrow" view. Exactly zero cash is valid, and an
+empty account does not shrink the next commitment: that is sized on the liquid-only value.
 
 ## Observation frequency
 
@@ -154,8 +164,8 @@ happened and need not line up with it. One rule covers every mismatch:
   grid equal the sum of its three months' calls on a monthly grid.
 - A NAV mark between observations is applied in event order and is what the next
   observation sees, after any flows between the mark and the observation.
-- A fund closing intramonth is committed at that month's end, sized from that month
-  end's liquid balance, and its calls in the same month are paid in that period.
+- A fund closing intramonth is committed at that month's end, sized on that month
+  end's liquid-only value, and its calls in the same month are paid in that period.
 - Exchange rates go the other way, because a rate is a state rather than an event: each
   observation uses the last rate on or before it.
 
@@ -168,9 +178,10 @@ simulation finer; the rule does not change.
 ## Results
 
 `periods` (index `date`, base currency unless noted): `liquid_open`, `private_open`,
-`total_open`, `return_factor`, `usd_rate`, `liquid_pnl`, `distributions`, `sizing_base`,
-`sizing_base_usd` (the balance commitments are sized on), `commitments`, `commitments_usd`, `calls`, `liquid_close`, `private_close`, `total_close`,
-`private_valuation_pnl`, `fx_translation`.
+`total_open`, `return_factor`, `usd_rate`, `liquid_pnl`, `distributions`, `sizing_base`
+(the liquid-only value) and `sizing_base_usd` (the same in dollars: what commitments are
+sized on), `commitments`, `commitments_usd`, `calls`, `liquid_close`, `private_close`,
+`total_close`, `private_valuation_pnl`, `fx_translation`.
 
 `funds` (index `date`, `fund`): `fund_type`, `commitment_usd`, `calls_usd`,
 `distributions_usd`, `nav_usd`, `calls_base`, `distributions_base`, `nav_base`.
@@ -178,8 +189,10 @@ simulation finer; the rule does not change.
 `commitments` (index `date`, `fund`): `fund_type`, `closing_date`, `policy_year`, then the
 decision in dollars — `sizing_base_usd`, `rate`, `commitment_usd` — then `usd_rate` and the
 same figures in base currency, `sizing_base` and `commitment_base`; and from
-`AnnualRatePolicy` how it got there — `current_year_rate`, `weight`, `current_year_usd`,
-`carried_usd` and `carried_years` — with `commitment_usd = weight × (current_year_usd + carried_usd)`.
+`AnnualRatePolicy` how it got there — `current_year_rate`, `expected_value`, `weight`,
+`current_year_usd`, `carried_usd` and `carried_years` — with `current_year_usd =
+current_year_rate / expected_value × sizing_base_usd` and `commitment_usd = weight ×
+(current_year_usd + carried_usd)`. `rate` is always `commitment_usd / sizing_base_usd`.
 
 `result.totals_by_fund_type()` sums the fund table by date and fund type; `result.nav_by_fund()` is
 private NAV in base currency by date × fund. Every completed period satisfies
@@ -224,25 +237,47 @@ money out negative) is exported for use on its own.
 
 ## Policy
 
-`AnnualRatePolicy(rates, funds, weights=None, carry_forward=False, years=None)` turns the
-rate table into a dollar budget per year and fund type — `rate[year, type]` × the liquid
-balance in USD — and commits it to the funds of that type closing that year. The closing
-year's budget is sized at the closing observation. Weights split a year's budget among the
-funds of one type closing that year; give them for all funds of such a group or none (equal
-split), summing to 1. Fund types are independent.
+`AnnualRatePolicy(rates, funds, weights=None, carry_forward=False, years=None,
+expected_return=None)` turns the rate table into a dollar budget per year and fund type —
+`share × the liquid-only value in USD` — and commits it to the funds of that type closing
+that year. The closing year's budget is sized at the closing observation. Weights split a
+year's budget among the funds of one type closing that year; give them for all funds of
+such a group or none (equal split), summing to 1. Fund types are independent.
+
+**Pacing schedule and expected return.** The commitment rates come from a pacing model in
+which the liquid portfolio is worth 1 on the day of the first commitment and then grows at
+its expected return X. A schedule entry is an amount per 1 of liquid value *on that day*,
+not a share of the value in its own year, and it rises over time because the modelled
+portfolio grows. With `expected_return=X` the schedule is turned back into a share of the
+liquid value before it is used:
+
+```text
+expected_value(d) = (1 + X) ^ years from the first commitment date to d      exactly 1 on that date
+share(d)          = schedule[year, type] / expected_value(d)
+budget            = share(d) × liquid-only value in USD on d
+```
+
+so the run commits the model's planned amount scaled by how far the actual liquid value is
+ahead of, or behind, the expected one. Years are counted in anniversaries, so 31 December
+to 31 December is exactly 1 and the annual steps of the model are hit exactly; between
+them the elapsed share of the year is used. X and the schedule are in the portfolio's own
+currency, so the share has no unit and multiplies the dollar value directly. A schedule of
+2.0%, 2.1%, 2.205% with X = 5% is a constant 2% of the liquid value. Without
+`expected_return` the table is taken to hold shares of the liquid value already; applying a
+pacing schedule that way counts the growth twice, by a factor of `(1 + X)^years`.
 
 **Carry-forward.** Without it, a year in which no fund of a type closes is simply not used.
-With `carry_forward=True` that year is still sized — its rate on **its own** balance, at the
-year's last observation — and the **dollars** accumulate until the next year that has a fund
-of the type, whose funds collect them by weight:
+With `carry_forward=True` that year is still sized — its share of **its own** liquid-only
+value, at the year's last observation — and the **dollars** accumulate until the next year
+that has a fund of the type, whose funds collect them by weight:
 
 ```text
 commitment_usd = weight × ( carried_usd + current_year_usd )
-carried_usd    = Σ over carried years  rate[year, type] × liquid_usd at that year's last observation
+carried_usd    = Σ over carried years  share(year end) × liquid-only value in USD at that year's last observation
 ```
 
 Dollars are carried, never percentages: three carried years are three budgets, each from its
-own year's portfolio value. Rates of 10%, 8% and 12% with the liquid balance at 1,000,000,
+own year's liquid-only value. Shares of 10%, 8% and 12% with that value at 1,000,000,
 1,250,000 and then 1,250,000 / 1,500,000 where the two 2029 funds close, weights 60/40:
 100,000 + 100,000 are carried, and the funds get 0.6 × (200,000 + 150,000) = 210,000 and
 0.4 × (200,000 + 180,000) = 152,000. (Pooling 30% onto the closing balance would have given
@@ -252,19 +287,22 @@ end. `examples/eur_moderate.py` and `examples/profile_workbook.py` switch it on 
 `CARRY_FORWARD = True` at the top; the library default is off.
 
 Any object with `size_commitments(cohort, balances) -> {fund name: US-dollar amount}` is a
-policy. The `SizingBalances` it receives are in US dollars only — `liquid_usd`,
-`private_nav_usd` and `total_usd` — so a fixed dollar ticket, a USD minimum or a USD cap
-means the same thing in a sterling portfolio as in a dollar one. `year_end_liquid_usd` adds
-the liquid balance at the last observation of each completed calendar year, which is what
-carried budgets are sized on; the policy itself keeps no state, so every `run()` repeats
-exactly. If a policy also has `explain_commitment(fund_name, balances)`, those figures land
+policy. The `SizingBalances` it receives are in US dollars only, so a fixed dollar ticket, a
+USD minimum or a USD cap means the same thing in a sterling portfolio as in a dollar one.
+`liquid_only_usd` is what commitments are sized on; `liquid_account_usd` (the account that
+pays the calls), `private_nav_usd` and `total_usd` are there for policies that want them,
+and `AnnualRatePolicy` uses none of them. `year_ends` gives the liquid-only value at the
+last observation of each completed calendar year, which is what carried budgets are sized
+on, and `first_commitment_date` is where the pacing model's value is 1. The policy itself
+keeps no state, so every `run()` repeats exactly. If a policy also has `explain_commitment(fund_name, balances)`, those figures land
 in the commitments table.
 
 ## The portfolio workbook
 
-The five-sheet workbook — `Liquid`, `FX`, `Flows`, `Commitments`, `Spec` — is loaded one
-*profile* at a time. A profile is a currency and a risk level; it selects the liquid return
-column, the commitment-schedule rows, and (for a non-USD currency) the FX column.
+The workbook — `Liquid`, `FX`, `Flows`, `Commitments`, `Spec`, `Expected Returns` — is loaded
+one *profile* at a time. A profile is a currency and a risk level; it selects the liquid
+return column, the pacing-schedule rows, its expected return, and (for a non-USD currency)
+the FX column.
 
 ```python
 from pmsim.data import load_profile_workbook
@@ -284,10 +322,13 @@ compare a real file against.
 | `Liquid` | blank header, then one column per profile: `USD Conservative`, `EUR Moderate`, … | **monthly returns**. The frequency is inferred, the simulation starts one period before the first return (rolled back to a business day; the profile's `initial_value` is the balance there), and every return is applied. Pass `inception_date=` to `load_profile_workbook` when the dates are too irregular to infer. The FX sheet's first rate is taken to apply at inception |
 | `FX` | blank header, then `EURUSD`, `GBPUSD`, … (USD per 1 unit of the currency) | the profile's `<CCY>USD` column, inverted to base-per-USD; `USD<CCY>` is also recognised and used as is |
 | `Flows` | `Vintage`, `Date`, `Value`, `Type` (`Flow`/`NAV`), `Scale` | `Vintage` is the fund name; unit = `Value ÷ Scale`; negative flows are calls |
-| `Commitments` | `Type`, `Year`, `Currency`, `Risk`, `Commitment`, `Rate` | rows of the profile; `Year` is **years since inception** (0 = the year of the first Liquid date) and is mapped onto calendar years; `Rate` is the decimal used |
+| `Commitments` | `Type`, `Year`, `Currency`, `Risk`, `Commitment`, `Rate` | the pacing schedule: rows of the profile; `Year` is **years since inception** (0 = the year of the first Liquid date) and is mapped onto calendar years; `Rate` is the decimal used, an amount per 1 of liquid value on the first commitment date |
 | `Spec` | `Name`, `Year`, `Type` | `Year` holds the closing date, read day-first (`31/12/2010`) |
+| `Expected Returns` | `Portfolio`, `Expected Return` | **required.** One row per portfolio, named as its Liquid column (`EUR Moderate`); the yearly return X its pacing schedule was built on, as a decimal (`0.05` is 5%; a value of 1 or more is rejected as a percentage typed as a number). The schedule means nothing without it |
 
-Sheet names can be overridden with `SheetLayout(...)`; any keyword accepted by
+Sheet names are matched ignoring case, spaces, hyphens and underscores (`ExpectedReturns`
+works) and can be overridden with `SheetLayout(...)`; `expected_return=` overrides the sheet
+for one run; any keyword accepted by
 `SimulationSpec` (`carry_forward`, `weights`, `stop_on_shortfall`, …) can be passed to
 `load_profile_workbook` as an override.
 
@@ -299,7 +340,7 @@ it is the shape a database adapter will take: run four queries, hand the frames 
 ```python
 from pmsim.data import FrameRepository, Orchestrator, SimulationSpec
 
-repository = FrameRepository(fund_specs, fund_market_data, market_data, commitment_rates)
+repository = FrameRepository(fund_specs, fund_market_data, market_data, commitment_rates, expected_returns)
 spec = SimulationSpec(
     base_currency="GBP",
     liquid_series="liquid_gbp",      # market_data column holding the liquid total-return level
@@ -321,6 +362,7 @@ result = orchestrator.run()
 | `fund_market_data` | `fund_name`, `type`, `value`, `date`, `scale` | long form; `type` is `Flow` or `NAV` (also `Call`, `Distribution`); **unit = value ÷ scale** |
 | `market_data` | `date` + one column per series | wide, or long with `date`, `series`, `value`; blanks are fine (sparse FX) |
 | `commitment_rates` | `year` + one column per fund type | optional (or pass them in the spec); or long with `year`, `type`, `rate`; every year, 0 for none |
+| `expected_returns` | `portfolio`, `expected_return` | optional; the portfolio is looked up by the spec's `liquid_series` name; `SimulationSpec(expected_return=...)` overrides it. With neither, the rates are taken to be shares of the liquid value already |
 
 Column names are matched by alias (`Fund Name`, `fund`, `name` → `fund_name`; `Strategy`
 → fund type; `Amount` → value; `Divisor`/`Commitment` → scale, and so on). `Flow` rows

@@ -11,6 +11,8 @@ Normalization lives here and every repository applies it:
                        (date + one column per series) or a long one (date, series, value)
     commitment_rates   calendar year (index) × fund type (columns) — from a wide sheet
                        (year + one column per type) or a long one (year, type, rate); optional
+    expected_returns   portfolio name → the yearly expected return its pacing schedule was built
+                       on, as a decimal (0.05 is 5%); optional
 
 Column names are matched case-, space- and hyphen-insensitively against ALIASES.
 """
@@ -25,6 +27,7 @@ from typing import Any, Iterable
 import pandas as pd
 
 from ..dates import as_date
+from ..policy import validate_expected_return
 
 FUND_SPEC_COLUMNS = ["fund_name", "fund_type", "closing_date"]
 FUND_MARKET_COLUMNS = ["fund_name", "kind", "date", "value", "scale"]
@@ -47,6 +50,8 @@ ALIASES: dict[str, frozenset[str]] = {
     "year": frozenset({"year", "calendar_year", "policy_year"}),
     "rate": frozenset({"rate", "commitment_rate", "target", "value"}),
     "series": frozenset({"series", "name", "ticker", "field", "variable", "item"}),
+    "portfolio": frozenset({"portfolio", "portfolio_name", "profile", "name"}),
+    "expected_return": frozenset({"expected_return", "expected_returns", "return", "x"}),
 }
 
 
@@ -263,3 +268,20 @@ def normalize_commitment_rates(raw: Any) -> pd.DataFrame:
     wide.index.name = "year"
     wide.columns.name = "fund_type"
     return wide
+
+
+def normalize_expected_returns(raw: Any) -> pd.Series:
+    """Portfolio name → yearly expected return as a decimal: the X each portfolio's pacing schedule was built on."""
+    table = "expected_returns"
+    frame = _non_empty_rows(raw, table)
+    portfolio_column = find_column(frame, "portfolio", table=table)
+    return_column = find_column(frame, "expected_return", table=table)
+    portfolios = _texts(frame[portfolio_column], table=table, column=portfolio_column)
+    duplicates = sorted({name for name in portfolios if portfolios.count(name) > 1})
+    if duplicates:
+        raise ValueError(f"{table}: each portfolio needs one expected return; duplicated: {duplicates}")
+    returns = [
+        validate_expected_return(value, label=f"{table}: expected return of {portfolio!r}")
+        for portfolio, value in zip(portfolios, _numbers(frame[return_column], table=table, column=return_column))
+    ]
+    return pd.Series(returns, index=pd.Index(portfolios, name="portfolio"), name="expected_return", dtype=float)

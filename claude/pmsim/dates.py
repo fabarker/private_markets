@@ -40,6 +40,30 @@ def as_date(value: Any) -> date:
         raise TypeError(f"cannot interpret {value!r} as a date") from None
 
 
+def _anniversary(start: date, years: int) -> date:
+    try:
+        return start.replace(year=start.year + years)
+    except ValueError:  # 29 February has no anniversary in a year without one
+        return start.replace(year=start.year + years, day=28)
+
+
+def years_between(start: Any, end: Any) -> float:
+    """Years from ``start`` to ``end`` counted in anniversaries: the whole ones, plus the elapsed share of the next.
+
+    31 Dec 2010 to 31 Dec 2012 is exactly 2, and to 30 Jun 2012 it is 1 + 182/366, so a
+    path that compounds once a year lands exactly on its annual values. Negative when
+    ``end`` is the earlier date.
+    """
+    start, end = as_date(start), as_date(end)
+    if end < start:
+        return -years_between(end, start)
+    whole = end.year - start.year
+    if _anniversary(start, whole) > end:
+        whole -= 1
+    last, following = _anniversary(start, whole), _anniversary(start, whole + 1)
+    return whole + (end - last).days / (following - last).days
+
+
 def coerce_dated_series(values: Any, *, name: str, sum_same_day: bool) -> pd.Series:
     """Coerce dated values to a float Series on a unique, sorted, naive ``DatetimeIndex``.
 

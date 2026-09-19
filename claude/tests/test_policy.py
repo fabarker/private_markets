@@ -1,11 +1,13 @@
+import math
 from dataclasses import fields
 from datetime import date
 
 import pytest
 
-from pmsim import AnnualRatePolicy, Entitlement, Fund, SizingBalances
+from pmsim import AnnualRatePolicy, Entitlement, Fund, SizingBalances, YearEndBalance
 
-BALANCES = SizingBalances(t=3, date=date(2029, 3, 31), liquid_usd=1_000_000.0, private_nav_usd=250_000.0)
+BALANCES = SizingBalances(t=3, date=date(2029, 3, 31), liquid_only_usd=1_000_000.0, liquid_account_usd=900_000.0,
+                          private_nav_usd=250_000.0)
 
 
 def fund(name, fund_type="BUYOUT", closing="2027-03-01"):
@@ -16,15 +18,24 @@ def test_single_fund_takes_the_whole_rate():
     a = fund("A")
     policy = AnnualRatePolicy({"BUYOUT": {2027: 0.1}}, [a])
     assert policy.size_commitments([a], BALANCES) == {"A": pytest.approx(100_000.0)}
-    assert policy.explain_commitment("A", BALANCES) == {
-        "policy_year": 2027, "current_year_rate": 0.1, "weight": 1.0,
-        "current_year_usd": pytest.approx(100_000.0), "carried_usd": 0.0, "carried_years": ""}
+    explained = policy.explain_commitment("A", BALANCES)
+    assert math.isnan(explained.pop("expected_value"))  # no expected return: the rates are shares already
+    assert explained == {"policy_year": 2027, "current_year_rate": 0.1, "weight": 1.0,
+                         "current_year_usd": pytest.approx(100_000.0), "carried_usd": 0.0, "carried_years": ""}
 
 
-def test_sizing_balances_are_us_dollars_only():
-    assert BALANCES.total_usd == 1_250_000.0
-    # sizing happens exclusively in USD: a policy is never shown a base-currency amount
-    assert [f.name for f in fields(SizingBalances)] == ["t", "date", "liquid_usd", "private_nav_usd", "year_end_liquid_usd"]
+def test_sizing_balances_are_us_dollars_only_and_name_the_liquid_only_value():
+    assert BALANCES.total_usd == 900_000.0 + 250_000.0  # the account and the private book: what the investor actually holds
+    # sizing happens exclusively in USD, and on the liquid-only value: both facts are in the field names
+    assert [f.name for f in fields(SizingBalances)] == [
+        "t", "date", "liquid_only_usd", "liquid_account_usd", "private_nav_usd", "year_ends", "first_commitment_date"]
+
+
+def test_commitments_are_sized_on_the_liquid_only_value_not_on_the_account():
+    a = fund("A")
+    policy = AnnualRatePolicy({"BUYOUT": {2027: 0.1}}, [a])
+    drained = SizingBalances(t=3, date=date(2029, 3, 31), liquid_only_usd=1_000_000.0, liquid_account_usd=0.0, private_nav_usd=0.0)
+    assert policy.size_commitments([a], drained) == {"A": pytest.approx(100_000.0)}  # calls paid elsewhere change nothing
 
 
 def test_two_funds_split_equally_by_default_or_by_weight():
@@ -55,10 +66,16 @@ def test_weights_only_bind_within_a_year_and_type():
 
 # ---------------------------------------------------------- carry-forward
 RATES = {"BUYOUT": {2027: 0.10, 2028: 0.08, 2029: 0.12}}
-AT_C = SizingBalances(t=2, date=date(2029, 3, 31), liquid_usd=1_250_000.0, private_nav_usd=0.0,
-                      year_end_liquid_usd={2027: 1_000_000.0, 2028: 1_250_000.0})
-AT_D = SizingBalances(t=3, date=date(2029, 6, 30), liquid_usd=1_500_000.0, private_nav_usd=0.0,
-                      year_end_liquid_usd={2027: 1_000_000.0, 2028: 1_250_000.0})
+YEAR_ENDS = {2027: YearEndBalance(date(2027, 12, 31), 1_000_000.0), 2028: YearEndBalance(date(2028, 12, 31), 1_250_000.0)}
+
+
+def balances(on, liquid_only_usd, year_ends=None, first_commitment_date=None, t=0):
+    return SizingBalances(t=t, date=on, liquid_only_usd=liquid_only_usd, liquid_account_usd=liquid_only_usd,
+                          private_nav_usd=0.0, year_ends=year_ends or {}, first_commitment_date=first_commitment_date)
+
+
+AT_C = balances(date(2029, 3, 31), 1_250_000.0, YEAR_ENDS)
+AT_D = balances(date(2029, 6, 30), 1_500_000.0, YEAR_ENDS)
 
 
 def test_carry_forward_sizes_each_year_on_its_own_balance_and_accumulates_dollars():
@@ -68,9 +85,9 @@ def test_carry_forward_sizes_each_year_on_its_own_balance_and_accumulates_dollar
     # 2027: 10% of 1,000,000 · 2028: 8% of 1,250,000 · carried 200,000; 2029 is sized where each fund closes
     assert policy.size_commitments([c], AT_C) == {"C": pytest.approx(0.6 * (200_000 + 0.12 * 1_250_000))}  # 210,000
     assert policy.size_commitments([d], AT_D) == {"D": pytest.approx(0.4 * (200_000 + 0.12 * 1_500_000))}  # 152,000
-    assert policy.explain_commitment("D", AT_D) == {
-        "policy_year": 2029, "current_year_rate": 0.12, "weight": 0.4,
-        "current_year_usd": pytest.approx(180_000.0), "carried_usd": pytest.approx(200_000.0), "carried_years": "2027, 2028"}
+    explained = policy.explain_commitment("D", AT_D)
+    assert (explained["current_year_usd"], explained["carried_usd"], explained["carried_years"]) == \
+        (pytest.approx(180_000.0), pytest.approx(200_000.0), "2027, 2028")
     # dollars are carried, not percentages: pooling 30% onto the closing balance would have given 225,000 and 180,000
     assert policy.size_commitments([c], AT_C)["C"] != pytest.approx(0.6 * 0.30 * 1_250_000)
 
@@ -88,8 +105,7 @@ def test_carried_dollars_go_to_the_next_closing_year_only():
     policy = AnnualRatePolicy({"BUYOUT": {2027: 0.10, 2028: 0.0, 2029: 0.05}}, [e, f], carry_forward=True)
     assert policy.entitlements["E"] == Entitlement(2028, 0.0, 1.0, {2027: 0.10})  # a zero rate of its own, 2027's budget
     assert policy.entitlements["F"] == Entitlement(2029, 0.05, 1.0, {})  # nothing left over: E collected it
-    at_e = SizingBalances(t=1, date=date(2028, 3, 31), liquid_usd=2_000_000.0, private_nav_usd=0.0,
-                          year_end_liquid_usd={2027: 1_000_000.0})
+    at_e = balances(date(2028, 3, 31), 2_000_000.0, {2027: YearEndBalance(date(2027, 12, 31), 1_000_000.0)})
     assert policy.size_commitments([e], at_e) == {"E": pytest.approx(100_000.0)}  # 10% of 2027's balance, not of today's
 
 
@@ -104,11 +120,73 @@ def test_fund_types_carry_independently_and_zero_rates_are_not_carried():
 def test_a_carried_year_uses_the_last_balance_known_by_its_end():
     b = fund("B", closing="2030-03-01")
     policy = AnnualRatePolicy({"BUYOUT": {2026: 0.5, 2027: 0.10, 2028: 0.10, 2029: 0.10, 2030: 0.0}}, [b], carry_forward=True)
-    sparse = SizingBalances(t=2, date=date(2030, 3, 31), liquid_usd=9_000_000.0, private_nav_usd=0.0,
-                            year_end_liquid_usd={2027: 1_000_000.0, 2029: 3_000_000.0})  # no observation fell in 2028
-    assert sparse.liquid_usd_at_end_of(2028) == 1_000_000.0 and sparse.liquid_usd_at_end_of(2026) is None
+    sparse = balances(date(2030, 3, 31), 9_000_000.0, {2027: YearEndBalance(date(2027, 12, 31), 1_000_000.0),
+                                                       2029: YearEndBalance(date(2029, 12, 31), 3_000_000.0)})  # none fell in 2028
+    assert sparse.year_end_on_or_before(2028).liquid_only_usd == 1_000_000.0 and sparse.year_end_on_or_before(2026) is None
     # 2026 is before the simulation began: no portfolio, no budget. 2028 is sized on the last balance known by its end.
     assert policy.size_commitments([b], sparse) == {"B": pytest.approx(0.10 * 1_000_000 + 0.10 * 1_000_000 + 0.10 * 3_000_000)}
+
+
+# ------------------------------------------------- pacing schedule and expected return
+SEED = date(2028, 12, 31)  # the first commitment: the pacing model's liquid value is 1 on this day
+SCHEDULE = {"BUYOUT": {2027: 0.0, 2028: 0.02, 2029: 0.021, 2030: 0.02205}}  # 2% growing 5% a year
+
+
+def test_a_schedule_is_divided_by_the_expected_value_to_become_a_share_of_the_liquid_value():
+    p1, p2, p3 = fund("P1", closing="2028-12-31"), fund("P2", closing="2029-12-31"), fund("P3", closing="2030-12-31")
+    policy = AnnualRatePolicy(SCHEDULE, [p1, p2, p3], expected_return=0.05)
+    assert policy.expected_value(date(2028, 12, 31), SEED) == 1.0  # seeded on the first commitment date
+    assert policy.expected_value(date(2029, 12, 31), SEED) == pytest.approx(1.05)
+    assert policy.expected_value(date(2030, 12, 31), SEED) == pytest.approx(1.1025)
+    assert policy.expected_value(date(2029, 6, 30), SEED) == pytest.approx(1.05 ** (181 / 365))  # between year ends: elapsed time
+    # a schedule that grows at X is a constant 2% of the liquid value, whatever the actual value does
+    assert policy.size_commitments([p1], balances(date(2028, 12, 31), 1_100_000.0, first_commitment_date=SEED)) == {"P1": pytest.approx(22_000)}
+    assert policy.size_commitments([p2], balances(date(2029, 12, 31), 1_100_000.0, first_commitment_date=SEED)) == {"P2": pytest.approx(22_000)}
+    assert policy.size_commitments([p3], balances(date(2030, 12, 31), 1_331_000.0, first_commitment_date=SEED)) == {"P3": pytest.approx(26_620)}
+    explained = policy.explain_commitment("P3", balances(date(2030, 12, 31), 1_331_000.0, first_commitment_date=SEED))
+    assert explained["expected_value"] == pytest.approx(1.1025) and explained["current_year_rate"] == 0.02205
+
+
+def test_the_planned_amount_is_scaled_by_actual_over_expected_value():
+    p2 = fund("P2", closing="2029-12-31")
+    policy = AnnualRatePolicy(SCHEDULE, [p2], expected_return=0.05)
+    on_plan = balances(date(2029, 12, 31), 1_000_000 * 1.05, first_commitment_date=SEED)       # worth 1,000,000 at the seed
+    ahead = balances(date(2029, 12, 31), 1_000_000 * 1.05 * 1.2, first_commitment_date=SEED)   # 20% ahead of plan
+    assert policy.size_commitments([p2], on_plan)["P2"] == pytest.approx(0.021 * 1_000_000)      # exactly the planned amount
+    assert policy.size_commitments([p2], ahead)["P2"] == pytest.approx(0.021 * 1_000_000 * 1.2)  # scaled by actual / expected
+
+
+def test_carried_years_use_their_own_expected_value():
+    late = fund("L", closing="2030-12-31")
+    policy = AnnualRatePolicy({"BUYOUT": {2028: 0.02, 2029: 0.021, 2030: 0.02205}}, [late], carry_forward=True, expected_return=0.05)
+    year_ends = {2028: YearEndBalance(date(2028, 12, 31), 1_100_000.0), 2029: YearEndBalance(date(2029, 12, 31), 1_100_000.0)}
+    at_closing = balances(date(2030, 12, 31), 1_331_000.0, year_ends, first_commitment_date=SEED)
+    # 2028: 2.0% / 1 × 1,100,000 · 2029: 2.1% / 1.05 × 1,100,000 · 2030: 2.205% / 1.1025 × 1,331,000
+    assert policy.size_commitments([late], at_closing) == {"L": pytest.approx(22_000 + 22_000 + 26_620)}
+    explained = policy.explain_commitment("L", at_closing)
+    assert explained["carried_usd"] == pytest.approx(44_000) and explained["carried_years"] == "2028, 2029"
+
+
+def test_a_year_sized_before_the_first_commitment_uses_an_expected_value_below_one():
+    late = fund("L", closing="2029-12-31")
+    policy = AnnualRatePolicy({"BUYOUT": {2028: 0.02, 2029: 0.021}}, [late], carry_forward=True, expected_return=0.05)
+    seed = date(2029, 12, 31)  # this fund is the run's first commitment, a year after the schedule's first budget
+    at_closing = balances(seed, 1_000_000.0, {2028: YearEndBalance(date(2028, 12, 31), 1_000_000.0)}, first_commitment_date=seed)
+    assert policy.size_commitments([late], at_closing) == {"L": pytest.approx(0.02 * 1.05 * 1_000_000 + 0.021 * 1_000_000)}
+
+
+@pytest.mark.parametrize("bad, message", [(5, "write 5% as 0.05"), (1.0, "write 5% as 0.05"), (-1.0, "between -1 and 1"),
+                                          (float("nan"), "must be a number"), (True, "must be a number"), ("0.05", "must be a number")])
+def test_expected_return_must_be_a_decimal(bad, message):
+    with pytest.raises(ValueError, match=message):
+        AnnualRatePolicy(SCHEDULE, [], expected_return=bad)
+
+
+def test_expected_return_needs_the_first_commitment_date():
+    p1 = fund("P1", closing="2028-12-31")
+    policy = AnnualRatePolicy(SCHEDULE, [p1], expected_return=0.05)
+    with pytest.raises(ValueError, match="first_commitment_date"):
+        policy.size_commitments([p1], balances(date(2028, 12, 31), 1_000_000.0))
 
 
 @pytest.mark.parametrize("rates, funds, years, message", [

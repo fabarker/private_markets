@@ -1,4 +1,4 @@
-"""The five-sheet portfolio workbook (Liquid, FX, Flows, Commitments, Spec), run for one profile.
+"""The portfolio workbook (Liquid, FX, Flows, Commitments, Spec, Expected Returns), run for one profile.
 
     python -m examples.profile_workbook                                   # sample workbook → temp folder; USD Conservative from 1,000,000
     python -m examples.profile_workbook book.xlsx USD Conservative 1e6    # a real workbook: path, currency, risk, starting balance
@@ -65,7 +65,12 @@ def sample_tables() -> dict[str, pd.DataFrame]:
         "Year": ["31/12/2010", "31/12/2011", "31/12/2011", "31/12/2012", "31/12/2015"],
         "Type": ["BUYOUT", "SECONDARIES", "BUYOUT", "BUYOUT", "SECONDARIES"],
     })
-    return {"Liquid": liquid, "FX": fx, "Flows": flows, "Commitments": commitments, "Spec": spec}
+    expected_returns = pd.DataFrame({   # the yearly return X each portfolio's pacing schedule was built on
+        "Portfolio": ["USD Conservative", "USD Moderate", "USD Aggressive", "EUR Conservative", "EUR Moderate"],
+        "Expected Return": [0.04, 0.05, 0.06, 0.035, 0.045],
+    })
+    return {"Liquid": liquid, "FX": fx, "Flows": flows, "Commitments": commitments, "Spec": spec,
+            "Expected Returns": expected_returns}
 
 
 def write_sample_workbook(path) -> Path:
@@ -74,7 +79,7 @@ def write_sample_workbook(path) -> Path:
     with pd.ExcelWriter(path) as writer:
         tables["Liquid"].to_excel(writer, sheet_name="Liquid")          # date as the index: a blank first header, like the real sheet
         tables["FX"].to_excel(writer, sheet_name="FX")
-        for sheet in ("Flows", "Commitments", "Spec"):
+        for sheet in ("Flows", "Commitments", "Spec", "Expected Returns"):
             tables[sheet].to_excel(writer, sheet_name=sheet, index=False)
     return path
 
@@ -96,7 +101,9 @@ if __name__ == "__main__":
     print(f"\n{repository}")
     print(f"liquid column: {repository.liquid_column!r} · fx column: {repository.fx_column!r} ({repository.fx_quote})"
           f" · inception year: {repository.inception_year}")
-    print("\nCommitment rates (calendar year × type) for this profile:")
+    print(f"expected return X: {repository.expected_return:.2%} · the pacing model's liquid value is 1 on the first commitment date, "
+          f"{orchestrator.simulator.first_commitment_date}")
+    print("\nPacing schedule (calendar year × type) for this profile, per 1 of liquid value on that date:")
     print(repository.commitment_rates().T)
     print("\nFunds loaded:")
     print(orchestrator.fund_summary())
@@ -106,7 +113,7 @@ if __name__ == "__main__":
     if result.shortfall is not None:
         print(result.shortfall)
     print(f"\nCommitments (sized in USD; carry-forward {'on' if CARRY_FORWARD else 'off'}; commitment = weight × (current_year_usd + carried_usd)):")
-    print(result.commitments[["policy_year", "sizing_base_usd", "current_year_rate", "current_year_usd",
+    print(result.commitments[["policy_year", "sizing_base_usd", "current_year_rate", "expected_value", "current_year_usd",
                               "carried_years", "carried_usd", "weight", "commitment_usd", "usd_rate", "commitment_base"]])
     print("\nLast observations:")
     print(result.periods[["liquid_open", "liquid_pnl", "distributions", "commitments", "calls",

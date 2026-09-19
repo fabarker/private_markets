@@ -4,7 +4,9 @@
    a 10% annual rate split 60/40, and the dollar weakening between the two closings.
 2. Carry-forward: two years with no fund of the type, each sized on its own year-end balance;
    the dollars wait for the third year's funds.
-3. A liquidity shortfall: the run stops at the observation whose calls exceed the cash.
+3. A pacing schedule: amounts per 1 of liquid value on the first commitment date, turned into a share of the
+   liquid value by dividing by the pacing model's expected value, which grows at the expected return X.
+4. A liquidity shortfall: the run stops at the observation whose calls exceed the cash.
 """
 import pandas as pd
 
@@ -43,6 +45,19 @@ def carry_forward_example():
     return Simulator(portfolio, funds, policy).run()
 
 
+def pacing_schedule_example():
+    """A schedule that grows 5% a year is a constant 2% of a portfolio expected to grow 5% a year."""
+    funds = [Fund("P1", "BUYOUT", "2028-12-31"), Fund("P2", "BUYOUT", "2029-12-31"), Fund("P3", "BUYOUT", "2030-12-31")]
+    portfolio = Portfolio(
+        base_currency="USD",
+        liquid_levels=[("2027-12-31", 1_000_000), ("2028-12-31", 1_100_000),
+                       ("2029-12-31", 1_100_000), ("2030-12-31", 1_331_000)],
+        commitment_rates={"BUYOUT": {2027: 0.0, 2028: 0.02, 2029: 0.021, 2030: 0.02205}},
+    )
+    policy = AnnualRatePolicy(portfolio.commitment_rates, funds, expected_return=0.05, years=portfolio.calendar_years)
+    return Simulator(portfolio, funds, policy).run()
+
+
 def shortfall_example():
     funds = [Fund("S", "VC", "2027-02-01", unit_calls=[("2027-02-01", 1.0)])]
     portfolio = Portfolio(
@@ -73,6 +88,10 @@ if __name__ == "__main__":
     carry = carry_forward_example()
     print("\nCarry-forward — 2027 and 2028 sized on their own year-end balances, collected 60/40 by 2029's funds:")
     print(carry.commitments[["current_year_rate", "weight", "current_year_usd", "carried_usd", "carried_years", "commitment_usd"]])
+
+    pacing = pacing_schedule_example()
+    print("\nPacing schedule with X = 5% — expected value 1 on the first commitment date, then 1.05, 1.1025:")
+    print(pacing.commitments[["sizing_base_usd", "current_year_rate", "expected_value", "rate", "commitment_usd"]])
 
     failure = shortfall_example()
     print(f"\nShortfall example — {failure.status}: {failure.shortfall}")

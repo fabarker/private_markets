@@ -214,78 +214,92 @@ class Simulator:
 
     # ------------------------------------------------------------------ run
     def run(self) -> SimulationResult:
-        timeline, fx, returns = self.timeline, self.fx, self.returns
-        liquid = LiquidAccount(float(self.portfolio.liquid_levels.iloc[0]), returns)
+        """Walk the observations once, from a fresh state, recording what happened at each.
+
+        The six numbered steps below are the whole engine. Their order is the cash
+        convention and it is deliberate: the liquid portfolio earns its return before any
+        private cash moves, commitments are sized before the cohort's own distributions
+        arrive, and the calls are paid last of all.
+        """
+        liquid = LiquidAccount(float(self.portfolio.liquid_levels.iloc[0]), self.returns)
         book = CommitmentBook()
+
         period_rows: list[dict[str, Any]] = []
         fund_rows: list[dict[str, Any]] = []
         commitment_rows: list[dict[str, Any]] = []
         shortfall: Shortfall | None = None
-        private_open = 0.0
+        private_open = 0.0  # private NAV in base currency, as it stood at the previous close
 
-        for t in range(timeline.n_observations):
-            day = timeline.observation_date(t)
-            stamp = pd.Timestamp(day)
+        for t in range(self.timeline.n_observations):
+            day = self.timeline.observation_date(t)
+            rate = float(self.fx[t])  # base currency per 1 USD, on this observation
 
-            liquid_open = liquid.balance                                            # 1
-            nav_usd_open = book.nav_at(t - 1)
+            # 1 ── What is held as the period opens.
+            liquid_open = liquid.balance
+            private_nav_usd_open = book.nav_at(t - 1)
 
-            pnl = liquid.apply_return(t)                                            # 2
+            # 2 ── The liquid portfolio earns this period's return.
+            liquid_pnl = liquid.apply_return(t)
 
-            distributions_existing = book.distributions_in_period(t) * fx[t]        # 3
+            # 3 ── Funds committed before today distribute; the cash lands in the account.
+            distributions_existing = book.distributions_in_period(t) * rate
             liquid.deposit(distributions_existing)
 
-            cohort = self._closings_by_period.get(t, [])                            # 4
-            completed_years = {year: year_end for year, year_end in self._year_ends.items() if year < day.year}
-            balances = SizingBalances(  # USD in, USD out; sized on the liquid-only value, never on the account
-                t, day, liquid_only_usd=float(self.liquid_only_usd[t]), liquid_account_usd=liquid.balance / fx[t],
-                private_nav_usd=nav_usd_open, year_ends=completed_years, first_commitment_date=self.first_commitment_date,
-            )
-            commitments_usd = self._size_commitments(cohort, balances)
-            committed_usd = math.fsum(commitments_usd.values())
+            # 4 ── Funds closing today are committed — in US dollars, on the liquid-only
+            #      value, all from the same balances. A commitment promises cash; it moves none.
+            cohort = self._closings_by_period.get(t, [])
+            balances = self._sizing_balances(t, day, liquid.balance / rate, private_nav_usd_open)
+            dollars_by_fund = self._size_commitments(cohort, balances)
+
             for fund in cohort:
-                book.add(Commitment(fund, self.aligned_histories[fund.name], commitments_usd[fund.name]))
-                commitment_rows.append(
-                    self._commitment_row(stamp, fund, balances, commitments_usd[fund.name], float(self.liquid_only[t]), fx[t]))
+                book.add(Commitment(fund, self.aligned_histories[fund.name], dollars_by_fund[fund.name]))
+                commitment_rows.append(self._commitment_row(t, day, fund, balances, dollars_by_fund[fund.name], rate))
 
-            new = book.commitments_closing_in(t)                                    # 5
-            distributions_new = math.fsum(c.distributions_in_period(t) for c in new) * fx[t]
+            # 5 ── The new cohort's own distributions are banked — they could not be in step 3,
+            #      since those funds did not exist yet — and then every call is paid.
+            distributions_new = math.fsum(c.distributions_in_period(t) for c in book.commitments_closing_in(t)) * rate
             liquid.deposit(distributions_new)
-            calls = book.calls_in_period(t) * fx[t]
-            missing = liquid.withdraw(calls)
 
-            private_close = book.nav_at(t) * fx[t]                                  # 6
+            calls = book.calls_in_period(t) * rate
+            unpaid = liquid.withdraw(calls)  # what the account could not cover, 0 when it could
+
+            # 6 ── Value the book and record the observation.
+            private_close = book.nav_at(t) * rate
             distributions = distributions_existing + distributions_new
-            fx_translation = nav_usd_open * (fx[t] - fx[t - 1]) if t > 0 else 0.0
+            committed_usd = math.fsum(dollars_by_fund.values())
+
             period_rows.append({
-                "date": stamp,
-                "liquid_open": liquid_open, "private_open": private_open, "total_open": liquid_open + private_open,
-                "period_return": float(returns[t]), "usd_rate": float(fx[t]),
-                "liquid_pnl": pnl, "distributions": distributions,
-                "sizing_base": float(self.liquid_only[t]), "sizing_base_usd": balances.liquid_only_usd,
-                "commitments": committed_usd * fx[t], "commitments_usd": committed_usd,
-                "calls": calls, "liquid_close": liquid.balance, "private_close": private_close,
+                "date": pd.Timestamp(day),
+
+                # what was held, before and after the day's business
+                "liquid_open": liquid_open,
+                "private_open": private_open,
+                "total_open": liquid_open + private_open,
+                "liquid_close": liquid.balance,
+                "private_close": private_close,
                 "total_close": liquid.balance + private_close,
+
+                # what moved it: the market, the private flows, and the exchange rate
+                "period_return": float(self.returns[t]),
+                "liquid_pnl": liquid_pnl,
+                "distributions": distributions,
+                "calls": calls,
                 "private_valuation_pnl": private_close - private_open - calls + distributions,
-                "fx_translation": fx_translation,
+                "usd_rate": rate,
+                "fx_translation": private_nav_usd_open * (rate - float(self.fx[t - 1])) if t > 0 else 0.0,
+
+                # what was committed today, and the value it was sized on
+                "sizing_base": float(self.liquid_only[t]),
+                "sizing_base_usd": balances.liquid_only_usd,
+                "commitments": committed_usd * rate,
+                "commitments_usd": committed_usd,
             })
-            for c in book.commitments:
-                calls_usd, distributions_usd, nav_usd = c.calls_in_period(t), c.distributions_in_period(t), c.nav_at(t)
-                fund_rows.append({
-                    "date": stamp, "fund": c.fund.name, "fund_type": c.fund.fund_type,
-                    "commitment_usd": c.usd, "calls_usd": calls_usd, "distributions_usd": distributions_usd,
-                    "nav_usd": nav_usd, "calls_base": calls_usd * fx[t],
-                    "distributions_base": distributions_usd * fx[t], "nav_base": nav_usd * fx[t],
-                })
+            fund_rows.extend(self._fund_rows(t, day, book, rate))
             private_open = private_close
 
-            if missing > self.cash_tolerance and shortfall is None:
-                by_fund = pd.Series(
-                    {c.fund.name: c.calls_in_period(t) * fx[t] for c in book.commitments},
-                    dtype=float, name="calls_base",
-                )
-                by_fund.index.name = "fund"
-                shortfall = Shortfall(t, day, calls - missing, calls, by_fund)
+            # ... and stop here if the account could not meet the calls.
+            if unpaid > self.cash_tolerance and shortfall is None:
+                shortfall = self._shortfall(t, day, book, calls, unpaid, rate)
                 if self.stop_on_shortfall:
                     break
 
@@ -297,6 +311,50 @@ class Simulator:
             shortfall,
             self.funds_beyond_horizon,
         )
+
+    # ------------------------------------------------------- what the loop records
+    def _sizing_balances(self, t: int, day: date, liquid_account_usd: float,
+                         private_nav_usd: float) -> SizingBalances:
+        """What the policy is shown: US dollars throughout, and the liquid-only value to size on."""
+        return SizingBalances(
+            t, day,
+            liquid_only_usd=float(self.liquid_only_usd[t]),
+            liquid_account_usd=liquid_account_usd,
+            private_nav_usd=private_nav_usd,
+            year_ends={year: end for year, end in self._year_ends.items() if year < day.year},
+            first_commitment_date=self.first_commitment_date,
+        )
+
+    def _fund_rows(self, t: int, day: date, book: CommitmentBook, rate: float) -> list[dict[str, Any]]:
+        """One row per live commitment: this period's figures, in dollars and in base currency."""
+        rows = []
+        for commitment in book.commitments:
+            calls_usd = commitment.calls_in_period(t)
+            distributions_usd = commitment.distributions_in_period(t)
+            nav_usd = commitment.nav_at(t)
+            rows.append({
+                "date": pd.Timestamp(day),
+                "fund": commitment.fund.name,
+                "fund_type": commitment.fund.fund_type,
+                "commitment_usd": commitment.usd,
+                "calls_usd": calls_usd,
+                "distributions_usd": distributions_usd,
+                "nav_usd": nav_usd,
+                "calls_base": calls_usd * rate,
+                "distributions_base": distributions_usd * rate,
+                "nav_base": nav_usd * rate,
+            })
+        return rows
+
+    def _shortfall(self, t: int, day: date, book: CommitmentBook,
+                   calls: float, unpaid: float, rate: float) -> Shortfall:
+        """The first observation whose calls the account could not meet, with the calls that caused it."""
+        calls_by_fund = pd.Series(
+            {c.fund.name: c.calls_in_period(t) * rate for c in book.commitments},
+            dtype=float, name="calls_base",
+        )
+        calls_by_fund.index.name = "fund"
+        return Shortfall(t, day, cash_available=calls - unpaid, calls_due=calls, calls_by_fund=calls_by_fund)
 
     # ---------------------------------------------------------------- audit
     def map_events_to_observations(self) -> pd.DataFrame:
@@ -341,18 +399,27 @@ class Simulator:
             commitments_usd[fund.name] = dollars
         return commitments_usd
 
-    def _commitment_row(
-        self, stamp: pd.Timestamp, fund: Fund, balances: SizingBalances, commitment_usd: float,
-        liquid_only: float, usd_rate: float,
-    ) -> dict[str, Any]:
+    def _commitment_row(self, t: int, day: date, fund: Fund, balances: SizingBalances,
+                        commitment_usd: float, rate: float) -> dict[str, Any]:
         """One closing: what was decided in dollars, then the same figures in base currency at that day's rate."""
         row: dict[str, Any] = {
-            "date": stamp, "fund": fund.name, "fund_type": fund.fund_type,
-            "closing_date": pd.Timestamp(fund.closing_date), "policy_year": fund.closing_year,
+            "date": pd.Timestamp(day),
+            "fund": fund.name,
+            "fund_type": fund.fund_type,
+            "closing_date": pd.Timestamp(fund.closing_date),
+            "policy_year": fund.closing_year,
+
+            # the decision, in dollars
             "sizing_base_usd": balances.liquid_only_usd,
             "rate": commitment_usd / balances.liquid_only_usd if balances.liquid_only_usd else float("nan"),
-            "commitment_usd": commitment_usd, "usd_rate": float(usd_rate),
-            "sizing_base": liquid_only, "commitment_base": commitment_usd * usd_rate,
+            "commitment_usd": commitment_usd,
+
+            # and the same, translated at today's rate for reporting
+            "usd_rate": rate,
+            "sizing_base": float(self.liquid_only[t]),
+            "commitment_base": commitment_usd * rate,
+
+            # filled in below by policies that can say how they got there
             "current_year_rate": float("nan"), "expected_value": float("nan"), "weight": float("nan"),
             "current_year_usd": float("nan"), "carried_usd": float("nan"), "carried_years": "",
         }

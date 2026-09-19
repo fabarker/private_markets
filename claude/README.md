@@ -333,8 +333,13 @@ result = o.run()
 ```
 
 `python -m examples.profile_workbook book.xlsx EUR Conservative 5e6` does the same from
-the command line, and with no arguments writes a sample workbook in this layout to
-compare a real file against.
+the command line, and writes a sample workbook in this layout first if the file is missing —
+a full one to compare a real file against: nine profiles of monthly returns from April 2009
+to December 2026, the two exchange rates, a pacing schedule per profile growing at its own
+expected return, and the nineteen funds (PEM2011 … SEC_X, closing 2010 to 2025) each with a
+J-curve of calls, year-end NAV marks and distributions, per $1 committed on a scale of
+1,000,000. It is generated from `FUNDS`, `LIQUID_SPEC` and `FUND_SHAPES` at the top of that
+script, so edit those to reshape it.
 
 | Sheet | Layout | How it is read |
 | --- | --- | --- |

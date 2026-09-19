@@ -7,7 +7,7 @@ import pytest
 
 pytest.importorskip("openpyxl")
 
-from examples.profile_workbook import sample_tables, write_sample_workbook  # noqa: E402
+from examples.profile_workbook import FUNDS, LIQUID_SPEC, sample_tables, write_sample_workbook  # noqa: E402
 from pmsim.data import (  # noqa: E402
     Orchestrator,
     SheetLayout,
@@ -43,47 +43,53 @@ def test_repository_reads_the_sheets_and_selects_the_profile(usd, eur):
     assert usd.profile == "USD Conservative" and usd.liquid_column == "USD Conservative"
     assert usd.fx_column is None and usd.inception_year == 2009
     assert eur.profile == "EUR Conservative" and eur.fx_column == "EURUSD" and eur.fx_quote == "usd_per_base"
-    with pytest.raises(ValueError, match=r"Liquid: no column for profile 'GBP Conservative'; profiles are \['USD Conservative'"):
-        WorkbookRepository(usd.path, "GBP", "Conservative").liquid_column
+    gbp = WorkbookRepository(usd.path, "GBP", "Moderate")
+    assert gbp.liquid_column == "GBP Moderate" and gbp.fx_column == "GBPUSD"
+    with pytest.raises(ValueError, match=r"Liquid: no column for profile 'USD Balanced'; profiles are \['USD Conservative'"):
+        WorkbookRepository(usd.path, "USD", "Balanced").liquid_column
     with pytest.raises(ValueError, match="FX: no column CHFUSD or USDCHF"):
         WorkbookRepository(usd.path, "CHF", "Conservative").fx_column
 
 
 def test_spec_sheet_gives_fund_specs_with_day_first_closing_dates(usd):
     specs = usd.fund_specs()
-    assert specs["fund_name"].tolist() == ["PEM2011", "SEC_VI", "PEM2012", "PEM2013", "SEC_VII"]
-    assert specs["fund_type"].tolist() == ["BUYOUT", "SECONDARIES", "BUYOUT", "BUYOUT", "SECONDARIES"]
+    assert len(specs) == 19 and specs["fund_name"].tolist()[:3] == ["PEM2011", "SEC_VI", "PEM2012"]
+    assert specs["fund_type"].tolist()[:3] == ["BUYOUT", "SECONDARIES", "BUYOUT"]
     assert specs["closing_date"].tolist()[:2] == [date(2010, 12, 31), date(2011, 12, 31)]  # "31/12/2010" read day-first
+    closings = dict(zip(specs["fund_name"], specs["closing_date"]))
+    assert closings["PEM2017"] == date(2016, 12, 30)  # "30/12/2016": there is no 30th month, so only day-first reads it
+    assert closings["SEC_X"] == date(2025, 12, 31)
 
 
 def test_flows_sheet_uses_vintage_as_the_fund_name(usd):
     market = usd.fund_market_data()
-    assert set(market["fund_name"]) == {"PEM2011", "SEC_VI"}
+    assert set(market["fund_name"]) == {name for name, _, _ in FUNDS} and len(market) == 577
     pem = market[market["fund_name"] == "PEM2011"]
-    assert pem["kind"].tolist() == ["flow"] * 4 + ["nav"] + ["flow"] * 2 + ["nav"]
-    assert pem["unit"].iloc[0] == pytest.approx(-0.025) and pem["unit"].iloc[4] == pytest.approx(0.045)
+    # each year of a fund's life: its calls, then the mark, then that year's distribution once the harvest starts
+    assert pem["kind"].tolist()[:6] == ["flow", "flow", "nav", "flow", "flow", "nav"]
+    assert pem["unit"].iloc[0] == pytest.approx(-0.15) and pem["unit"].iloc[2] == pytest.approx(0.235)
 
 
 def test_market_data_joins_liquid_returns_with_fx(usd):
     market = usd.market_data()
-    assert list(market.columns) == ["USD Conservative", "USD Moderate", "USD Aggressive", "EUR Conservative",
-                                    "EUR Moderate", "EURUSD", "GBPUSD"]
-    assert market.index[0] == pd.Timestamp("2009-04-30") and market.index[-1] == pd.Timestamp("2012-12-31")
-    assert len(market) == 45 and market.index.name == "date"
-    assert market["USD Conservative"].iloc[0] == pytest.approx(0.004)  # k = 0: sin(0) = 0
+    assert list(market.columns) == list(LIQUID_SPEC) + ["EURUSD", "GBPUSD"]
+    assert market.index[0] == pd.Timestamp("2009-04-30") and market.index[-1] == pd.Timestamp("2026-12-31")
+    assert len(market) == 213 and market.index.name == "date"
 
 
 def test_commitment_schedule_maps_relative_years_onto_the_calendar(usd, eur):
     rates = usd.commitment_rates()
-    assert list(rates.index) == list(range(2009, 2020)) and list(rates.columns) == ["BUYOUT", "SECONDARIES"]
+    assert list(rates.index) == list(range(2009, 2030)) and list(rates.columns) == ["BUYOUT", "SECONDARIES"]
     assert rates.loc[2009].tolist() == [0.0, 0.0]  # relative year 0 = inception year 2009
-    assert rates.loc[2010, "BUYOUT"] == 0.022 and rates.loc[2019, "SECONDARIES"] == 0.008
-    assert eur.commitment_rates().loc[2010, "BUYOUT"] == 0.020  # a different profile, different rates
+    assert rates.loc[2010, "BUYOUT"] == 0.022  # relative year 1
+    # the sample's schedule grows at the profile's own expected return, so the share it stands for is the same each year
+    assert rates.loc[2011, "BUYOUT"] == pytest.approx(0.022 * 1.054) and usd.expected_return == 0.054
+    assert eur.commitment_rates().loc[2011, "BUYOUT"] == pytest.approx(0.022 * 1.047)  # another profile, another X
     raw = usd.raw_sheet("Commitments")
-    with pytest.raises(ValueError, match=r"no rows for profile 'USD' 'Wild'; profiles are \['EUR Conservative', 'EUR Moderate', 'USD Conservative', 'USD Moderate'\]"):
+    with pytest.raises(ValueError, match=r"no rows for profile 'USD' 'Wild'; profiles are \['EUR Aggressive', 'EUR Conservative'"):
         calendar_rates_for_profile(raw, currency="USD", risk="Wild", inception_year=2009)
     doubled = pd.concat([raw, raw.iloc[[1]]])
-    with pytest.raises(ValueError, match="more than one rate for 'SECONDARIES' in relative year 1"):
+    with pytest.raises(ValueError, match="more than one rate for 'BUYOUT' in relative year 1"):
         calendar_rates_for_profile(doubled, currency="USD", risk="Conservative", inception_year=2009)
     gap = raw[~((raw["Type"] == "BUYOUT") & (raw["Year"] == 3) & (raw["Currency"] == "USD") & (raw["Risk"] == "Conservative"))]
     with pytest.raises(ValueError, match=r"no rate for relative year\(s\) \[\(3, 'BUYOUT'\)\]"):
@@ -153,29 +159,31 @@ def test_usd_conservative_runs_end_to_end(workbook):
     orchestrator = load_profile_workbook(workbook, "USD", "Conservative", 1_000_000)
     result = orchestrator.run()
     assert result.status == "completed" and result.base_currency == "USD"
-    assert result.funds_beyond_horizon == ("SEC_VII",)
+    assert result.funds_beyond_horizon == ()  # the liquid series runs to 2026, past every closing in the Spec sheet
     c = result.commitments
-    assert [fund for _, fund in c.index] == ["PEM2011", "SEC_VI", "PEM2012", "PEM2013"]
+    assert len(c) == 19 and [fund for _, fund in c.index][:3] == ["PEM2011", "SEC_VI", "PEM2012"]
+
     pem2011 = c.loc[(pd.Timestamp("2010-12-31"), "PEM2011")]
-    level = orchestrator.portfolio.liquid_levels.loc["2010-12-31"]
+    level = orchestrator.portfolio.liquid_levels.loc["2010-12-31"]  # a USD profile: the liquid-only value is the levels
     assert pem2011["policy_year"] == 2010 and pem2011["current_year_rate"] == 0.022  # relative year 1 of the schedule
-    assert pem2011["rate"] == pytest.approx(0.022) and pem2011["carried_usd"] == 0
+    assert pem2011["expected_value"] == 1.0 and pem2011["carried_usd"] == 0  # the first commitment: the model is worth 1 here
     assert pem2011["sizing_base"] == pytest.approx(level) and pem2011["commitment_usd"] == pytest.approx(0.022 * level)
-    assert c.loc[(pd.Timestamp("2011-12-31"), "SEC_VI"), "current_year_rate"] == 0.008
-    assert c.loc[(pd.Timestamp("2011-12-31"), "SEC_VI"), "carried_usd"] == 0  # carry-forward is off by default: 2010's budget is lost
-    pem2012 = c.loc[(pd.Timestamp("2011-12-31"), "PEM2012")]
-    assert pem2012["current_year_rate"] == 0.022  # same date, different type: no weights needed
-    # the pacing model's value is 1 when PEM2011 is committed; a year later it expects 1.04 (this profile's X is 4%)
     assert orchestrator.simulator.first_commitment_date == date(2010, 12, 31) and orchestrator.expected_return == 0.054
-    assert pem2011["expected_value"] == 1.0 and pem2012["expected_value"] == pytest.approx(1.054)
-    assert pem2012["commitment_usd"] == pytest.approx(0.022 / 1.054 * pem2012["sizing_base_usd"])
-    levels_usd = orchestrator.portfolio.liquid_levels  # a USD profile: the liquid-only value is the level series itself
-    assert pem2012["sizing_base_usd"] == pytest.approx(levels_usd.loc["2011-12-31"])
-    # PEM2011's June 2011 call pooled onto the June month end, scaled by its commitment
-    june = result.funds.loc[(pd.Timestamp("2011-06-30"), "PEM2011")]
-    assert june["calls_usd"] == pytest.approx(0.025 * pem2011["commitment_usd"])
+
+    # the sample's schedule grows at X and is then divided by X, so every commitment is the same share of the value
+    rate_of = c.reset_index().groupby("fund_type")["rate"]
+    np.testing.assert_allclose(rate_of.get_group("BUYOUT"), 0.022, rtol=1e-4)
+    np.testing.assert_allclose(rate_of.get_group("SECONDARIES"), 0.008, rtol=1e-4)
+    pem2012 = c.loc[(pd.Timestamp("2011-12-31"), "PEM2012")]  # same date as SEC_VI, different type: no weights needed
+    assert pem2012["current_year_rate"] == pytest.approx(0.022 * 1.054) and pem2012["expected_value"] == pytest.approx(1.054)
+    assert c.loc[(pd.Timestamp("2011-12-31"), "SEC_VI"), "carried_usd"] == 0  # carry-forward off by default: 2010's budget is lost
+    assert c.loc[(pd.Timestamp("2016-12-31"), "PEM2017"), "policy_year"] == 2016  # closed 30 Dec, observed on the 31st
+
+    # PEM2011's first call, 14 March 2011, pooled onto the March month end and scaled by its commitment
+    march = result.funds.loc[(pd.Timestamp("2011-03-31"), "PEM2011")]
+    assert march["calls_usd"] == pytest.approx(0.15 * pem2011["commitment_usd"])
     summary = orchestrator.fund_summary()
-    assert summary.loc["PEM2011", "marks"] == 2 and summary.loc["SEC_VII", "beyond_horizon"]
+    assert summary.loc["PEM2011", "marks"] == 13 and summary.loc["PEM2011", "unit_called"] == pytest.approx(0.95)
     check_identities(result)
 
 
@@ -198,18 +206,18 @@ def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(wor
     assert orchestrator.spec.initial_value == pytest.approx(100.0 / eurusd)
     assert result.base_currency == "EUR" and result.status == "completed"
     assert result.periods["liquid_open"].iloc[0] == pytest.approx(100.0 / eurusd)
-    assert orchestrator.policy.entitlements["PEM2011"].current_year_rate == 0.026  # EUR Moderate's BUYOUT rate
+    assert orchestrator.policy.entitlements["PEM2011"].current_year_rate == 0.030  # EUR Moderate's year-1 BUYOUT rate
     # the script switches carry-forward on: no secondaries fund closes in 2010, so SEC_VI collects 2010's budget in 2011
     assert orchestrator.spec.carry_forward is True
     sec_vi = result.commitments.loc[(pd.Timestamp("2011-12-31"), "SEC_VI")]
     balance_at_end_of_2010 = result.periods.loc[pd.Timestamp("2010-12-31"), "liquid_only_usd"]
-    # 2010's budget was sized on 31 Dec 2010, the first commitment date, where the expected value is 1; 2011's a year on, at 1.045
-    assert sec_vi["carried_years"] == "2010" and sec_vi["carried_usd"] == pytest.approx(0.009 * balance_at_end_of_2010)
+    # 2010's budget was sized on 31 Dec 2010, the first commitment date, where the expected value is 1; 2011's a year on, at 1.059
+    assert sec_vi["carried_years"] == "2010" and sec_vi["carried_usd"] == pytest.approx(0.011 * balance_at_end_of_2010)
     assert sec_vi["expected_value"] == pytest.approx(1.059) and orchestrator.expected_return == 0.059  # EUR Moderate's ExRet
-    assert sec_vi["commitment_usd"] == pytest.approx(sec_vi["carried_usd"] + 0.009 / 1.059 * sec_vi["sizing_base_usd"])
+    assert sec_vi["commitment_usd"] == pytest.approx(sec_vi["carried_usd"] + 0.011 * sec_vi["sizing_base_usd"])
     _, without = eur_moderate.run(workbook, start_usd=100.0, carry_forward=False)
     assert without.commitments.loc[(pd.Timestamp("2011-12-31"), "SEC_VI"), "commitment_usd"] == \
-        pytest.approx(0.009 / 1.059 * sec_vi["sizing_base_usd"])
+        pytest.approx(0.011 * sec_vi["sizing_base_usd"])
     assert {p.name for p in (tmp_path / "out").iterdir()} == {
         "periods.csv", "funds.csv", "commitments.csv", "map_events_to_observations.csv", "fund_summary.csv",
         "tracked_values.csv", "liquid_only_comparison.csv", "public_market_equivalent.csv"}
@@ -244,7 +252,8 @@ def test_date_column_need_not_be_first(tmp_path):
     path = tmp_path / "date_second.xlsx"
     tables = sample_tables()
     liquid = tables["Liquid"].reset_index().rename(columns={"index": "Date"})
-    liquid = liquid[["USD Conservative", "Date", "USD Moderate", "USD Aggressive", "EUR Conservative", "EUR Moderate"]]
+    profiles = [c for c in liquid.columns if c != "Date"]
+    liquid = liquid[[profiles[0], "Date"] + profiles[1:]]  # the date column second, not first
     fx = tables["FX"].reset_index().rename(columns={"index": "Observation Date"})[["EURUSD", "GBPUSD", "Observation Date"]]
     with pd.ExcelWriter(path) as writer:
         liquid.to_excel(writer, sheet_name="Liquid", index=False)
@@ -255,8 +264,7 @@ def test_date_column_need_not_be_first(tmp_path):
     assert repository.inception_year == 2009 and repository.liquid_column == "EUR Conservative"
     assert repository.fx_column == "EURUSD"
     market = repository.market_data()
-    assert list(market.columns) == ["USD Conservative", "USD Moderate", "USD Aggressive", "EUR Conservative",
-                                    "EUR Moderate", "EURUSD", "GBPUSD"]
+    assert list(market.columns) == list(LIQUID_SPEC) + ["EURUSD", "GBPUSD"]
     pd.testing.assert_frame_equal(market, WorkbookRepository(write_sample_workbook(tmp_path / "usual.xlsx"),
                                                              "EUR", "Conservative").market_data())
     check_identities(Orchestrator(repository, repository.simulation_spec(1_000_000)).run())

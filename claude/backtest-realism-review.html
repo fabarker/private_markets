@@ -368,7 +368,7 @@ value_added(T) = FV(calls) × (KS-PME − 1)</code></pre>
       <dd><p>One parameter on the rule the engine already uses:</p>
 <pre><code>as-valued (now)   nav(t) = latest mark dated ≤ t          + calls − distributions since that mark
 as-known          nav(t) = latest mark dated ≤ t − lag    + calls − distributions since that mark</code></pre>
-      <p><code>lag = 0</code> reproduces today's behaviour. Keep both series: as-known feeds <code>SizingBalances.private_nav</code> and every allocation test; as-valued stays in the report as the hindsight valuation. Default to 75 days, or use actual report dates per fund if the database has them.</p></dd>
+      <p><code>lag = 0</code> reproduces today's behaviour. Keep both series: as-known feeds <code>SizingBalances.private_nav_usd</code> and every allocation test; as-valued stays in the report as the hindsight valuation. Default to 75 days, or use actual report dates per fund if the database has them.</p></dd>
       <dt>Where</dt>
       <dd><p><code>Fund.align_history</code> (a second <code>unit_nav_known</code> array on <code>AlignedFundHistory</code>), step 4 of <code>Simulator.run</code>, and one more column in <code>periods</code>.</p></dd>
     </dl>
@@ -548,7 +548,7 @@ hedge P&amp;L = h × nav_usd × ( F − S(τ) )                           <span 
 proposed   calls_base[t] = commitment_usd × Σ unit_call(i) × fx[d(i)]</code></pre>
       <p>Commitment dollars are a scalar per fund, so this is a second pair of precomputed arrays on <code>AlignedFundHistory</code>; the loop is unchanged. With monthly FX only, leave it.</p></dd>
       <dt>Lag</dt>
-      <dd><p><b>Size on the balance you knew.</b> A fund closing on 31 December is sized on that day's balance, after December's return, though the commitment was decided and signed earlier. Same-bar look-ahead: tiny &mdash; a 2.2% commitment on a balance a few percent different &mdash; and unbiased on average, but free to remove. Pass the previous observation's close, or the trailing average from <a href="#s7">7</a>, as <code>SizingBalances.liquid</code>.</p></dd>
+      <dd><p><b>Size on the balance you knew.</b> A fund closing on 31 December is sized on that day's balance, after December's return, though the commitment was decided and signed earlier. Same-bar look-ahead: tiny &mdash; a 2.2% commitment on a balance a few percent different &mdash; and unbiased on average, but free to remove. Pass the previous observation's close, or the trailing average from <a href="#s7">7</a>, as <code>SizingBalances.liquid_usd</code>.</p></dd>
       <dt>Dietz</dt>
       <dd><p><b>Time-weight flows inside the period.</b> The return is applied to the whole opening balance and flows settle at the period end, so cash called on the 3rd still earns the month in the liquid portfolio. Modified Dietz corrects it:</p>
 <pre><code>liquid_pnl(t) = r(t) × ( liquid_open + Σ w(i) × flow(i) )        w(i) = days left after flow i / days in period</code></pre>

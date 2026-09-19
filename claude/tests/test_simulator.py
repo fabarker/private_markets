@@ -44,6 +44,7 @@ def test_worked_example_in_usd(usd_portfolio, worked_funds, identities):
     np.testing.assert_allclose(p["private_close"], [0, 16_500, 25_151.5])
     np.testing.assert_allclose(p["total_close"], [1_000_000, 1_100_000, 1_208_350])
     assert (p["usd_rate"] == 1).all() and (p["fx_translation"] == 0).all()
+    np.testing.assert_array_equal(p["sizing_base_usd"], p["sizing_base"])  # a dollar portfolio: one and the same
     c = result.commitments
     assert list(c.index) == [(D("2027-03-31"), "A"), (D("2027-06-30"), "B")]
     assert c["commitment_usd"].tolist() == pytest.approx([66_000, 47_806])
@@ -64,6 +65,7 @@ def test_worked_example_in_gbp_translates_at_the_observation_rate(gbp_portfolio,
     assert result.base_currency == "GBP"
     np.testing.assert_allclose(p["usd_rate"], [0.80, 0.80, 0.75])
     np.testing.assert_allclose(p["sizing_base"], [1_000_000, 1_100_000, 1_194_943.75])
+    np.testing.assert_allclose(p["sizing_base_usd"], [1_250_000, 1_375_000, 1_194_943.75 / 0.75])  # what the rate is applied to
     np.testing.assert_allclose(p["commitments"], [0, 66_000, 47_797.75])
     np.testing.assert_allclose(p["commitments_usd"], [0, 82_500, 47_797.75 / 0.75])
     np.testing.assert_allclose(p["distributions"], [0, 0, 3_093.75])
@@ -77,6 +79,8 @@ def test_worked_example_in_gbp_translates_at_the_observation_rate(gbp_portfolio,
     assert c.loc[(D("2027-03-31"), "A"), "commitment_usd"] == pytest.approx(82_500)
     assert c.loc[(D("2027-06-30"), "B"), "commitment_usd"] == pytest.approx(63_730.3333333)
     assert c["usd_rate"].tolist() == [0.80, 0.75]
+    assert c.loc[(D("2027-03-31"), "A"), "sizing_base_usd"] == pytest.approx(1_375_000)  # 6% of it is the 82,500
+    assert c["commitment_base"].tolist() == pytest.approx([66_000, 47_797.75])  # reported, never decided
     a = result.funds.xs("A", level="fund")
     np.testing.assert_allclose(a["nav_usd"], [20_625, 16_500])
     np.testing.assert_allclose(a["nav_base"], [16_500, 12_375])
@@ -153,6 +157,37 @@ def test_off_grid_nav_mark_drives_valuation_pnl(identities):
     p = result.periods
     np.testing.assert_allclose(p["private_close"], [20, 30, 25])
     np.testing.assert_allclose(p["private_valuation_pnl"], [0, 10, 0])
+    identities(result)
+
+
+class FixedDollarsRecordingWhatItSaw:
+    """Commits the same number of dollars to every fund, and keeps the balances it was shown."""
+
+    def __init__(self, dollars):
+        self.dollars, self.seen = dollars, []
+
+    def size_commitments(self, cohort, balances):
+        self.seen.append(balances)
+        return {f.name: self.dollars for f in cohort}
+
+
+def test_sizing_happens_in_dollars_whatever_the_base_currency(gbp_portfolio, worked_funds, identities):
+    policy = FixedDollarsRecordingWhatItSaw(50_000.0)
+    result = Simulator(gbp_portfolio, worked_funds, policy).run()
+    at_a_closing, at_b_closing = policy.seen  # asked only when a fund closes
+    # the sterling balance reaches the policy converted at that day's rate; private NAV is dollars as they are
+    assert at_a_closing.liquid_usd == pytest.approx(1_100_000 / 0.80) and at_a_closing.private_nav_usd == 0
+    assert at_b_closing.liquid_usd == pytest.approx(result.periods["sizing_base"].iloc[2] / 0.75)
+    assert at_b_closing.private_nav_usd == pytest.approx(50_000 * 0.25)  # A's NAV, untouched by the 0.80 → 0.75 move
+    assert at_b_closing.total_usd == pytest.approx(at_b_closing.liquid_usd + 12_500)
+    c, p = result.commitments, result.periods
+    assert c["commitment_usd"].tolist() == [50_000.0, 50_000.0]  # exactly the dollars decided, whatever the rate
+    assert c["commitment_base"].tolist() == pytest.approx([50_000 * 0.80, 50_000 * 0.75])  # the same dollars, in sterling
+    np.testing.assert_allclose(c["sizing_base_usd"], c["sizing_base"] / c["usd_rate"])
+    np.testing.assert_allclose(c["rate"], c["commitment_usd"] / c["sizing_base_usd"])
+    np.testing.assert_allclose(p["sizing_base_usd"], p["sizing_base"] / p["usd_rate"])
+    np.testing.assert_allclose(p["commitments"], p["commitments_usd"] * p["usd_rate"])
+    assert p["calls"].iloc[1] == pytest.approx(50_000 * 0.25 * 0.80)  # dollars called, paid in sterling at that day's rate
     identities(result)
 
 

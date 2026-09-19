@@ -101,8 +101,8 @@ if __name__ == "__main__":
     print(f"\nRun ({result.base_currency} base, {len(result.periods)} observations) — {result.status}")
     if result.shortfall is not None:
         print(result.shortfall)
-    print("\nCommitments:")
-    print(result.commitments[["closing_date", "policy_year", "rate", "sizing_base", "commitment_base", "usd_rate", "commitment_usd"]])
+    print("\nCommitments (sized in USD; base-currency figures are that day's translation):")
+    print(result.commitments[["closing_date", "policy_year", "rate", "sizing_base_usd", "commitment_usd", "usd_rate", "commitment_base"]])
     print("\nLast observations:")
     print(result.periods[["liquid_open", "liquid_pnl", "distributions", "commitments", "calls",
                           "liquid_close", "private_close", "total_close"]].tail(6))

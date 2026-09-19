@@ -67,7 +67,7 @@ result = Simulator(portfolio, funds, policy).run()
 result.status          # "completed" or "shortfall"
 result.periods         # one row per observation, base currency
 result.funds           # one row per live commitment per observation, USD and base
-result.commitments     # one row per closing: rate, sizing base, exchange rate, dollars
+result.commitments     # one row per closing: rate, USD sizing base, dollars committed, exchange rate
 result.shortfall       # None, or the first failed observation
 ```
 
@@ -120,16 +120,18 @@ cash-adjusted estimate. A negative running value is a data error naming the fund
 1. snapshot opening balances;
 2. apply the liquid return `level[t] / level[t-1]` (1 at the first date);
 3. bank distributions from existing commitments;
-4. size all funds closing at this observation from that same balance, fix each commitment
-   in USD at today's rate;
+4. size all funds closing at this observation **in US dollars**, from the same balance: the
+   liquid balance converted at today's rate. The dollar commitment is then fixed;
 5. bank the new cohort's own distributions (kept out of the sizing base), then pay every
    commitment's calls;
 6. value the book, record the period, stop if the calls exceeded the cash.
 
 **Currency.** Private figures are USD until they touch the liquid pot or a report.
-Commitments are sized in base currency and converted to USD at the closing observation's
-rate, then never change. Calls, distributions and NAV are converted at each observation's
-rate. `fx_translation` isolates `nav_usd(t-1) × (fx[t] − fx[t-1])`, the part of private
+Commitments are sized exclusively in USD: for a non-USD portfolio the liquid balance is
+converted at the closing observation's rate, the policy sees and returns dollars only, and
+the dollar commitment never changes. `commitment_base` and `sizing_base` are that day's
+translation, reported for information and never decided on. Calls, distributions and NAV
+are converted at each observation's rate. `fx_translation` isolates `nav_usd(t-1) × (fx[t] − fx[t-1])`, the part of private
 valuation P&L that is purely the currency moving.
 
 **Shortfall.** If calls exceed the cash available (beyond `cash_tolerance`, default 1e-9),
@@ -167,14 +169,15 @@ simulation finer; the rule does not change.
 
 `periods` (index `date`, base currency unless noted): `liquid_open`, `private_open`,
 `total_open`, `return_factor`, `usd_rate`, `liquid_pnl`, `distributions`, `sizing_base`,
-`commitments`, `commitments_usd`, `calls`, `liquid_close`, `private_close`, `total_close`,
+`sizing_base_usd` (the balance commitments are sized on), `commitments`, `commitments_usd`, `calls`, `liquid_close`, `private_close`, `total_close`,
 `private_valuation_pnl`, `fx_translation`.
 
 `funds` (index `date`, `fund`): `fund_type`, `commitment_usd`, `calls_usd`,
 `distributions_usd`, `nav_usd`, `calls_base`, `distributions_base`, `nav_base`.
 
-`commitments` (index `date`, `fund`): `fund_type`, `closing_date`, `policy_year`,
-`sizing_base`, `rate`, `commitment_base`, `usd_rate`, `commitment_usd`, and from
+`commitments` (index `date`, `fund`): `fund_type`, `closing_date`, `policy_year`, then the
+decision in dollars — `sizing_base_usd`, `rate`, `commitment_usd` — then `usd_rate` and the
+same figures in base currency, `sizing_base` and `commitment_base`; and from
 `AnnualRatePolicy` the `current_year_rate`, `carried_rate`, `pooled_rate` and `weight`
 behind the rate.
 
@@ -228,8 +231,10 @@ summing to 1. With `carry_forward=True` a year in which no fund of a type closes
 rate to the next year of that type that has one: 10% + 8% + 12% with 60/40 weights gives
 18% and 12%. Fund types are independent.
 
-Any object with `size_commitments(cohort, balances) -> {fund name: base-currency amount}` is a policy; the
-`SizingBalances` it receives offer `liquid`, `private_nav` and `total`. If it also has
+Any object with `size_commitments(cohort, balances) -> {fund name: US-dollar amount}` is a
+policy. The `SizingBalances` it receives are in US dollars only — `liquid_usd`,
+`private_nav_usd` and `total_usd` — so a fixed dollar ticket, a USD minimum or a USD cap
+means the same thing in a sterling portfolio as in a dollar one. If it also has
 `explain_rate(fund_name)`, those figures land in the commitments table.
 
 ## The portfolio workbook

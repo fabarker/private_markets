@@ -1,10 +1,11 @@
+from dataclasses import fields
 from datetime import date
 
 import pytest
 
 from pmsim import AnnualRatePolicy, Fund, SizingBalances
 
-BALANCES = SizingBalances(t=3, date=date(2029, 3, 31), liquid=1_000_000.0, private_nav=250_000.0)
+BALANCES = SizingBalances(t=3, date=date(2029, 3, 31), liquid_usd=1_000_000.0, private_nav_usd=250_000.0)
 
 
 def fund(name, fund_type="BUYOUT", closing="2027-03-01"):
@@ -19,8 +20,10 @@ def test_single_fund_takes_the_whole_rate():
                                    "pooled_rate": 0.1, "weight": 1.0, "effective_rate": 0.1}
 
 
-def test_sizing_base_total():
-    assert BALANCES.total == 1_250_000.0
+def test_sizing_balances_are_us_dollars_only():
+    assert BALANCES.total_usd == 1_250_000.0
+    # sizing happens exclusively in USD: a policy is never shown a base-currency amount
+    assert [f.name for f in fields(SizingBalances)] == ["t", "date", "liquid_usd", "private_nav_usd"]
 
 
 def test_two_funds_split_equally_by_default_or_by_weight():

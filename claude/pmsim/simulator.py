@@ -5,13 +5,14 @@
 1. snapshot the opening balances;
 2. apply the liquid return (``level[t] / level[t-1]``; 1 at ``t = 0``);
 3. bank distributions from existing commitments;
-4. size and fix commitments for the funds closing at this observation, all from the same
-   base, converting each to a dollar amount at today's rate;
+4. size and fix commitments for the funds closing at this observation — in US dollars, all
+   from the same balance: the liquid balance converted at today's rate;
 5. bank the new cohort's own distributions, then pay every commitment's calls;
 6. value the book, record the period, and stop if the pot could not cover the calls.
 
-Private figures stay in USD until they touch the liquid pot or a report; the exchange
-rate of the observation date is applied there and nowhere else.
+Private figures stay in USD until they touch the liquid pot or a report, and commitments are
+sized in USD, never in base currency; the exchange rate of the observation date is applied
+at that boundary and nowhere else.
 """
 from __future__ import annotations
 
@@ -32,7 +33,7 @@ from .timeline import AlignedFundHistory, Timeline
 
 PERIOD_COLUMNS = [
     "liquid_open", "private_open", "total_open", "return_factor", "usd_rate",
-    "liquid_pnl", "distributions", "sizing_base", "commitments", "commitments_usd", "calls",
+    "liquid_pnl", "distributions", "sizing_base", "sizing_base_usd", "commitments", "commitments_usd", "calls",
     "liquid_close", "private_close", "total_close", "private_valuation_pnl", "fx_translation",
 ]
 FUND_COLUMNS = [
@@ -40,8 +41,8 @@ FUND_COLUMNS = [
     "calls_base", "distributions_base", "nav_base",
 ]
 COMMITMENT_COLUMNS = [
-    "fund_type", "closing_date", "policy_year", "sizing_base", "rate", "commitment_base",
-    "usd_rate", "commitment_usd", "current_year_rate", "carried_rate", "pooled_rate", "weight",
+    "fund_type", "closing_date", "policy_year", "sizing_base_usd", "rate", "commitment_usd",
+    "usd_rate", "sizing_base", "commitment_base", "current_year_rate", "carried_rate", "pooled_rate", "weight",
 ]
 EVENT_COLUMNS = ["observation_date", "period", "unit_call", "unit_distribution", "unit_nav_mark"]
 _TEXT_COLUMNS = {"fund", "fund_type"}
@@ -87,12 +88,13 @@ class Shortfall:
 class SimulationResult:
     """Two tidy tables, a commitment log and a verdict.
 
-    ``periods`` (index: date) is in base currency except ``commitments_usd`` and ``usd_rate``.
+    ``periods`` (index: date) is in base currency except the ``_usd`` columns and ``usd_rate``.
     ``funds`` (index: date, fund) has one row per live commitment per period, in both
-    currencies. ``commitments`` (index: date, fund) has one row per closing with the rate,
-    sizing base and exchange rate used. ``shortfall`` names the first failed observation,
-    or is ``None``. ``funds_beyond_horizon`` lists funds whose closing falls after the
-    last observation; they are never committed.
+    currencies. ``commitments`` (index: date, fund) has one row per closing: the rate, the
+    USD balance it was applied to (``sizing_base_usd``) and the dollars committed, then the
+    exchange rate and their base-currency equivalents. ``shortfall`` names the first failed
+    observation, or is ``None``. ``funds_beyond_horizon`` lists funds whose closing falls
+    after the last observation; they are never committed.
     """
 
     base_currency: str
@@ -213,12 +215,14 @@ class Simulator:
             liquid.deposit(distributions_existing)
 
             cohort = self._closings_by_period.get(t, [])                            # 4
-            balances = SizingBalances(t, day, liquid.balance, nav_usd_open * fx[t])
-            amounts = self._size_commitments(cohort, balances)
+            liquid_at_sizing = liquid.balance
+            balances = SizingBalances(t, day, liquid_at_sizing / fx[t], nav_usd_open)  # USD in, USD out
+            commitments_usd = self._size_commitments(cohort, balances)
+            committed_usd = math.fsum(commitments_usd.values())
             for fund in cohort:
-                commitment = Commitment(fund, self.aligned_histories[fund.name], amounts[fund.name] / fx[t])
-                book.add(commitment)
-                commitment_rows.append(self._commitment_row(stamp, fund, balances, amounts[fund.name], fx[t], commitment.usd))
+                book.add(Commitment(fund, self.aligned_histories[fund.name], commitments_usd[fund.name]))
+                commitment_rows.append(
+                    self._commitment_row(stamp, fund, balances, commitments_usd[fund.name], liquid_at_sizing, fx[t]))
 
             new = book.commitments_closing_in(t)                                    # 5
             distributions_new = math.fsum(c.distributions_in_period(t) for c in new) * fx[t]
@@ -233,8 +237,9 @@ class Simulator:
                 "date": stamp,
                 "liquid_open": liquid_open, "private_open": private_open, "total_open": liquid_open + private_open,
                 "return_factor": float(return_factors[t]), "usd_rate": float(fx[t]),
-                "liquid_pnl": pnl, "distributions": distributions, "sizing_base": balances.liquid,
-                "commitments": math.fsum(amounts.values()), "commitments_usd": math.fsum(c.usd for c in new),
+                "liquid_pnl": pnl, "distributions": distributions,
+                "sizing_base": liquid_at_sizing, "sizing_base_usd": balances.liquid_usd,
+                "commitments": committed_usd * fx[t], "commitments_usd": committed_usd,
                 "calls": calls, "liquid_close": liquid.balance, "private_close": private_close,
                 "total_close": liquid.balance + private_close,
                 "private_valuation_pnl": private_close - private_open - calls + distributions,
@@ -294,6 +299,7 @@ class Simulator:
 
     # -------------------------------------------------------------- helpers
     def _size_commitments(self, cohort: Sequence[Fund], balances: SizingBalances) -> dict[str, float]:
+        """The policy's US-dollar commitment for every fund in the cohort, checked before it reaches the book."""
         if not cohort:
             return {}
         try:
@@ -303,22 +309,26 @@ class Simulator:
         unknown = set(sized) - {f.name for f in cohort}
         if unknown:
             raise ValueError(f"policy sized funds that are not closing now: {sorted(unknown)}")
-        amounts = {}
+        commitments_usd = {}
         for fund in cohort:
-            amount = float(sized.get(fund.name, 0.0))
-            if not math.isfinite(amount) or amount < 0:
-                raise ValueError(f"policy returned an invalid commitment {amount!r} for {fund.name!r}")
-            amounts[fund.name] = amount
-        return amounts
+            dollars = float(sized.get(fund.name, 0.0))
+            if not math.isfinite(dollars) or dollars < 0:
+                raise ValueError(f"policy returned an invalid commitment {dollars!r} for {fund.name!r}")
+            commitments_usd[fund.name] = dollars
+        return commitments_usd
 
     def _commitment_row(
-        self, stamp: pd.Timestamp, fund: Fund, balances: SizingBalances, amount: float, rate: float, usd: float
+        self, stamp: pd.Timestamp, fund: Fund, balances: SizingBalances, commitment_usd: float,
+        liquid_at_sizing: float, usd_rate: float,
     ) -> dict[str, Any]:
+        """One closing: what was decided in dollars, then the same figures in base currency at that day's rate."""
         row: dict[str, Any] = {
             "date": stamp, "fund": fund.name, "fund_type": fund.fund_type,
             "closing_date": pd.Timestamp(fund.closing_date), "policy_year": fund.closing_year,
-            "sizing_base": balances.liquid, "rate": amount / balances.liquid if balances.liquid else float("nan"),
-            "commitment_base": amount, "usd_rate": float(rate), "commitment_usd": usd,
+            "sizing_base_usd": balances.liquid_usd,
+            "rate": commitment_usd / balances.liquid_usd if balances.liquid_usd else float("nan"),
+            "commitment_usd": commitment_usd, "usd_rate": float(usd_rate),
+            "sizing_base": liquid_at_sizing, "commitment_base": commitment_usd * usd_rate,
             "current_year_rate": float("nan"), "carried_rate": float("nan"),
             "pooled_rate": float("nan"), "weight": float("nan"),
         }

@@ -70,7 +70,7 @@ def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_curre
     else:
         initial_value, rate, rate_date = starting_balance(repository, start_usd)
 
-    spec = repository.simulation_spec(initial_value)                                       # 3. base currency, series, fx quote, returns→levels
+    spec = repository.simulation_spec(initial_value)                            # 3. base currency, series, fx quote, returns→levels
     orchestrator = Orchestrator(repository, spec)
 
     funds = orchestrator.funds                                                  # 4. one Fund per Spec row, unit histories from Flows
@@ -108,8 +108,8 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, rat
           f"{result.periods.index[0].date()} → {result.periods.index[-1].date()} · {result.status}")
     if result.shortfall is not None:
         print(f"  {result.shortfall}")
-    print("\nCommitments:")
-    print(result.commitments[["closing_date", "policy_year", "rate", "sizing_base", "commitment_base", "usd_rate", "commitment_usd"]])
+    print("\nCommitments (sized in USD; base-currency figures are that day's translation):")
+    print(result.commitments[["closing_date", "policy_year", "rate", "sizing_base_usd", "commitment_usd", "usd_rate", "commitment_base"]])
     print(f"\nFirst observations ({result.base_currency}):")
     print(result.periods[PERIOD_COLUMNS].head(3))
     print(f"\nLast observations ({result.base_currency}):")

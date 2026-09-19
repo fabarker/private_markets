@@ -58,8 +58,8 @@ if __name__ == "__main__":
     print(f"Worked example ({result.base_currency} base) — {result.status}")
     print(result.periods[["liquid_open", "liquid_pnl", "distributions", "sizing_base", "commitments",
                           "calls", "liquid_close", "private_close", "total_close", "fx_translation"]].T)
-    print("\nCommitments:")
-    print(result.commitments[["closing_date", "rate", "sizing_base", "commitment_base", "usd_rate", "commitment_usd"]])
+    print("\nCommitments (sized in USD; base-currency figures are that day's translation):")
+    print(result.commitments[["closing_date", "rate", "sizing_base_usd", "commitment_usd", "usd_rate", "commitment_base"]])
     print("\nFunds:")
     print(result.funds)
     print("\nBeside the same liquid portfolio with no private programme:")

@@ -1,10 +1,14 @@
-"""Commitment sizing.
+"""Commitment sizing, in US dollars.
 
-The engine asks a policy one question: given the funds closing at this observation and a
-snapshot of the balances, how much base currency to commit to each. The policy reads
-balances and never moves cash. ``AnnualRatePolicy`` is the default: the portfolio's rate
-for the fund's closing year and type, split across that year's funds of that type by
-weight, optionally pooling rates from years in which no fund of the type closed.
+Private funds are committed to in dollars, so sizing happens exclusively in USD whatever
+the portfolio's base currency. The engine asks a policy one question: given the funds
+closing at this observation and a snapshot of the balances in USD, how many dollars to
+commit to each. For a non-USD portfolio the engine converts the liquid balance at the
+observation's exchange rate before it asks, and turns the answer into base currency only
+for reporting. The policy reads balances and never moves cash. ``AnnualRatePolicy`` is the
+default: the portfolio's rate for the fund's closing year and type, split across that
+year's funds of that type by weight, optionally pooling rates from years in which no fund
+of the type closed.
 """
 from __future__ import annotations
 
@@ -23,21 +27,21 @@ FundGroups = dict[tuple[int, str], list[Fund]]  # funds by (closing year, fund t
 
 @dataclass(frozen=True)
 class SizingBalances:
-    """What a policy may look at when sizing commitments at observation ``t``, in base currency."""
+    """What a policy may look at when sizing commitments at observation ``t``. Every amount is in US dollars."""
 
     t: int
     date: date
-    liquid: float  # after this period's return and existing funds' distributions
-    private_nav: float  # opening private NAV translated at today's rate
+    liquid_usd: float  # liquid balance after this period's return and existing funds' distributions, at today's rate
+    private_nav_usd: float  # opening private NAV; private data is natively USD, so nothing is translated
 
     @property
-    def total(self) -> float:
-        return self.liquid + self.private_nav
+    def total_usd(self) -> float:
+        return self.liquid_usd + self.private_nav_usd
 
 
 class CommitmentPolicy(Protocol):
     def size_commitments(self, cohort: Sequence[Fund], balances: SizingBalances) -> Mapping[str, float]:
-        """Base-currency commitment for each fund in ``cohort``, keyed by fund name."""
+        """US-dollar commitment for each fund in ``cohort``, keyed by fund name."""
 
 
 @dataclass(frozen=True)
@@ -95,7 +99,7 @@ def _entitlements(rates: pd.DataFrame, groups: FundGroups, weights: Mapping[str,
 
 
 class AnnualRatePolicy:
-    """``rate[closing year, fund type]`` × weight × sizing liquid balance.
+    """``rate[closing year, fund type]`` × weight × the liquid balance in USD: a dollar commitment.
 
     ``weights`` split a year's pooled rate among the funds of one type closing that year;
     they must be given for all funds of such a group or none (equal split), and sum to 1.
@@ -140,7 +144,7 @@ class AnnualRatePolicy:
         self.entitlements = _entitlements(self.rates, groups, self.weights, self.carry_forward)
 
     def size_commitments(self, cohort: Sequence[Fund], balances: SizingBalances) -> Mapping[str, float]:
-        return {f.name: self.entitlements[f.name].effective_rate * balances.liquid for f in cohort}
+        return {f.name: self.entitlements[f.name].effective_rate * balances.liquid_usd for f in cohort}
 
     def explain_rate(self, fund_name: str) -> dict[str, Any]:
         """The entitlement behind a fund's rate, for the commitments table."""

@@ -1,2 +1,5 @@
 # Workbooks and result tables placed here by the examples are local data, never committed.
 /data/
+
+# macOS Finder metadata
+.DS_Store

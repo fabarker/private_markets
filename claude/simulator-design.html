@@ -163,7 +163,7 @@
     <li><b>1</b> loop, in <code>Simulator.run()</code></li>
     <li><b>1</b> currency boundary, crossed in <b>one</b> place</li>
     <li>dates converted to periods <b>once</b>, by a <code>Timeline</code></li>
-    <li><code>pmsim</code> · <b>7</b> engine modules + a data layer · <b>177</b> tests</li>
+    <li><code>pmsim</code> · <b>7</b> engine modules + a data layer · <b>174</b> tests</li>
   </ul>
 </header>
 
@@ -686,7 +686,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
 
 <section id="build">
   <h2>As built: modules and tests</h2>
-  <p class="kicker">The <code>pmsim</code> package in this folder, its examples, and the 177 tests that pin the contract.</p>
+  <p class="kicker">The <code>pmsim</code> package in this folder, its examples, and the 174 tests that pin the contract.</p>
 <pre><code>claude/
   pmsim/
     dates.py        as_date, coerce_dated_series           date coercion shared by the rest
@@ -696,7 +696,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     policy.py       SizingBalances, CommitmentPolicy, Entitlement, AnnualRatePolicy
     simulator.py    Simulator, SimulationResult, Shortfall
     benchmark.py    compare_with_liquid_only, public_market_equivalent, annualised_irr
-    data/           tables, repository, orchestrator, workbook: the workbook loaders (see README)
+    data/           tables, spec, repository, orchestrator: the Excel workbook and DataFrame loaders (see README)
   examples/basic.py worked GBP example, carry-forward, shortfall
   tests/
     test_inputs.py        Fund and Portfolio validation, the base-currency rule, rate tables
@@ -706,10 +706,10 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     test_periodicity.py   monthly / quarterly / daily / irregular grids, map_events_to_observations
     test_simulator.py     worked examples, timing, currency, shortfall, invariants
     test_benchmark.py     liquid-only comparison, PME, direct alpha, the value-added identity
-    test_data.py · test_excel.py · test_workbook.py     the data layer
+    test_data.py · test_workbook.py     the data layer
   README.md · pyproject.toml · simulator-design.html (this note)
 
-../.venv/bin/python -m pytest -q          <span class="c"># from claude/: 177 passed</span>
+../.venv/bin/python -m pytest -q          <span class="c"># from claude/: 174 passed</span>
 ../.venv/bin/python -m examples.basic</code></pre>
   <h3>What the tests pin</h3>
   <ul>

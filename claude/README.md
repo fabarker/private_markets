@@ -16,9 +16,9 @@ This is the implementation of `simulator-design.html` (in this folder). Package 
 | `pmsim/benchmark.py` | `compare_with_liquid_only`, `public_market_equivalent`, `annualised_irr` — a finished run against the liquid portfolio alone |
 | `pmsim/dates.py` | date coercion shared by the above |
 | `pmsim/data/tables.py` | the normalized tables a data source must deliver, and the column aliases accepted |
-| `pmsim/data/repository.py` | `DataRepository` protocol, `ExcelRepository`, `FrameRepository`, `SheetNames` |
-| `pmsim/data/orchestrator.py` | `SimulationSpec`, `Orchestrator`, `run_tables_workbook` — tables in, result out |
-| `pmsim/data/workbook.py` | `WorkbookRepository`, `load_profile_workbook` — the five-sheet portfolio workbook, one profile at a time |
+| `pmsim/data/spec.py` | `SimulationSpec` — what a run needs that the data does not say |
+| `pmsim/data/repository.py` | `DataRepository` protocol; `WorkbookRepository` (the five-sheet Excel workbook, one profile at a time) and `SheetLayout`; `FrameRepository` (DataFrames — the database route) |
+| `pmsim/data/orchestrator.py` | `Orchestrator`, `load_profile_workbook` — tables in, result out |
 
 ## Run
 
@@ -27,7 +27,6 @@ From this directory, with the project's virtual environment:
 ```bash
 ../.venv/bin/python -m pytest -q           # tests
 ../.venv/bin/python -m examples.basic      # worked example, carry-forward, shortfall
-../.venv/bin/python -m examples.workbook   # writes a sample workbook, loads it, runs it
 ../.venv/bin/python -m examples.profile_workbook [book.xlsx USD Conservative 1e6]   # the five-sheet portfolio workbook
 ../.venv/bin/python -m examples.eur_moderate [book.xlsx [out/]]   # EUR Moderate from $100, converted at the first EURUSD
 ```
@@ -264,47 +263,47 @@ Sheet names can be overridden with `SheetLayout(...)`; any keyword accepted by
 `SimulationSpec` (`weights`, `carry_forward`, `stop_on_shortfall`, …) can be passed to
 `load_profile_workbook` as an override.
 
-## Loading from a one-table-per-sheet workbook
+## Loading from DataFrames — the database route
 
-`pmsim.data` also reads a workbook laid out as the normalized tables (a database later):
+`FrameRepository` takes the four normalized tables as DataFrames. The tests use it, and
+it is the shape a database adapter will take: run four queries, hand the frames over.
 
 ```python
-from pmsim.data import SimulationSpec, load_tables_workbook
+from pmsim.data import FrameRepository, Orchestrator, SimulationSpec
 
+repository = FrameRepository(fund_specs, fund_market_data, market_data, commitment_rates)
 spec = SimulationSpec(
     base_currency="GBP",
     liquid_series="liquid_gbp",      # market_data column holding the liquid total-return level
     fx_series="gbp_per_usd",         # market_data column holding the USD rate; omit when base is USD
-    fx_quote="base_per_usd",         # or "usd_per_base" if the sheet quotes USD per 1 GBP
+    fx_quote="base_per_usd",         # or "usd_per_base" if the series quotes USD per 1 GBP
     weights={"A": 0.6, "B": 0.4},    # optional; carry_forward=True also available
-    # commitment_rates=...           # optional: overrides the workbook's commitment_rates sheet
+    # liquid_kind="returns", initial_value=1_000_000   # when the series holds returns, not levels
+    # commitment_rates=...                             # optional: overrides the repository's rate table
 )
-orchestrator = load_tables_workbook("portfolio.xlsx", spec)
-orchestrator.fund_summary()          # what was loaded per fund, and whether it closes in the horizon
-orchestrator.map_events_to_observations()             # where every fund event pools on the liquid grid
+orchestrator = Orchestrator(repository, spec)
+orchestrator.fund_summary()                  # what was loaded per fund, and whether it closes in the horizon
+orchestrator.map_events_to_observations()    # where every fund event pools on the liquid grid
 result = orchestrator.run()
 ```
 
-The workbook's sheets (names matched case-, space- and hyphen-insensitively; override with
-`SheetNames`):
-
-| Sheet | Columns | Notes |
+| Table | Columns | Notes |
 | --- | --- | --- |
-| `fund_spec` | `fund_name`, `type`, `closing_date` | one row per fund; `type` is the fund type |
+| `fund_specs` | `fund_name`, `type`, `closing_date` | one row per fund; `type` is the fund type |
 | `fund_market_data` | `fund_name`, `type`, `value`, `date`, `scale` | long form; `type` is `Flow` or `NAV` (also `Call`, `Distribution`); **unit = value ÷ scale** |
 | `market_data` | `date` + one column per series | wide, or long with `date`, `series`, `value`; blanks are fine (sparse FX) |
-| `commitment_rates` | `year` + one column per fund type | optional; or long with `year`, `type`, `rate`; every year, 0 for none |
+| `commitment_rates` | `year` + one column per fund type | optional (or pass them in the spec); or long with `year`, `type`, `rate`; every year, 0 for none |
 
 Column names are matched by alias (`Fund Name`, `fund`, `name` → `fund_name`; `Strategy`
 → fund type; `Amount` → value; `Divisor`/`Commitment` → scale, and so on). `Flow` rows
 follow the LP's sign convention — negative is a call, positive a distribution — flip it
 with `calls_are_negative=False`; `Call`/`Distribution` rows are read as magnitudes. A fund
-in `fund_spec` with no market rows is a future closing with an empty history; market
-rows for a fund that is not in `fund_spec` are an error.
+in `fund_specs` with no market rows is a future closing with an empty history; market
+rows for a fund that is not in `fund_specs` are an error.
 
-`FrameRepository(fund_specs, fund_market_data, market_data, commitment_rates)` takes the
-same tables as DataFrames — the shape a database adapter will take: implement the four
-`DataRepository` methods and hand the object to `Orchestrator`.
+Anything with the four `DataRepository` methods — `fund_specs()`, `fund_market_data()`,
+`market_data()`, `commitment_rates()` — can be handed to `Orchestrator`; `WorkbookRepository`
+is one such object, `FrameRepository` another.
 
 ## Out of scope
 

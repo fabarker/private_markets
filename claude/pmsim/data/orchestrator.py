@@ -1,18 +1,14 @@
 """From tables to a run.
 
-``SimulationSpec`` holds what the data does not say: the base currency, which market_data
-series are the liquid index and the exchange rate (and how the rate is quoted), the sign
-convention of flows, and the commitment-policy settings. ``Orchestrator`` joins a
-repository and a spec into ``Fund`` and ``Portfolio`` objects, builds the policy and the
-simulator, and runs them.
+``Orchestrator`` joins a repository and a ``SimulationSpec`` into ``Fund`` and ``Portfolio``
+objects, builds the policy and the simulator, and runs them. ``load_profile_workbook`` is
+the front door for the five-sheet Excel workbook: one call from a path and a profile to
+an orchestrator ready to run.
 """
 from __future__ import annotations
 
-import math
-from dataclasses import dataclass
 from functools import cached_property
-from numbers import Real
-from typing import Any, Mapping
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -21,59 +17,9 @@ from ..dates import as_date
 from ..inputs import PRIVATE_CURRENCY, Fund, Portfolio
 from ..policy import AnnualRatePolicy
 from ..simulator import SimulationResult, Simulator
-from .repository import DataRepository, ExcelRepository, SheetNames
+from .repository import DataRepository, SheetLayout, WorkbookRepository
+from .spec import SimulationSpec
 from .tables import canonical_name
-
-FX_QUOTES = ("base_per_usd", "usd_per_base")
-LIQUID_KINDS = ("levels", "returns")
-
-
-@dataclass(frozen=True)
-class SimulationSpec:
-    """Everything a run needs that the tables do not carry.
-
-    ``liquid_series`` and ``fx_series`` name columns of market_data. ``liquid_kind`` says
-    what the liquid column holds: ``levels`` (used as is; the first level is the starting
-    balance) or ``returns`` (simple per-period returns). With returns, the simulation
-    starts one period before the first return — ``inception_date`` if given, otherwise
-    inferred from the series' frequency and rolled back to a business day — where the
-    balance is ``initial_value``; every return is then applied. If the FX series starts
-    later than that inception date, its first rate is taken to apply there.
-    ``fx_quote`` says how the rate is quoted: ``base_per_usd`` (GBP per 1 USD, used as is)
-    or ``usd_per_base`` (USD per 1 GBP, inverted). ``commitment_rates`` overrides the
-    repository's rate table when given. ``calls_are_negative`` is the sign convention of
-    ``Flow`` rows: negative values are calls and positive values distributions (the LP's
-    view); set False for the opposite. ``Call`` and ``Distribution`` rows are read as
-    magnitudes regardless.
-    """
-
-    base_currency: str
-    liquid_series: str
-    fx_series: str | None = None
-    fx_quote: str = "base_per_usd"
-    liquid_kind: str = "levels"
-    initial_value: float | None = None
-    inception_date: Any = None
-    commitment_rates: Any = None
-    weights: Mapping[str, float] | None = None
-    carry_forward: bool = False
-    calls_are_negative: bool = True
-    stop_on_shortfall: bool = True
-    cash_tolerance: float = 1e-9
-
-    def __post_init__(self) -> None:
-        if self.fx_quote not in FX_QUOTES:
-            raise ValueError(f"fx_quote must be one of {FX_QUOTES}, got {self.fx_quote!r}")
-        if self.liquid_kind not in LIQUID_KINDS:
-            raise ValueError(f"liquid_kind must be one of {LIQUID_KINDS}, got {self.liquid_kind!r}")
-        if not isinstance(self.liquid_series, str) or not self.liquid_series.strip():
-            raise ValueError("liquid_series must name a market_data column")
-        if self.liquid_kind == "returns":
-            value = self.initial_value  # numbers.Real: numpy scalars count, bool is excluded explicitly
-            if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value) or value <= 0:
-                raise ValueError("initial_value (the starting liquid balance) must be a positive number when liquid_kind is 'returns'")
-        elif self.inception_date is not None:
-            raise ValueError("inception_date only applies when liquid_kind is 'returns'")
 
 
 def infer_inception_date(dates: Any) -> pd.Timestamp:
@@ -261,9 +207,13 @@ class Orchestrator:
         return frame.set_index("fund_name")
 
 
-def load_tables_workbook(path: Any, spec: SimulationSpec, sheets: SheetNames = SheetNames()) -> Orchestrator:
-    return Orchestrator(ExcelRepository(path, sheets), spec)
+def load_profile_workbook(path: Any, currency: str, risk: str, initial_value: float, *,
+                          layout: SheetLayout = SheetLayout(), **overrides: Any) -> Orchestrator:
+    """An ``Orchestrator`` for one profile of the five-sheet workbook; ``overrides`` are ``SimulationSpec`` settings."""
+    repository = WorkbookRepository(path, currency, risk, layout)
+    return Orchestrator(repository, repository.simulation_spec(initial_value, **overrides))
 
 
-def run_tables_workbook(path: Any, spec: SimulationSpec, sheets: SheetNames = SheetNames()) -> SimulationResult:
-    return load_tables_workbook(path, spec, sheets).run()
+def run_profile_workbook(path: Any, currency: str, risk: str, initial_value: float, *,
+                         layout: SheetLayout = SheetLayout(), **overrides: Any) -> SimulationResult:
+    return load_profile_workbook(path, currency, risk, initial_value, layout=layout, **overrides).run()

@@ -154,7 +154,7 @@
   <h1>Private Markets Backtest Realism</h1>
   <p class="lede">Where the historical simulation departs from what an investor would actually have known, held and paid &mdash; ranked by how far each gap can move the answer. Written against the engine as built (<code>pmsim</code>) and the five-sheet workbook it loads.</p>
   <ul class="keyfacts">
-    <li><b>1</b> setting to confirm first</li>
+    <li><b>1</b> setting, now resolved</li>
     <li><b>14</b> suggestions, ranked · <b>1</b> implemented</li>
     <li><b>6</b> need no engine change</li>
     <li>magnitudes are <b>arithmetic under stated assumptions</b>, not measurements on your data</li>
@@ -166,7 +166,7 @@
   <p class="toc-label">Contents</p>
   <ol>
     <li><a href="#scope">Before you read</a></li>
-    <li><a href="#carry">Confirm carry-forward</a></li>
+    <li><a href="#carry">Carry-forward</a></li>
     <li><a href="#summary">Ranked summary</a></li>
     <li class="gap"><a href="#s1"><span class="n">1</span>Counterfactual and PME</a></li>
     <li><a href="#s2"><span class="n">2</span>Same fee basis</a></li>
@@ -200,27 +200,25 @@
 </section>
 
 <section id="carry">
-  <h2>First, confirm one setting</h2>
-  <p class="kicker">Not a realism point, but it moves the result more than anything below it.</p>
+  <h2>First, the carry-forward setting</h2>
+  <p class="kicker">Not a realism point, but it moves the result more than anything below it. <span class="chip done">Resolved</span></p>
   <div class="check">
-    <p><code>AnnualRatePolicy</code> has <code>carry_forward=False</code> by default, and <code>examples/eur_moderate.py</code> runs with that default: a year's rate is used only if a fund of that type closes in that year, and is dropped otherwise. PEM closes every December, so BUYOUT is unaffected. Secondaries funds close every three or four years &mdash; so of the sixteen annual SECONDARIES rates for 2010&ndash;2025, five land on a closing year and eleven are never used.</p>
+    <p><b>What this section found.</b> Without carry-forward, a year's rate is used only if a fund of that type closes in that year and is dropped otherwise. PEM closes every December, so BUYOUT is unaffected. Secondaries funds close every three or four years &mdash; so of the sixteen annual SECONDARIES rates for 2010&ndash;2025, five land on a closing year and eleven were never used: the secondaries programme came out at about a third of the size the schedule implies.</p>
+    <p><b>What carry-forward does now.</b> Every year is sized, whether or not a fund is available: that year's rate on that year's liquid balance, in US dollars, at the year's last observation &mdash; 31 December on a month-end grid, the same day PEM closes. If no fund of the type closes that year the <em>dollars</em> wait, and accumulate, until the next fund of the type, which collects them with its own year's budget. Dollars are carried, never percentages, so each year's budget reflects that year's portfolio value rather than the value on the day the fund finally closes.</p>
     <div class="tablewrap"><table>
-      <thead><tr><th>Fund</th><th>Closes</th><th>Schedule years it could pool</th><th class="num">Rate used now</th><th class="num">With carry_forward=True</th></tr></thead>
+      <thead><tr><th>Fund</th><th>Closes</th><th class="num">Own year's rate</th><th>Without carry-forward</th><th>With carry-forward: budgets collected, each sized at its own year end</th></tr></thead>
       <tbody>
-        <tr><td>SEC_VI</td><td class="nowrap">31/12/2011</td><td>Year 1&ndash;2 · 2010&ndash;11</td><td class="num">0.80%</td><td class="num">1.60%</td></tr>
-        <tr><td>SEC_VII</td><td class="nowrap">31/12/2015</td><td>Year 3&ndash;6 · 2012&ndash;15</td><td class="num">0.80%</td><td class="num">3.20%</td></tr>
-        <tr><td>SEC_VIII</td><td class="nowrap">31/12/2018</td><td>Year 7&ndash;9 · 2016&ndash;18</td><td class="num">0.90%</td><td class="num">2.60%</td></tr>
-        <tr><td>SEC_IX</td><td class="nowrap">31/12/2021</td><td>Year 10&ndash;12 · 2019&ndash;21</td><td class="num">1.00%</td><td class="num">2.85%</td></tr>
-        <tr><td>SEC_X</td><td class="nowrap">31/12/2025</td><td>Year 13&ndash;16 · 2022&ndash;25</td><td class="num">1.23%</td><td class="num">4.56%</td></tr>
-        <tr class="total"><td colspan="3">Sum of rates applied (USD Conservative rows of the Commitments sheet)</td><td class="num">4.73%</td><td class="num">14.81%</td></tr>
+        <tr><td>SEC_VI</td><td class="nowrap">31/12/2011</td><td class="num">0.80%</td><td>2011 only</td><td>2010 · 2011</td></tr>
+        <tr><td>SEC_VII</td><td class="nowrap">31/12/2015</td><td class="num">0.80%</td><td>2015 only</td><td>2012 · 2013 · 2014 · 2015</td></tr>
+        <tr><td>SEC_VIII</td><td class="nowrap">31/12/2018</td><td class="num">0.90%</td><td>2018 only</td><td>2016 · 2017 · 2018</td></tr>
+        <tr><td>SEC_IX</td><td class="nowrap">31/12/2021</td><td class="num">1.00%</td><td>2021 only</td><td>2019 · 2020 · 2021</td></tr>
+        <tr><td>SEC_X</td><td class="nowrap">31/12/2025</td><td class="num">1.23%</td><td>2025 only</td><td>2022 · 2023 · 2024 · 2025</td></tr>
+        <tr class="total"><td colspan="3">Annual rates that turn into a commitment (USD Conservative rows of the Commitments sheet)</td><td>5 of 16 &middot; 4.73% in all</td><td>16 of 16 &middot; 14.81% in all</td></tr>
       </tbody>
     </table></div>
-    <p>Each rate applies to the liquid balance on its own closing date, so the sums show scale rather than dollars: as configured, the secondaries programme is about a third of the size the schedule implies. (SEC_X counts only if your Liquid series runs past December 2025; a fund closing after the last observation is never committed.) The engine confirms the mechanism on the sample workbook &mdash; SEC_VI is committed at 0.8% by default and 1.6% with carry-forward.</p>
-    <p>If the schedule is an annual budget &mdash; the plan in <code>chatgpt/simulation-implementation-plan.html</code> lists percentage carry-forward as agreed behaviour &mdash; switch it on:</p>
-<pre><code>load_profile_workbook(path, "EUR", "Moderate", initial_value, carry_forward=True)
-<span class="c"># or, in examples/eur_moderate.py</span>
-spec = repository.simulation_spec(initial_value, carry_forward=True)</code></pre>
-    <p>Two consequences. Pooled secondaries commitments become lumpy &mdash; 3% to 4.5% of the liquid balance sized on a single December month end &mdash; which is one reason to size on a trailing average (<a href="#s7">7</a>). And no BUYOUT fund closes in 2024 or 2025 in the Spec sheet, so those years' BUYOUT rates wait for a PEM2025 row either way.</p>
+    <p>The percentages sum to show scale only; each is applied to a different year's balance. SEC_X counts only if your Liquid series runs past December 2025 &mdash; a fund closing after the last observation is never committed, and the budgets waiting for it stay unspent.</p>
+    <p><b>Where it is set.</b> <code>CARRY_FORWARD = True</code> at the top of <code>examples/eur_moderate.py</code> and <code>examples/profile_workbook.py</code>; in code, <code>load_profile_workbook(path, "EUR", "Moderate", initial_value, carry_forward=True)</code> or <code>SimulationSpec(..., carry_forward=True)</code>. The library default stays off. <code>result.commitments</code> shows the working for every closing: <code>commitment_usd = weight × (current_year_usd + carried_usd)</code>, with the years collected in <code>carried_years</code>.</p>
+    <p>One thing still to check in the data: no BUYOUT fund closes in 2024 or 2025 in the Spec sheet, so those years' BUYOUT budgets wait for a PEM2025 row.</p>
   </div>
 </section>
 
@@ -429,7 +427,7 @@ coverage(t)       = liquid(t) / unfunded(t)</code></pre>
       <dd><ul>
         <li><b>Nobody follows a schedule blind.</b> Real pacing looks at the private share against its target, at unfunded commitments and at liquidity, and slows or accelerates.</li>
         <li><b>Provenance.</b> If the schedule was calibrated on these same funds' cash flows &mdash; tuned until the allocation path looked right &mdash; the backtest is in-sample and will look better behaved than any forward use of the same schedule.</li>
-        <li><b>One date decides a vintage.</b> Every PEM closing is the last day of December, so each commitment is sized on a single month-end balance. PEM2019 was sized on 31 December 2018, the low of a sharp quarter; PEM2022 and SEC_IX on 31 December 2021, within days of the peak. That pro-cyclicality is a true property of percent-of-portfolio rules; the single-date noise on top of it isn't.</li>
+        <li><b>One date decides a vintage.</b> Every PEM closing is the last day of December, so each commitment is sized on a single month-end balance. PEM2019 was sized on 31 December 2018, the low of a sharp quarter; PEM2022 and SEC_IX on 31 December 2021, within days of the peak. That pro-cyclicality is a true property of percent-of-portfolio rules; the single-date noise on top of it isn't. (Budgets carried forward are spread across several year ends, which already softens it for secondaries.)</li>
       </ul></dd>
       <dt>Change</dt>
       <dd><p>Add a target-allocation policy behind the existing <code>CommitmentPolicy</code> protocol, fed by as-known NAV (<a href="#s4">4</a>) and unfunded commitments (<a href="#s5">5</a>):</p>
@@ -594,7 +592,7 @@ proposed   calls_base[t] = commitment_usd × Σ unit_call(i) × fx[d(i)]</code><
   <h2>A sensible order of work</h2>
   <p class="kicker">Reporting first, because it costs nothing and shows which of the rest matter on your data.</p>
   <ol class="steps">
-    <li><div><b>Confirm carry-forward.</b> <span>A setting, today.</span></div></li>
+    <li><div><b>Carry-forward.</b> <span>Done: every year is sized and the dollars wait for the next fund of the type; on in both workbook scripts.</span></div></li>
     <li><div><b>Reporting, no engine change:</b> counterfactual and PME (<a href="#s1">1</a>, done), realised and unrealised by vintage (<a href="#s10">10</a>), rolling starts (<a href="#s8">8</a>). <span>After this the backtest gives an answer and a spread around it.</span></div></li>
     <li><div><b>One question, one parameter:</b> the fee basis of the Liquid returns (<a href="#s2">2</a>).</div></li>
     <li><div><b>Honest inputs:</b> as-known NAV (<a href="#s4">4</a>), then unfunded, exposure, coverage and limits (<a href="#s5">5</a>). <span>In that order, so the limits are tested on what was known.</span></div></li>
@@ -605,7 +603,7 @@ proposed   calls_base[t] = commitment_usd × Σ unit_call(i) × fx[d(i)]</code><
   </ol>
 </section>
 
-<p class="footnote">Written against <code>pmsim</code> at commit <code>37ad348</code>; the as-built design is in <code>simulator-design.html</code> beside this file. Suggestion 1 has since been implemented, in <code>pmsim/benchmark.py</code>; nothing else in this review has. The SECONDARIES rates in the carry-forward table are read from the USD Conservative rows of the Commitments sheet in your screenshot; every other magnitude is illustrative arithmetic with its assumption stated where it appears.</p>
+<p class="footnote">Written against <code>pmsim</code> at commit <code>37ad348</code>; the as-built design is in <code>simulator-design.html</code> beside this file. Since it was written, suggestion 1 has been implemented in <code>pmsim/benchmark.py</code>, commitments are sized exclusively in US dollars, and carry-forward accumulates dollars year by year; none of the other suggestions has been implemented. The SECONDARIES rates in the carry-forward table are read from the USD Conservative rows of the Commitments sheet in your screenshot; every other magnitude is illustrative arithmetic with its assumption stated where it appears.</p>
 
 </main>
 </div>

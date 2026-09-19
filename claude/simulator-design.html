@@ -163,7 +163,7 @@
     <li><b>1</b> loop, in <code>Simulator.run()</code></li>
     <li><b>1</b> currency boundary, crossed in <b>one</b> place</li>
     <li>dates converted to periods <b>once</b>, by a <code>Timeline</code></li>
-    <li><code>pmsim</code> · <b>7</b> engine modules + a data layer · <b>175</b> tests</li>
+    <li><code>pmsim</code> · <b>7</b> engine modules + a data layer · <b>180</b> tests</li>
   </ul>
 </header>
 
@@ -327,9 +327,9 @@
   <div class="classes">
     <article class="cls engine">
       <header>CommitmentPolicy <small>protocol</small></header>
-      <div class="fields">SizingBalances(t, date, liquid_usd, private_nav_usd)<br><span class="m">.total_usd = liquid_usd + private_nav_usd</span></div>
-      <div class="methods">size_commitments(cohort, balances) -&gt; {fund: usd_amount}<br><span class="m">explain_rate(fund) -&gt; dict  (optional)</span></div>
-      <div class="role">Given the funds closing now and a snapshot of balances in US dollars, decide dollar commitments. Sizing happens exclusively in USD: a policy is never shown, and never returns, a base-currency amount. <code>AnnualRatePolicy(rates, funds, weights, carry_forward, years)</code> is the default; it precomputes an <code>Entitlement</code> per fund and reports it through <code>explain_rate()</code>.</div>
+      <div class="fields">SizingBalances(t, date, liquid_usd, private_nav_usd, year_end_liquid_usd)<br><span class="m">.total_usd = liquid_usd + private_nav_usd</span><br><span class="m">.liquid_usd_at_end_of(year)</span></div>
+      <div class="methods">size_commitments(cohort, balances) -&gt; {fund: usd_amount}<br><span class="m">explain_commitment(fund, balances) -&gt; dict  (optional)</span></div>
+      <div class="role">Given the funds closing now and a snapshot of balances in US dollars, decide dollar commitments. Sizing happens exclusively in USD: a policy is never shown, and never returns, a base-currency amount. <code>AnnualRatePolicy(rates, funds, weights, carry_forward, years)</code> is the default: a dollar budget per year and type, with the budgets of years that had no fund of the type carried forward as dollars. It precomputes an <code>Entitlement</code> per fund &mdash; this year's rate, the weight, the years carried to it &mdash; keeps no state, and reports the dollars through <code>explain_commitment()</code>.</div>
     </article>
     <article class="cls engine">
       <header>Simulator</header>
@@ -579,17 +579,21 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
 <span class="k">class</span> AnnualRatePolicy:
     <span class="k">def</span> __init__(self, rates, funds, weights=None, *, carry_forward=False, years=None):
         ...                                                            <span class="c"># validate rates cover years and types; weights per (year, type) group</span>
-        self.entitlements = {}                                         <span class="c"># fund name -&gt; Entitlement(policy_year, current, carried, pooled, weight, effective)</span>
+        self.entitlements = {}                                         <span class="c"># fund name -&gt; Entitlement(policy_year, current_year_rate, weight, carried_year_rates)</span>
         <span class="k">for</span> fund_type <span class="k">in</span> self.rates.columns:
-            carried = 0.0
+            carried = {}                                               <span class="c"># year -&gt; rate, for years with no fund of this type</span>
             <span class="k">for</span> year <span class="k">in</span> self.rates.index:
-                pool = self.rates.at[year, fund_type] + carried
+                rate = self.rates.at[year, fund_type]
                 cohort = groups.get((year, fund_type), [])
-                <span class="k">for</span> f <span class="k">in</span> cohort: self.entitlements[f.name] = Entitlement(year, rate, carried, pool, w[f], pool * w[f])
-                carried = pool <span class="k">if</span> (self.carry_forward <span class="k">and not</span> cohort) <span class="k">else</span> 0.0
+                <span class="k">for</span> f <span class="k">in</span> cohort: self.entitlements[f.name] = Entitlement(year, rate, w[f], dict(carried))
+                <span class="k">if</span> cohort: carried = {}
+                <span class="k">elif</span> self.carry_forward <span class="k">and</span> rate &gt; 0: carried[year] = rate
 
-    <span class="k">def</span> size_commitments(self, cohort, balances): <span class="k">return</span> {f.name: self.entitlements[f.name].effective_rate * balances.liquid_usd <span class="k">for</span> f <span class="k">in</span> cohort}
-    <span class="k">def</span> explain_rate(self, fund_name): <span class="k">return</span> self.entitlements[fund_name].as_dict()
+    <span class="k">def</span> size_commitments(self, cohort, balances):              <span class="c"># dollars are carried, never percentages</span>
+        <span class="k">return</span> {f.name: e.weight * (e.current_year_rate * balances.liquid_usd
+                                   + sum(rate * balances.liquid_usd_at_end_of(year) <span class="k">for</span> year, rate <span class="k">in</span> e.carried_year_rates.items()))
+                <span class="k">for</span> f <span class="k">in</span> cohort <span class="k">for</span> e <span class="k">in</span> [self.entitlements[f.name]]}
+    <span class="k">def</span> explain_commitment(self, fund_name, balances): ...       <span class="c"># current_year_usd, carried_usd, carried_years, weight</span>
 
 
 <span class="c"># simulator.py</span>
@@ -672,7 +676,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
   <div class="tablewrap"><table>
     <thead><tr><th>Need</th><th>Seam</th><th>Shape</th></tr></thead>
     <tbody>
-      <tr><td>Carry unspent rates forward to the next year with a fund of that type</td><td><code>AnnualRatePolicy(carry_forward=True)</code></td><td>Built and tested: missed years pool into the next closing year, split by weight. The engine is unaware. 10% + 8% + 12% with 60/40 weights gives 180,000 and 144,000.</td></tr>
+      <tr><td>Carry the budgets of years with no fund of a type forward to the next fund of that type</td><td><code>AnnualRatePolicy(carry_forward=True)</code></td><td>Built and tested. Each such year is still sized &mdash; its rate on its own year-end liquid balance, in USD &mdash; and the <em>dollars</em> accumulate until the next year with a fund of the type, whose funds collect <code>weight × (carried_usd + current_year_usd)</code>. The engine only supplies the year-end balances; the policy keeps no state. 10%, 8%, 12% on 1,000,000, 1,250,000 and then 1,250,000 / 1,500,000 at the two 2029 closings, weights 60/40: 210,000 and 152,000.</td></tr>
       <tr><td>Two funds of one type in one year</td><td><code>AnnualRatePolicy(weights={…})</code></td><td>Built: explicit weights summing to 1 within the year × type group; default is an equal split.</td></tr>
       <tr><td>Pacing to a target private allocation</td><td>A policy: <code>TargetAllocation(target=0.25)</code></td><td>Sizes from the gap between <code>balances.private_nav / balances.total</code> and the target. Not built.</td></tr>
       <tr><td>Funds closing after the last observation</td><td><code>result.funds_beyond_horizon</code></td><td>Built: never committed, listed so the pipeline is visible, still counted in the weight split.</td></tr>
@@ -686,7 +690,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
 
 <section id="build">
   <h2>As built: modules and tests</h2>
-  <p class="kicker">The <code>pmsim</code> package in this folder, its examples, and the 175 tests that pin the contract.</p>
+  <p class="kicker">The <code>pmsim</code> package in this folder, its examples, and the 180 tests that pin the contract.</p>
 <pre><code>claude/
   pmsim/
     dates.py        as_date, coerce_dated_series           date coercion shared by the rest
@@ -709,12 +713,12 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     test_data.py · test_workbook.py     the data layer
   README.md · pyproject.toml · simulator-design.html (this note)
 
-../.venv/bin/python -m pytest -q          <span class="c"># from claude/: 175 passed</span>
+../.venv/bin/python -m pytest -q          <span class="c"># from claude/: 180 passed</span>
 ../.venv/bin/python -m examples.basic</code></pre>
   <h3>What the tests pin</h3>
   <ul>
     <li><b>Identities:</b> all three accounting identities, opening = previous closing, and fund-table-to-period reconciliation, checked by a shared helper on every run that has one.</li>
-    <li><b>Worked examples:</b> the sterling tables above to the penny including <code>fx_translation</code>; the same funds in USD give 66,000 / 47,806 / 1,208,350; carry-forward gives 180,000 / 144,000.</li>
+    <li><b>Worked examples:</b> the sterling tables above to the penny including <code>fx_translation</code>; the same funds in USD give 66,000 / 47,806 / 1,208,350; carry-forward sizes 2027 and 2028 on their own year-end balances and gives 210,000 / 152,000 (pooled percentages would have given 225,000 / 180,000).</li>
     <li><b>Timing:</b> a closing between observations maps to the next one and keeps its calendar-year rate; a December closing observed in January uses December's rate; a first-date closing and same-day call are processed once; new-cohort distributions are banked after sizing; same-day gross flows both survive; an off-grid mark drives valuation P&amp;L.</li>
     <li><b>Observation frequency:</b> intramonth flows pool onto the month end; monthly, quarterly and single-date grids agree; weekend flows move to the next pricing day; irregular grids; intramonth closings sized at the month end; <code>map_events_to_observations</code>.</li>
     <li><b>Currency:</b> GBP without a rate and USD with one both fail at <code>Portfolio</code> construction; sparse rates carry forward; commitments are fixed in USD at the closing rate.</li>

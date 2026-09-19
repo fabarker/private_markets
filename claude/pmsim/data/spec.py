@@ -30,7 +30,10 @@ class SimulationSpec:
     repository's rate table when given. ``calls_are_negative`` is the sign convention of
     ``Flow`` rows: negative values are calls and positive values distributions (the LP's
     view); set False for the opposite. ``Call`` and ``Distribution`` rows are read as
-    magnitudes regardless.
+    magnitudes regardless. ``weights`` and ``carry_forward`` go to ``AnnualRatePolicy``: with
+    carry-forward, a year in which no fund of a type closes is still sized — that year's
+    rate on that year's balance — and its dollars wait for the next fund of the type;
+    without it such a year is not used.
     """
 
     base_currency: str

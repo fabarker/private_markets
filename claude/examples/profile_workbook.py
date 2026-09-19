@@ -16,6 +16,10 @@ import pandas as pd
 
 from pmsim.data import load_profile_workbook
 
+# The Commitments sheet is an annual budget. A year in which no fund of a type closes is still sized — that year's
+# rate on that year's balance — and its dollars wait for the next fund of the type. False: such a year is not used.
+CARRY_FORWARD = True
+
 
 def sample_tables() -> dict[str, pd.DataFrame]:
     month_ends = pd.date_range("2009-04-30", "2012-12-31", freq="ME")
@@ -87,7 +91,7 @@ if __name__ == "__main__":
         write_sample_workbook(path)
         print(f"Wrote sample workbook to {path}")
 
-    orchestrator = load_profile_workbook(path, currency, risk, initial_value)
+    orchestrator = load_profile_workbook(path, currency, risk, initial_value, carry_forward=CARRY_FORWARD)
     repository = orchestrator.repository
     print(f"\n{repository}")
     print(f"liquid column: {repository.liquid_column!r} · fx column: {repository.fx_column!r} ({repository.fx_quote})"
@@ -101,8 +105,9 @@ if __name__ == "__main__":
     print(f"\nRun ({result.base_currency} base, {len(result.periods)} observations) — {result.status}")
     if result.shortfall is not None:
         print(result.shortfall)
-    print("\nCommitments (sized in USD; base-currency figures are that day's translation):")
-    print(result.commitments[["closing_date", "policy_year", "rate", "sizing_base_usd", "commitment_usd", "usd_rate", "commitment_base"]])
+    print(f"\nCommitments (sized in USD; carry-forward {'on' if CARRY_FORWARD else 'off'}; commitment = weight × (current_year_usd + carried_usd)):")
+    print(result.commitments[["policy_year", "sizing_base_usd", "current_year_rate", "current_year_usd",
+                              "carried_years", "carried_usd", "weight", "commitment_usd", "usd_rate", "commitment_base"]])
     print("\nLast observations:")
     print(result.periods[["liquid_open", "liquid_pnl", "distributions", "commitments", "calls",
                           "liquid_close", "private_close", "total_close"]].tail(6))

@@ -178,8 +178,8 @@ simulation finer; the rule does not change.
 `commitments` (index `date`, `fund`): `fund_type`, `closing_date`, `policy_year`, then the
 decision in dollars — `sizing_base_usd`, `rate`, `commitment_usd` — then `usd_rate` and the
 same figures in base currency, `sizing_base` and `commitment_base`; and from
-`AnnualRatePolicy` the `current_year_rate`, `carried_rate`, `pooled_rate` and `weight`
-behind the rate.
+`AnnualRatePolicy` how it got there — `current_year_rate`, `weight`, `current_year_usd`,
+`carried_usd` and `carried_years` — with `commitment_usd = weight × (current_year_usd + carried_usd)`.
 
 `result.totals_by_fund_type()` sums the fund table by date and fund type; `result.nav_by_fund()` is
 private NAV in base currency by date × fund. Every completed period satisfies
@@ -224,18 +224,41 @@ money out negative) is exported for use on its own.
 
 ## Policy
 
-`AnnualRatePolicy(rates, funds, weights=None, carry_forward=False, years=None)` gives each
-fund `rate[closing year, type] × weight`. Weights split a year's rate among the funds of
-one type closing that year; give them for all funds of such a group or none (equal split),
-summing to 1. With `carry_forward=True` a year in which no fund of a type closes adds its
-rate to the next year of that type that has one: 10% + 8% + 12% with 60/40 weights gives
-18% and 12%. Fund types are independent.
+`AnnualRatePolicy(rates, funds, weights=None, carry_forward=False, years=None)` turns the
+rate table into a dollar budget per year and fund type — `rate[year, type]` × the liquid
+balance in USD — and commits it to the funds of that type closing that year. The closing
+year's budget is sized at the closing observation. Weights split a year's budget among the
+funds of one type closing that year; give them for all funds of such a group or none (equal
+split), summing to 1. Fund types are independent.
+
+**Carry-forward.** Without it, a year in which no fund of a type closes is simply not used.
+With `carry_forward=True` that year is still sized — its rate on **its own** balance, at the
+year's last observation — and the **dollars** accumulate until the next year that has a fund
+of the type, whose funds collect them by weight:
+
+```text
+commitment_usd = weight × ( carried_usd + current_year_usd )
+carried_usd    = Σ over carried years  rate[year, type] × liquid_usd at that year's last observation
+```
+
+Dollars are carried, never percentages: three carried years are three budgets, each from its
+own year's portfolio value. Rates of 10%, 8% and 12% with the liquid balance at 1,000,000,
+1,250,000 and then 1,250,000 / 1,500,000 where the two 2029 funds close, weights 60/40:
+100,000 + 100,000 are carried, and the funds get 0.6 × (200,000 + 150,000) = 210,000 and
+0.4 × (200,000 + 180,000) = 152,000. (Pooling 30% onto the closing balance would have given
+225,000 and 180,000.) A year before the first observation had no portfolio to size on and
+carries nothing; a year with no observation of its own uses the last balance known by its
+end. `examples/eur_moderate.py` and `examples/profile_workbook.py` switch it on with
+`CARRY_FORWARD = True` at the top; the library default is off.
 
 Any object with `size_commitments(cohort, balances) -> {fund name: US-dollar amount}` is a
 policy. The `SizingBalances` it receives are in US dollars only — `liquid_usd`,
 `private_nav_usd` and `total_usd` — so a fixed dollar ticket, a USD minimum or a USD cap
-means the same thing in a sterling portfolio as in a dollar one. If it also has
-`explain_rate(fund_name)`, those figures land in the commitments table.
+means the same thing in a sterling portfolio as in a dollar one. `year_end_liquid_usd` adds
+the liquid balance at the last observation of each completed calendar year, which is what
+carried budgets are sized on; the policy itself keeps no state, so every `run()` repeats
+exactly. If a policy also has `explain_commitment(fund_name, balances)`, those figures land
+in the commitments table.
 
 ## The portfolio workbook
 
@@ -265,7 +288,7 @@ compare a real file against.
 | `Spec` | `Name`, `Year`, `Type` | `Year` holds the closing date, read day-first (`31/12/2010`) |
 
 Sheet names can be overridden with `SheetLayout(...)`; any keyword accepted by
-`SimulationSpec` (`weights`, `carry_forward`, `stop_on_shortfall`, …) can be passed to
+`SimulationSpec` (`carry_forward`, `weights`, `stop_on_shortfall`, …) can be passed to
 `load_profile_workbook` as an override.
 
 ## Loading from DataFrames — the database route

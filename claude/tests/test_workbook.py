@@ -158,10 +158,12 @@ def test_usd_conservative_runs_end_to_end(workbook):
     assert [fund for _, fund in c.index] == ["PEM2011", "SEC_VI", "PEM2012", "PEM2013"]
     pem2011 = c.loc[(pd.Timestamp("2010-12-31"), "PEM2011")]
     level = orchestrator.portfolio.liquid_levels.loc["2010-12-31"]
-    assert pem2011["policy_year"] == 2010 and pem2011["rate"] == 0.022  # relative year 1 of the schedule
+    assert pem2011["policy_year"] == 2010 and pem2011["current_year_rate"] == 0.022  # relative year 1 of the schedule
+    assert pem2011["rate"] == pytest.approx(0.022) and pem2011["carried_usd"] == 0
     assert pem2011["sizing_base"] == pytest.approx(level) and pem2011["commitment_usd"] == pytest.approx(0.022 * level)
-    assert c.loc[(pd.Timestamp("2011-12-31"), "SEC_VI"), "rate"] == 0.008
-    assert c.loc[(pd.Timestamp("2011-12-31"), "PEM2012"), "rate"] == 0.022  # same date, different type: no weights needed
+    assert c.loc[(pd.Timestamp("2011-12-31"), "SEC_VI"), "current_year_rate"] == 0.008
+    assert c.loc[(pd.Timestamp("2011-12-31"), "SEC_VI"), "carried_usd"] == 0  # carry-forward is off by default: 2010's budget is lost
+    assert c.loc[(pd.Timestamp("2011-12-31"), "PEM2012"), "current_year_rate"] == 0.022  # same date, different type: no weights needed
     # PEM2011's June 2011 call pooled onto the June month end, scaled by its commitment
     june = result.funds.loc[(pd.Timestamp("2011-06-30"), "PEM2011")]
     assert june["calls_usd"] == pytest.approx(0.025 * pem2011["commitment_usd"])
@@ -189,7 +191,15 @@ def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(wor
     assert orchestrator.spec.initial_value == pytest.approx(100.0 / eurusd)
     assert result.base_currency == "EUR" and result.status == "completed"
     assert result.periods["liquid_open"].iloc[0] == pytest.approx(100.0 / eurusd)
-    assert orchestrator.policy.entitlements["PEM2011"].effective_rate == 0.026  # EUR Moderate's BUYOUT rate
+    assert orchestrator.policy.entitlements["PEM2011"].current_year_rate == 0.026  # EUR Moderate's BUYOUT rate
+    # the script switches carry-forward on: no secondaries fund closes in 2010, so SEC_VI collects 2010's budget in 2011
+    assert orchestrator.spec.carry_forward is True
+    sec_vi = result.commitments.loc[(pd.Timestamp("2011-12-31"), "SEC_VI")]
+    balance_at_end_of_2010 = result.periods.loc[pd.Timestamp("2010-12-31"), "sizing_base_usd"]
+    assert sec_vi["carried_years"] == "2010" and sec_vi["carried_usd"] == pytest.approx(0.009 * balance_at_end_of_2010)
+    assert sec_vi["commitment_usd"] == pytest.approx(sec_vi["carried_usd"] + 0.009 * sec_vi["sizing_base_usd"])
+    _, without = eur_moderate.run(workbook, start_usd=100.0, carry_forward=False)
+    assert without.commitments.loc[(pd.Timestamp("2011-12-31"), "SEC_VI"), "commitment_usd"] == pytest.approx(0.009 * sec_vi["sizing_base_usd"])
     assert {p.name for p in (tmp_path / "out").iterdir()} == {
         "periods.csv", "funds.csv", "commitments.csv", "map_events_to_observations.csv", "fund_summary.csv",
         "liquid_only_comparison.csv", "public_market_equivalent.csv"}

@@ -50,7 +50,9 @@ def test_worked_example_in_usd(usd_portfolio, worked_funds, identities):
     assert c["commitment_usd"].tolist() == pytest.approx([66_000, 47_806])
     assert c["closing_date"].tolist() == [D("2027-02-15"), D("2027-05-10")]
     assert c["policy_year"].tolist() == [2027, 2027] and c["rate"].tolist() == pytest.approx([0.06, 0.04])
-    assert c["weight"].tolist() == [0.6, 0.4] and c["pooled_rate"].tolist() == [0.1, 0.1]
+    assert c["weight"].tolist() == [0.6, 0.4] and c["current_year_rate"].tolist() == [0.1, 0.1]
+    assert c["current_year_usd"].tolist() == pytest.approx([110_000, 119_515])  # 10% of each closing's balance, before weight
+    assert (c["carried_usd"] == 0).all() and (c["carried_years"] == "").all()
     f = result.funds
     assert f.loc[(D("2027-06-30"), "A"), "nav_usd"] == pytest.approx(13_200)
     assert f.loc[(D("2027-06-30"), "B"), "calls_usd"] == pytest.approx(11_951.5)
@@ -87,18 +89,56 @@ def test_worked_example_in_gbp_translates_at_the_observation_rate(gbp_portfolio,
     identities(result)
 
 
-def test_carry_forward_example(identities):
-    portfolio = usd(levels(("2027-01-01", 1e6), ("2028-12-31", 1e6), ("2029-03-31", 1e6), ("2029-06-30", 1.2e6)),
+def carry_forward_setup(carry_forward=True):
+    portfolio = usd(levels(("2027-12-31", 1_000_000), ("2028-12-31", 1_250_000), ("2029-03-31", 1_250_000), ("2029-06-30", 1_500_000)),
                     {"BUYOUT": {2027: 0.10, 2028: 0.08, 2029: 0.12}})
     funds = [Fund("C", "BUYOUT", "2029-03-01"), Fund("D", "BUYOUT", "2029-06-01")]
-    policy = AnnualRatePolicy(portfolio.commitment_rates, funds, {"C": 0.6, "D": 0.4}, carry_forward=True, years=portfolio.calendar_years)
-    result = Simulator(portfolio, funds, policy).run()
+    policy = AnnualRatePolicy(portfolio.commitment_rates, funds, {"C": 0.6, "D": 0.4},
+                              carry_forward=carry_forward, years=portfolio.calendar_years)
+    return Simulator(portfolio, funds, policy).run()
+
+
+def test_carry_forward_sizes_each_year_then_accumulates_the_dollars(identities):
+    result = carry_forward_setup()
     c = result.commitments
-    assert c["commitment_usd"].tolist() == pytest.approx([180_000, 144_000])
-    assert c["carried_rate"].tolist() == pytest.approx([0.18, 0.18])
-    assert c["pooled_rate"].tolist() == pytest.approx([0.30, 0.30])
-    assert c["current_year_rate"].tolist() == [0.12, 0.12]
+    # 2027: 10% of 1,000,000 at its year end; 2028: 8% of 1,250,000 at its year end; both wait for 2029's funds
+    assert c["carried_usd"].tolist() == pytest.approx([200_000, 200_000]) and c["carried_years"].tolist() == ["2027, 2028"] * 2
+    assert c["current_year_usd"].tolist() == pytest.approx([150_000, 180_000])  # 12% where each fund closes
+    assert c["commitment_usd"].tolist() == pytest.approx([210_000, 152_000])    # 60% and 40% of (carried + this year's)
+    assert c["current_year_rate"].tolist() == [0.12, 0.12] and c["weight"].tolist() == [0.6, 0.4]
+    np.testing.assert_allclose(c["commitment_usd"], c["weight"] * (c["current_year_usd"] + c["carried_usd"]))
+    np.testing.assert_allclose(c["rate"], c["commitment_usd"] / c["sizing_base_usd"])  # a share of the closing balance
+    assert result.periods["commitments_usd"].tolist() == pytest.approx([0, 0, 210_000, 152_000])  # nothing moves before a fund exists
     identities(result)
+
+
+def test_without_carry_forward_the_years_with_no_fund_are_lost(identities):
+    c = carry_forward_setup(carry_forward=False).commitments
+    assert c["commitment_usd"].tolist() == pytest.approx([0.6 * 150_000, 0.4 * 180_000])
+    assert (c["carried_usd"] == 0).all()
+
+
+def test_carried_budgets_are_sized_in_dollars_at_each_year_ends_exchange_rate(identities):
+    portfolio = Portfolio("GBP", levels(("2027-12-31", 800_000), ("2028-12-31", 900_000), ("2029-12-31", 1_000_000)),
+                          {"VC": {2027: 0.10, 2028: 0.10, 2029: 0.10}},
+                          usd_rate=[("2027-12-31", 0.80), ("2028-12-31", 0.75), ("2029-12-31", 0.50)])
+    fund = Fund("V", "VC", "2029-12-31")
+    policy = AnnualRatePolicy(portfolio.commitment_rates, [fund], carry_forward=True, years=portfolio.calendar_years)
+    row = Simulator(portfolio, [fund], policy).run().commitments.iloc[0]
+    # 10% of $1,000,000 (800,000 / 0.80), then 10% of $1,200,000 (900,000 / 0.75): dollars, fixed when sized
+    assert row["carried_usd"] == pytest.approx(100_000 + 120_000)
+    assert row["current_year_usd"] == pytest.approx(0.10 * 1_000_000 / 0.50)
+    assert row["commitment_usd"] == pytest.approx(420_000) and row["commitment_base"] == pytest.approx(210_000)
+
+
+def test_runs_with_carry_forward_repeat_exactly():
+    portfolio = usd(levels(("2027-12-31", 1_000_000), ("2028-12-31", 1_250_000), ("2029-12-31", 1_500_000)),
+                    {"BUYOUT": {2027: 0.10, 2028: 0.08, 2029: 0.12}})
+    fund = Fund("C", "BUYOUT", "2029-12-31")
+    simulator = Simulator(portfolio, [fund], AnnualRatePolicy(portfolio.commitment_rates, [fund], carry_forward=True))
+    first, second = simulator.run(), simulator.run()  # the policy keeps no state between runs
+    pd.testing.assert_frame_equal(first.commitments, second.commitments, check_exact=True)
+    assert first.commitments["commitment_usd"].iloc[0] == pytest.approx(100_000 + 100_000 + 180_000)
 
 
 # ----------------------------------------------------------- timing rules
@@ -245,7 +285,9 @@ def test_full_cash_use_is_not_a_shortfall_and_zero_base_gives_zero_commitment(id
     assert result.status == "completed"
     np.testing.assert_array_equal(result.periods["liquid_close"], [100, 0, 0])
     assert result.commitments.loc[(D("2027-03-01"), "G"), "commitment_usd"] == 0
-    assert result.commitments.loc[(D("2027-03-01"), "G"), "rate"] == 1.0  # the rate was used even though it bought nothing
+    g = result.commitments.loc[(D("2027-03-01"), "G")]
+    assert g["current_year_rate"] == 1.0 and g["current_year_usd"] == 0  # the year's rate was used, and bought nothing
+    assert np.isnan(g["rate"])  # there was no balance to be a share of
     identities(result)
 
 
@@ -310,7 +352,8 @@ def test_custom_policy_without_explain_still_reports_rate(identities):
 
     result = Simulator(portfolio, [Fund("A", "VC", "2027-01-15")], FlatDollars()).run()
     row = result.commitments.iloc[0]
-    assert row["commitment_usd"] == 50 and row["rate"] == pytest.approx(0.25) and np.isnan(row["weight"])
+    assert row["commitment_usd"] == 50 and row["rate"] == pytest.approx(0.25)
+    assert np.isnan(row["weight"]) and np.isnan(row["carried_usd"]) and row["carried_years"] == ""  # nothing to explain
     identities(result)
 
 

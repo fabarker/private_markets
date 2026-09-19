@@ -2,7 +2,8 @@
 
 1. The worked example from the design note: a sterling portfolio, two dollar buyout funds,
    a 10% annual rate split 60/40, and the dollar weakening between the two closings.
-2. Percentage carry-forward: two years with no fund of the type, pooled into the third.
+2. Carry-forward: two years with no fund of the type, each sized on its own year-end balance;
+   the dollars wait for the third year's funds.
 3. A liquidity shortfall: the run stops at the observation whose calls exceed the cash.
 """
 import pandas as pd
@@ -29,10 +30,12 @@ def worked_example_gbp():
 
 
 def carry_forward_example():
+    """No BUYOUT fund closes in 2027 or 2028: 10% of 1,000,000 and 8% of 1,250,000 wait, as dollars, for 2029's funds."""
     funds = [Fund("C", "BUYOUT", "2029-03-01"), Fund("D", "BUYOUT", "2029-06-01")]
     portfolio = Portfolio(
         base_currency="USD",
-        liquid_levels=[("2027-01-01", 1e6), ("2028-12-31", 1e6), ("2029-03-31", 1e6), ("2029-06-30", 1.2e6)],
+        liquid_levels=[("2027-12-31", 1_000_000), ("2028-12-31", 1_250_000),
+                       ("2029-03-31", 1_250_000), ("2029-06-30", 1_500_000)],
         commitment_rates={"BUYOUT": {2027: 0.10, 2028: 0.08, 2029: 0.12}},
     )
     policy = AnnualRatePolicy(portfolio.commitment_rates, funds, weights={"C": 0.6, "D": 0.4},
@@ -68,8 +71,8 @@ if __name__ == "__main__":
     print(result.public_market_equivalent().T)
 
     carry = carry_forward_example()
-    print("\nCarry-forward — pooled 10% + 8% + 12%, split 60/40:")
-    print(carry.commitments[["current_year_rate", "carried_rate", "pooled_rate", "weight", "rate", "commitment_usd"]])
+    print("\nCarry-forward — 2027 and 2028 sized on their own year-end balances, collected 60/40 by 2029's funds:")
+    print(carry.commitments[["current_year_rate", "weight", "current_year_usd", "carried_usd", "carried_years", "commitment_usd"]])
 
     failure = shortfall_example()
     print(f"\nShortfall example — {failure.status}: {failure.shortfall}")

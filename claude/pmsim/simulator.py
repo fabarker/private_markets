@@ -42,10 +42,11 @@ FUND_COLUMNS = [
 ]
 COMMITMENT_COLUMNS = [
     "fund_type", "closing_date", "policy_year", "sizing_base_usd", "rate", "commitment_usd",
-    "usd_rate", "sizing_base", "commitment_base", "current_year_rate", "carried_rate", "pooled_rate", "weight",
+    "usd_rate", "sizing_base", "commitment_base",
+    "current_year_rate", "weight", "current_year_usd", "carried_usd", "carried_years",
 ]
 EVENT_COLUMNS = ["observation_date", "period", "unit_call", "unit_distribution", "unit_nav_mark"]
-_TEXT_COLUMNS = {"fund", "fund_type"}
+_TEXT_COLUMNS = {"fund", "fund_type", "carried_years"}
 _DATE_COLUMNS = {"date", "closing_date", "event_date", "observation_date"}
 _INT_COLUMNS = {"policy_year", "period"}
 
@@ -92,7 +93,8 @@ class SimulationResult:
     ``funds`` (index: date, fund) has one row per live commitment per period, in both
     currencies. ``commitments`` (index: date, fund) has one row per closing: the rate, the
     USD balance it was applied to (``sizing_base_usd``) and the dollars committed, then the
-    exchange rate and their base-currency equivalents. ``shortfall`` names the first failed
+    exchange rate and their base-currency equivalents, then how ``AnnualRatePolicy`` got there:
+    ``commitment_usd = weight × (current_year_usd + carried_usd)``. ``shortfall`` names the first failed
     observation, or is ``None``. ``funds_beyond_horizon`` lists funds whose closing falls
     after the last observation; they are never committed.
     """
@@ -201,6 +203,7 @@ class Simulator:
         commitment_rows: list[dict[str, Any]] = []
         shortfall: Shortfall | None = None
         private_open = 0.0
+        liquid_usd_by_year: dict[int, float] = {}  # at each year's latest observation: what a carried year's budget is sized on
 
         for t in range(timeline.n_observations):
             day = timeline.observation_date(t)
@@ -216,7 +219,10 @@ class Simulator:
 
             cohort = self._closings_by_period.get(t, [])                            # 4
             liquid_at_sizing = liquid.balance
-            balances = SizingBalances(t, day, liquid_at_sizing / fx[t], nav_usd_open)  # USD in, USD out
+            liquid_usd = liquid_at_sizing / fx[t]
+            completed_years = {year: usd for year, usd in liquid_usd_by_year.items() if year < day.year}
+            balances = SizingBalances(t, day, liquid_usd, nav_usd_open, completed_years)  # USD in, USD out
+            liquid_usd_by_year[day.year] = liquid_usd  # the year's last observation wins
             commitments_usd = self._size_commitments(cohort, balances)
             committed_usd = math.fsum(commitments_usd.values())
             for fund in cohort:
@@ -329,15 +335,14 @@ class Simulator:
             "rate": commitment_usd / balances.liquid_usd if balances.liquid_usd else float("nan"),
             "commitment_usd": commitment_usd, "usd_rate": float(usd_rate),
             "sizing_base": liquid_at_sizing, "commitment_base": commitment_usd * usd_rate,
-            "current_year_rate": float("nan"), "carried_rate": float("nan"),
-            "pooled_rate": float("nan"), "weight": float("nan"),
+            "current_year_rate": float("nan"), "weight": float("nan"),
+            "current_year_usd": float("nan"), "carried_usd": float("nan"), "carried_years": "",
         }
-        explain_rate = getattr(self.policy, "explain_rate", None)
-        if callable(explain_rate):
-            info = explain_rate(fund.name)
-            for key in ("current_year_rate", "carried_rate", "pooled_rate", "weight"):
+        explain_commitment = getattr(self.policy, "explain_commitment", None)  # optional: a policy may say how it got there
+        if callable(explain_commitment):
+            info = explain_commitment(fund.name, balances)
+            for key in ("current_year_rate", "weight", "current_year_usd", "carried_usd"):
                 if key in info:
                     row[key] = float(info[key])
-            if "effective_rate" in info:
-                row["rate"] = float(info["effective_rate"])
+            row["carried_years"] = str(info.get("carried_years", ""))
         return row

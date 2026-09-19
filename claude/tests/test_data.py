@@ -65,7 +65,7 @@ def test_orchestrator_exposes_the_assembled_pieces():
     orchestrator = Orchestrator(FrameRepository(*tables()), SPEC)
     assert [f.name for f in orchestrator.funds] == ["A", "B"]
     assert orchestrator.portfolio.base_currency == "GBP" and orchestrator.portfolio.requires_fx_conversion
-    assert orchestrator.policy.entitlements["A"].effective_rate == pytest.approx(0.06)
+    assert (orchestrator.policy.entitlements["A"].current_year_rate, orchestrator.policy.entitlements["A"].weight) == (0.1, 0.6)
     assert orchestrator.simulator.timeline.n_observations == 3
     assert orchestrator.map_events_to_observations().loc[("A", pd.Timestamp("2027-03-01")), "observation_date"] == pd.Timestamp("2027-03-31")
     with pytest.raises(TypeError, match="SimulationSpec"):
@@ -208,7 +208,7 @@ def test_commitment_rates_long_wide_spec_and_missing():
     override = Orchestrator(FrameRepository(fund_spec, fund_market, market, wide),
                             SimulationSpec("GBP", "liquid_gbp", "gbp_per_usd", commitment_rates={"BUYOUT": {2027: 0.2}},
                                            weights={"A": .6, "B": .4}))
-    assert override.policy.entitlements["A"].effective_rate == pytest.approx(0.12)
+    assert override.policy.entitlements["A"].current_year_rate == 0.2  # the spec's table, not the repository's
     with pytest.raises(ValueError, match="commitment_rates are needed"):
         Orchestrator(FrameRepository(fund_spec, fund_market, market), SPEC).portfolio
 

@@ -33,6 +33,8 @@ OUTPUT_DIR = None                             # e.g. ROOT / "data" / "out" to al
 CURRENCY, RISK = "EUR", "Moderate"            # the profile: a Liquid column "<CURRENCY> <RISK>" and Commitments rows
 START_USD = 100.0                             # starting balance, in dollars ...
 START_IN_BASE_CURRENCY = False                # ... or True to read START_USD as euros and skip the conversion
+CARRY_FORWARD = True                          # a year with no fund of a type is still sized (its rate × that year-end's
+                                              # balance) and the dollars wait for the next fund of the type; False: not used
 # --------------------------------------------------------------------------------------------------
 
 PERIOD_COLUMNS = ["liquid_open", "liquid_pnl", "distributions", "commitments", "calls",
@@ -55,7 +57,8 @@ def starting_balance(repository: WorkbookRepository, start_usd: float) -> tuple[
     return float(base), float(rate), rate_date
 
 
-def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_currency: bool = START_IN_BASE_CURRENCY):
+def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_currency: bool = START_IN_BASE_CURRENCY,
+        carry_forward: bool = CARRY_FORWARD):
     """Load the workbook, build the engine's inputs step by step, run, and report.
 
     Each step is its own local variable so a breakpoint shows one thing at a time:
@@ -70,12 +73,12 @@ def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_curre
     else:
         initial_value, rate, rate_date = starting_balance(repository, start_usd)
 
-    spec = repository.simulation_spec(initial_value)                            # 3. base currency, series, fx quote, returns→levels
+    spec = repository.simulation_spec(initial_value, carry_forward=carry_forward)  # 3. currency, series, fx quote, carry-forward
     orchestrator = Orchestrator(repository, spec)
 
     funds = orchestrator.funds                                                  # 4. one Fund per Spec row, unit histories from Flows
     portfolio = orchestrator.portfolio                                          # 5. levels compounded from returns; USD rate inverted
-    policy = orchestrator.policy                                                # 6. the rate each fund will get at its closing
+    policy = orchestrator.policy                                                # 6. per fund: this year's rate, weight, years carried to it
 
     result = orchestrator.run()                                                 # 7. the period loop
 
@@ -108,8 +111,10 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, rat
           f"{result.periods.index[0].date()} → {result.periods.index[-1].date()} · {result.status}")
     if result.shortfall is not None:
         print(f"  {result.shortfall}")
-    print("\nCommitments (sized in USD; base-currency figures are that day's translation):")
-    print(result.commitments[["closing_date", "policy_year", "rate", "sizing_base_usd", "commitment_usd", "usd_rate", "commitment_base"]])
+    carry = "on" if orchestrator.spec.carry_forward else "off"
+    print(f"\nCommitments (sized in USD; carry-forward {carry}; commitment = weight × (current_year_usd + carried_usd)):")
+    print(result.commitments[["policy_year", "sizing_base_usd", "current_year_rate", "current_year_usd",
+                              "carried_years", "carried_usd", "weight", "commitment_usd", "usd_rate", "commitment_base"]])
     print(f"\nFirst observations ({result.base_currency}):")
     print(result.periods[PERIOD_COLUMNS].head(3))
     print(f"\nLast observations ({result.base_currency}):")

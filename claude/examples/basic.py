@@ -62,6 +62,10 @@ if __name__ == "__main__":
     print(result.commitments[["closing_date", "rate", "sizing_base", "commitment_base", "usd_rate", "commitment_usd"]])
     print("\nFunds:")
     print(result.funds)
+    print("\nBeside the same liquid portfolio with no private programme:")
+    print(result.compare_with_liquid_only())
+    print("\nPublic market equivalent against that liquid portfolio:")
+    print(result.public_market_equivalent().T)
 
     carry = carry_forward_example()
     print("\nCarry-forward — pooled 10% + 8% + 12%, split 60/40:")

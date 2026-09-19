@@ -163,7 +163,7 @@
     <li><b>1</b> loop, in <code>Simulator.run()</code></li>
     <li><b>1</b> currency boundary, crossed in <b>one</b> place</li>
     <li>dates converted to periods <b>once</b>, by a <code>Timeline</code></li>
-    <li><code>pmsim</code> · <b>6</b> modules · <b>123</b> tests</li>
+    <li><code>pmsim</code> · <b>7</b> engine modules + a data layer · <b>177</b> tests</li>
   </ul>
 </header>
 
@@ -180,6 +180,7 @@
     <li><a href="#currency">Currency</a></li>
     <li><a href="#loop">The period loop</a></li>
     <li><a href="#example">Worked example</a></li>
+    <li><a href="#benchmark">Benchmarking a run</a></li>
     <li><a href="#code">Code skeleton</a></li>
     <li><a href="#mapping">From the original function</a></li>
     <li><a href="#scope">Scope and extension points</a></li>
@@ -339,7 +340,7 @@
     <article class="cls engine">
       <header>SimulationResult <small>frozen</small></header>
       <div class="fields">base_currency: str<br>periods: DataFrame<br>funds: DataFrame<br>commitments: DataFrame<br>shortfall: Shortfall | None<br>funds_beyond_horizon: tuple[str, ...]</div>
-      <div class="methods">status<br>totals_by_fund_type() -&gt; DataFrame<br>nav_by_fund() -&gt; DataFrame</div>
+      <div class="methods">status<br>totals_by_fund_type() -&gt; DataFrame<br>nav_by_fund() -&gt; DataFrame<br>compare_with_liquid_only() -&gt; DataFrame<br>public_market_equivalent() -&gt; DataFrame</div>
       <div class="role">Per-period balances in base currency; per-fund rows in both currencies; one row per commitment event with the rate and fx used; and a verdict.</div>
     </article>
   </div>
@@ -473,6 +474,26 @@ total_close − total_open = liquid_pnl + private_valuation_pnl</code></pre>
     </tbody>
   </table></div>
   <p>Fund A's dollar NAV fell from 20,625 to 16,500 only because it distributed 4,125 &mdash; no valuation change. But in sterling its NAV fell by more than the distribution, because the pound strengthened: that extra −1,031.25 is the <code>fx_translation</code> row, and it is the entire private valuation P&amp;L this period. The same funds with <code>base_currency="USD"</code> give the single-currency figures: commitments 66,000 and 47,806, closing total 1,208,350.</p>
+</section>
+
+<section id="benchmark">
+  <h2>Benchmarking a run</h2>
+  <p class="kicker">Every call is paid by selling the liquid portfolio and every distribution buys it back, so a run already is a public-market-equivalent calculation against the investor's own portfolio.</p>
+  <p>Two read-only methods on <code>SimulationResult</code> report it. They are computed in <code>benchmark.py</code> from the <code>periods</code> and <code>funds</code> tables alone &mdash; the liquid index is the compounded <code>return_factor</code> &mdash; so nothing in the loop is involved. <code>compare_with_liquid_only()</code> sets <code>total_close</code> beside the same liquid portfolio with no private programme. <code>public_market_equivalent()</code> gives, for the programme, each fund type and each fund: the flows compounded to the last observation by the index, the value added, the Kaplan&ndash;Schoar PME, the IRR, and direct alpha (the IRR of the index-compounded flows: the yearly rate of out- or under-performance). With <code>I</code> the liquid index and <code>T</code> the last observation, the link between the two is exact:</p>
+<pre><code>with_programme(T) − liquid_only(T) = Σ (distributions(t) − calls(t)) × I(T)/I(t)  +  private_close(T)
+                                   = fv_calls × (ks_pme − 1)</code></pre>
+  <p>The programme's <code>value_added</code> equals the comparison's last row, and the funds' and fund types' add up to it; the tests assert all three, including through a shortfall. Private NAV counts at its carrying value, so part of any value added is unrealised. Ratios are NaN where they are undefined: nothing called yet, or every flow on one date.</p>
+
+  <h3>The worked example, benchmarked (GBP)</h3>
+  <div class="tablewrap"><table>
+    <thead><tr><th>row</th><th class="num">calls</th><th class="num">distributions</th><th class="num">nav</th><th class="num">fv_calls</th><th class="num">value_added</th><th class="num">ks_pme</th><th class="num">irr</th><th class="num">direct_alpha</th></tr></thead>
+    <tbody>
+      <tr class="rule-engine"><td>programme</td><td class="num">28,449.44</td><td class="num">3,093.75</td><td class="num">24,324.44</td><td class="num">30,099.44</td><td class="num neg">−2,681.25</td><td class="num">0.911</td><td class="num neg">−22.8%</td><td class="num neg">−47.3%</td></tr>
+      <tr class="rule-private"><td>fund A</td><td class="num">16,500.00</td><td class="num">3,093.75</td><td class="num">12,375.00</td><td class="num">18,150.00</td><td class="num neg">−2,681.25</td><td class="num">0.852</td><td class="num neg">−22.8%</td><td class="num neg">−47.3%</td></tr>
+      <tr class="rule-private"><td>fund B</td><td class="num">11,949.44</td><td class="num">0.00</td><td class="num">11,949.44</td><td class="num">11,949.44</td><td class="num">0.00</td><td class="num">1.000</td><td class="num">n/a</td><td class="num">n/a</td></tr>
+    </tbody>
+  </table></div>
+  <p>Liquid only ends at 1,210,000.00 and the run at 1,207,318.75. Fund A's 16,500 was called on 31 March into a fund carried at cost while the index rose 10% &mdash; 1,650 forgone &mdash; and the dollar fell, the 1,031.25 of <code>fx_translation</code> above: 2,681.25 in all. Fund B was called and valued on the same day, so its PME is exactly 1 and there is nothing to annualise. One quarter annualises to dramatic rates; the example is here because its arithmetic can be checked by hand, not because it is realistic.</p>
 </section>
 
 <section id="code">
@@ -665,7 +686,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
 
 <section id="build">
   <h2>As built: modules and tests</h2>
-  <p class="kicker">The <code>pmsim</code> package in this folder, its examples, and the 123 tests that pin the contract.</p>
+  <p class="kicker">The <code>pmsim</code> package in this folder, its examples, and the 177 tests that pin the contract.</p>
 <pre><code>claude/
   pmsim/
     dates.py        as_date, coerce_dated_series           date coercion shared by the rest
@@ -674,6 +695,8 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     state.py        LiquidAccount, Commitment, CommitmentBook
     policy.py       SizingBalances, CommitmentPolicy, Entitlement, AnnualRatePolicy
     simulator.py    Simulator, SimulationResult, Shortfall
+    benchmark.py    compare_with_liquid_only, public_market_equivalent, annualised_irr
+    data/           tables, repository, orchestrator, workbook: the workbook loaders (see README)
   examples/basic.py worked GBP example, carry-forward, shortfall
   tests/
     test_inputs.py        Fund and Portfolio validation, the base-currency rule, rate tables
@@ -682,9 +705,11 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     test_policy.py        rates, weights, carry-forward, type independence
     test_periodicity.py   monthly / quarterly / daily / irregular grids, map_events_to_observations
     test_simulator.py     worked examples, timing, currency, shortfall, invariants
+    test_benchmark.py     liquid-only comparison, PME, direct alpha, the value-added identity
+    test_data.py · test_excel.py · test_workbook.py     the data layer
   README.md · pyproject.toml · simulator-design.html (this note)
 
-../.venv/bin/python -m pytest -q          <span class="c"># from claude/: 123 passed</span>
+../.venv/bin/python -m pytest -q          <span class="c"># from claude/: 177 passed</span>
 ../.venv/bin/python -m examples.basic</code></pre>
   <h3>What the tests pin</h3>
   <ul>
@@ -695,6 +720,7 @@ PRIVATE_CURRENCY = "USD"                 <span class="c"># fund flows and NAV ar
     <li><b>Currency:</b> GBP without a rate and USD with one both fail at <code>Portfolio</code> construction; sparse rates carry forward; commitments are fixed in USD at the closing rate.</li>
     <li><b>Failure:</b> a shortfall stops at the failed observation with the exact deficit and per-fund calls, or continues with a negative balance when allowed; a first-date shortfall leaves one recorded period; exactly zero cash is valid; a zero sizing base gives a zero commitment; <code>cash_tolerance</code> absorbs rounding only.</li>
     <li><b>Validation:</b> duplicate names, funds closing before inception, missing rate years or types, bad weights, invalid policy output, negative or non-finite values, intraday dates, history before the closing.</li>
+    <li><b>Benchmark:</b> the worked example's comparison and PME figures by hand; value added is the same number three ways &mdash; total less liquid-only, index-compounded flows plus NAV, and <code>fv_calls × (ks_pme − 1)</code> &mdash; and adds up across funds and fund types, including through a shortfall; <code>annualised_irr</code> on known cases and where it is undefined.</li>
     <li><b>Repeatability:</b> permuting the fund list gives bit-identical tables; two runs match exactly; input objects are unchanged and copied from the caller's data.</li>
   </ul>
 </section>

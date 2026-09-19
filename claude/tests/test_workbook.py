@@ -190,7 +190,9 @@ def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(wor
     assert result.base_currency == "EUR" and result.status == "completed"
     assert result.periods["liquid_open"].iloc[0] == pytest.approx(100.0 / eurusd)
     assert orchestrator.policy.entitlements["PEM2011"].effective_rate == 0.026  # EUR Moderate's BUYOUT rate
-    assert {p.name for p in (tmp_path / "out").iterdir()} == {"periods.csv", "funds.csv", "commitments.csv", "map_events_to_observations.csv", "fund_summary.csv"}
+    assert {p.name for p in (tmp_path / "out").iterdir()} == {
+        "periods.csv", "funds.csv", "commitments.csv", "map_events_to_observations.csv", "fund_summary.csv",
+        "liquid_only_comparison.csv", "public_market_equivalent.csv"}
     assert "Starting balance: USD 100.00 = EUR" in capsys.readouterr().out
     _, in_euros = eur_moderate.run(workbook, start_usd=100.0, start_in_base_currency=True)
     assert in_euros.periods["liquid_open"].iloc[0] == 100.0

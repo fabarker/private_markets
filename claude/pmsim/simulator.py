@@ -24,6 +24,7 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 import pandas as pd
 
+from .benchmark import compare_with_liquid_only, public_market_equivalent
 from .inputs import Fund, Portfolio
 from .policy import AnnualRatePolicy, CommitmentPolicy, SizingBalances
 from .state import Commitment, LiquidAccount, CommitmentBook
@@ -118,6 +119,14 @@ class SimulationResult:
         if self.funds.empty:
             return pd.DataFrame(index=self.periods.index, dtype=float)
         return self.funds["nav_base"].unstack("fund").reindex(self.periods.index).fillna(0.0)
+
+    def compare_with_liquid_only(self) -> pd.DataFrame:
+        """This run beside the same liquid portfolio with no private programme: both paths and the value added."""
+        return compare_with_liquid_only(self.periods)
+
+    def public_market_equivalent(self) -> pd.DataFrame:
+        """KS-PME, IRR and direct alpha against the liquid portfolio, for the programme, each fund type and each fund."""
+        return public_market_equivalent(self.periods, self.funds)
 
 
 class Simulator:

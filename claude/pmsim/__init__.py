@@ -7,6 +7,7 @@ Inputs are split by who holds the data (Fund, Portfolio). A Timeline built from 
 liquid index turns every dated input into per-period arrays once. The Simulator owns
 the one loop; a CommitmentPolicy decides how much to commit when funds close.
 """
+from .benchmark import annualised_irr, compare_with_liquid_only, public_market_equivalent
 from .inputs import PRIVATE_CURRENCY, Fund, Portfolio
 from .policy import AnnualRatePolicy, CommitmentPolicy, Entitlement, SizingBalances
 from .simulator import Shortfall, SimulationResult, Simulator
@@ -19,4 +20,5 @@ __all__ = [
     "LiquidAccount", "Commitment", "CommitmentBook",
     "SizingBalances", "CommitmentPolicy", "AnnualRatePolicy", "Entitlement",
     "Simulator", "SimulationResult", "Shortfall",
+    "compare_with_liquid_only", "public_market_equivalent", "annualised_irr",
 ]

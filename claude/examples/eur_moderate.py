@@ -120,6 +120,14 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, rat
         print(by_type.xs(result.periods.index[-1], level="date")[["commitment_usd", "calls_base", "distributions_base", "nav_base"]])
     print(f"\nFunds beyond the horizon (never committed): {result.funds_beyond_horizon or 'none'}")
 
+    comparison = result.compare_with_liquid_only()
+    last = comparison.iloc[-1]
+    print(f"\nBeside the same liquid portfolio with no private programme, at {comparison.index[-1].date()} ({result.base_currency}):")
+    print(f"  liquid only {last['liquid_only']:,.4f} · with programme {last['with_programme']:,.4f} · "
+          f"value added {last['value_added']:,.4f} ({last['value_added_share']:.2%} of liquid only, NAV at carrying value)")
+    print("\nPublic market equivalent against that liquid portfolio (ks_pme above 1 = the programme beat it):")
+    print(result.public_market_equivalent())
+
 
 def write_csvs(orchestrator, result, out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
@@ -128,7 +136,10 @@ def write_csvs(orchestrator, result, out: Path) -> None:
     result.commitments.to_csv(out / "commitments.csv")
     orchestrator.map_events_to_observations().to_csv(out / "map_events_to_observations.csv")
     orchestrator.fund_summary().to_csv(out / "fund_summary.csv")
-    print(f"\nWrote periods.csv, funds.csv, commitments.csv, map_events_to_observations.csv, fund_summary.csv to {out}")
+    result.compare_with_liquid_only().to_csv(out / "liquid_only_comparison.csv")
+    result.public_market_equivalent().to_csv(out / "public_market_equivalent.csv")
+    print(f"\nWrote periods.csv, funds.csv, commitments.csv, map_events_to_observations.csv, fund_summary.csv, "
+          f"liquid_only_comparison.csv, public_market_equivalent.csv to {out}")
 
 
 def resolve_workbook(path: Path) -> Path:

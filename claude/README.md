@@ -13,6 +13,7 @@ This is the implementation of `simulator-design.html` (in this folder). Package 
 | `pmsim/state.py` | `LiquidAccount`, `Commitment`, `CommitmentBook` — mutable state during a run |
 | `pmsim/policy.py` | `SizingBalances`, `CommitmentPolicy` protocol, `AnnualRatePolicy` |
 | `pmsim/simulator.py` | `Simulator`, `SimulationResult`, `Shortfall` — the one loop |
+| `pmsim/benchmark.py` | `compare_with_liquid_only`, `public_market_equivalent`, `annualised_irr` — a finished run against the liquid portfolio alone |
 | `pmsim/dates.py` | date coercion shared by the above |
 | `pmsim/data/tables.py` | the normalized tables a data source must deliver, and the column aliases accepted |
 | `pmsim/data/repository.py` | `DataRepository` protocol, `ExcelRepository`, `FrameRepository`, `SheetNames` |
@@ -188,6 +189,36 @@ total_close − total_open = liquid_pnl + private_valuation_pnl
 ```
 
 and the tests assert these on every run.
+
+## Benchmarking a run
+
+Every call is paid by selling the liquid portfolio and every distribution buys it back, so a
+run already is a public-market-equivalent calculation against the investor's own portfolio.
+Two methods read it off the result; nothing in the loop is involved.
+
+```python
+result.compare_with_liquid_only()    # by date: liquid_only, with_programme, value_added, value_added_share
+result.public_market_equivalent()    # programme, then each fund type, then each fund
+```
+
+`compare_with_liquid_only()` sets the run's `total_close` beside the same liquid portfolio
+with no private programme. `public_market_equivalent()` (index `level`, `name`; base
+currency; the liquid index as benchmark) gives `calls`, `distributions`, `nav`, the flows
+compounded to the last observation (`fv_calls`, `fv_distributions`), `value_added`,
+`ks_pme` (above 1 = the programme beat the liquid portfolio), `irr`, and `direct_alpha` —
+the annualised rate of out- or under-performance, the IRR of the index-compounded flows.
+With `I` the liquid index and `T` the last observation the link between the two is exact:
+
+```text
+with_programme(T) − liquid_only(T) = Σ (distributions(t) − calls(t)) × I(T)/I(t) + private_close(T)
+                                   = fv_calls × (ks_pme − 1)
+```
+
+so the programme's `value_added` equals the comparison's last row, and the funds' (and the
+fund types') add up to it; the tests assert all three. Private NAV is counted at its
+carrying value, so part of the value added is unrealised. Ratios are NaN where undefined:
+nothing called yet, or every flow on one date. `annualised_irr(dates, amounts)` (ACT/365,
+money out negative) is exported for use on its own.
 
 ## Policy
 

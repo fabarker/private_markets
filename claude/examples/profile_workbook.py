@@ -118,7 +118,6 @@ if __name__ == "__main__":
     print(f"\nCommitments (sized in USD; carry-forward {'on' if CARRY_FORWARD else 'off'}; commitment = weight × (current_year_usd + carried_usd)):")
     print(result.commitments[["policy_year", "sizing_base_usd", "current_year_rate", "expected_value", "current_year_usd",
                               "carried_years", "carried_usd", "weight", "commitment_usd", "usd_rate", "commitment_base"]])
-    print("\nLast observations:")
-    print(result.periods[["liquid_open", "liquid_pnl", "distributions", "commitments", "calls",
-                          "liquid_close", "private_close", "total_close"]].tail(6))
+    print("\nThe five running values, last observations:")
+    print(result.tracked_values().tail(6))
     print(f"\nFunds beyond the horizon (never committed): {result.funds_beyond_horizon}")

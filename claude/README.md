@@ -132,14 +132,15 @@ the liquid returns, with no capital call or distribution in it. Private assets n
 interfere — not the calls the account has paid, not the distributions it has banked — so
 every commitment follows from the liquid returns, the initial value, the exchange rates and
 the schedule alone, and the same inputs give the same commitments whatever the funds then
-do. It is `sizing_base` (base currency) and `sizing_base_usd` in the results, and the
+do. It is `liquid_only` (base currency) and `liquid_only_usd` in the results, and the
 `liquid_only` path of `compare_with_liquid_only()`. The account that pays the calls is a
 different number, and the shortfall test runs on that one.
 
 **Currency.** Private figures are USD until they touch the liquid pot or a report.
 Commitments are sized exclusively in USD: for a non-USD portfolio the liquid-only value is
 converted at the closing observation's rate, the policy sees and returns dollars only, and
-the dollar commitment never changes. `commitment_base` and `sizing_base` are that day's
+the dollar commitment never changes. `commitment_base` and the commitments table's
+`sizing_base` are that day's
 translation, reported for information and never decided on. Calls, distributions and NAV
 are converted at each observation's rate. `fx_translation` isolates `nav_usd(t-1) × (fx[t] − fx[t-1])`, the part of private
 valuation P&L that is purely the currency moving.
@@ -177,11 +178,13 @@ simulation finer; the rule does not change.
 
 ## Results
 
-`periods` (index `date`, base currency unless noted): `liquid_open`, `private_open`,
-`total_open`, `period_return` (the period's percent change), `usd_rate`, `liquid_pnl`, `distributions`, `sizing_base`
-(the liquid-only value) and `sizing_base_usd` (the same in dollars: what commitments are
-sized on), `commitments`, `commitments_usd`, `calls`, `liquid_close`, `private_close`,
-`total_close`, `private_valuation_pnl`, `fx_translation`.
+`periods` (index `date`, base currency unless noted) opens with the five running values —
+`liquid_only`, `expected_liquid`, `liquid_close`, `private_close`, `total_close` (see
+below) — then the same three as the period opened, `liquid_open`, `private_open`,
+`total_open`; what moved them, `period_return` (the period's percent change), `liquid_pnl`,
+`distributions`, `calls`, `private_valuation_pnl`, `usd_rate`, `fx_translation`; and what
+was committed, `liquid_only_usd` (the dollars the rate was applied to), `commitments`,
+`commitments_usd`.
 
 `funds` (index `date`, `fund`): `fund_type`, `commitment_usd`, `calls_usd`,
 `distributions_usd`, `nav_usd`, `calls_base`, `distributions_base`, `nav_base`.
@@ -193,6 +196,22 @@ same figures in base currency, `sizing_base` and `commitment_base`; and from
 `current_year_usd`, `carried_usd` and `carried_years` — with `current_year_usd =
 current_year_rate / expected_value × sizing_base_usd` and `commitment_usd = weight ×
 (current_year_usd + carried_usd)`. `rate` is always `commitment_usd / sizing_base_usd`.
+
+`result.tracked_values()` is the first five columns of `periods` on their own — the running
+value of each thing the simulation holds, in base currency, one row per observation:
+
+| | | |
+| --- | --- | --- |
+| 1 | `liquid_only` | the liquid portfolio alone: the initial value compounded by the liquid returns, with no capital call or distribution in it. This is what commitments are sized on |
+| 2 | `expected_liquid` | that same starting value growing at the policy's expected return instead of at the market's; `NaN` when the policy has no expected return. Its ratio to `liquid_only` is how far the portfolio ran ahead of, or behind, the pacing model's expectation |
+| 3 | `liquid_close` | the liquid account as it really stands, calls paid and distributions banked |
+| 4 | `private_close` | the private book, at its marks |
+| 5 | `total_close` | `liquid_close + private_close`: everything the investor holds |
+
+`expected_liquid` is anchored at the **first observation**, so 1, 2 and 3 all start from the
+initial value. The `expected_value` column of `commitments` is the same rate anchored at the
+**first commitment date**, where the pacing model's portfolio is worth 1; the two differ by
+a constant factor and answer different questions.
 
 `result.totals_by_fund_type()` sums the fund table by date and fund type; `result.nav_by_fund()` is
 private NAV in base currency by date × fund. Every completed period satisfies
@@ -324,7 +343,7 @@ compare a real file against.
 | `Flows` | `Vintage`, `Date`, `Value`, `Type` (`Flow`/`NAV`), `Scale` | `Vintage` is the fund name; unit = `Value ÷ Scale`; negative flows are calls |
 | `Commitments` | `Type`, `Year`, `Currency`, `Risk`, `Commitment`, `Rate` | the pacing schedule: rows of the profile; `Year` is **years since inception** (0 = the year of the first Liquid date) and is mapped onto calendar years; `Rate` is the decimal used, an amount per 1 of liquid value on the first commitment date |
 | `Spec` | `Name`, `Year`, `Type` | `Year` holds the closing date, read day-first (`31/12/2010`) |
-| `Liquid Spec` | `Liquid`, `ExRet` | **required.** One row per portfolio, named as its Liquid column (`EUR Moderate`); `ExRet` is the yearly return X its pacing schedule was built on. Format the cells as percentages — Excel stores 5.4% as `0.054`, which is what is read; a bare `5.4` is rejected as a percentage typed as a number. The schedule means nothing without it |
+| `Liquid Spec` (also read as `Return Spec` or `Expected Returns`) | `Liquid`, `ExRet` (or `Portfolio`, `Return`) | **required.** One row per portfolio, named as its Liquid column (`EUR Moderate`); `ExRet` is the yearly return X its pacing schedule was built on. Format the cells as percentages — Excel stores 5.4% as `0.054`, which is what is read; a bare `5.4` is rejected as a percentage typed as a number. The schedule means nothing without it |
 
 Sheet names are matched ignoring case, spaces, hyphens and underscores (`ExpectedReturns`
 works) and can be overridden with `SheetLayout(...)`; `expected_return=` overrides the sheet

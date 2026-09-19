@@ -28,16 +28,23 @@ import numpy as np
 import pandas as pd
 
 from .benchmark import compare_with_liquid_only, public_market_equivalent
+from .dates import years_between
 from .inputs import Fund, Portfolio
 from .policy import AnnualRatePolicy, CommitmentPolicy, SizingBalances, YearEndBalance
 from .state import Commitment, LiquidAccount, CommitmentBook
 from .timeline import AlignedFundHistory, Timeline
 
 PERIOD_COLUMNS = [
-    "liquid_open", "private_open", "total_open", "period_return", "usd_rate",
-    "liquid_pnl", "distributions", "sizing_base", "sizing_base_usd", "commitments", "commitments_usd", "calls",
-    "liquid_close", "private_close", "total_close", "private_valuation_pnl", "fx_translation",
+    # the five running values, in base currency
+    "liquid_only", "expected_liquid", "liquid_close", "private_close", "total_close",
+    # the same three, as the period opened
+    "liquid_open", "private_open", "total_open",
+    # what moved them
+    "period_return", "liquid_pnl", "distributions", "calls", "private_valuation_pnl", "usd_rate", "fx_translation",
+    # what was committed, and the dollars it was sized on
+    "liquid_only_usd", "commitments", "commitments_usd",
 ]
+TRACKED_COLUMNS = PERIOD_COLUMNS[:5]  # the five running values, in the order SimulationResult.tracked_values reports them
 FUND_COLUMNS = [
     "fund_type", "commitment_usd", "calls_usd", "distributions_usd", "nav_usd",
     "calls_base", "distributions_base", "nav_base",
@@ -93,9 +100,10 @@ class SimulationResult:
 
     ``periods`` (index: date) is in base currency except the ``_usd`` columns and ``usd_rate``.
     ``funds`` (index: date, fund) has one row per live commitment per period, in both
-    currencies. ``sizing_base`` is the liquid-only value — the initial value compounded by the
-    liquid returns, untouched by any call or distribution — and ``sizing_base_usd`` the same in
-    dollars, which is what commitments are sized on. ``commitments`` (index: date, fund) has one
+    currencies, and its first five columns are the running values ``tracked_values()`` returns.
+    ``liquid_only`` is the liquid portfolio alone — the initial value compounded by the liquid
+    returns, untouched by any call or distribution — and ``liquid_only_usd`` the same in dollars,
+    which is what commitments are sized on. ``commitments`` (index: date, fund) has one
     row per closing: that USD value, the dollars committed and their share of it (``rate``), the
     exchange rate and the base-currency equivalents, then how ``AnnualRatePolicy`` got there:
     ``commitment_usd = weight × (current_year_usd + carried_usd)``, with ``current_year_usd =
@@ -122,6 +130,19 @@ class SimulationResult:
             index = pd.MultiIndex.from_arrays([pd.DatetimeIndex([]), []], names=["date", "fund_type"])
             return pd.DataFrame(columns=columns, index=index, dtype=float)
         return self.funds.reset_index().groupby(["date", "fund_type"])[columns].sum()
+
+    def tracked_values(self) -> pd.DataFrame:
+        """The five running values, by observation, in base currency.
+
+        ``liquid_only``      the liquid portfolio alone: the initial value compounded by the liquid
+                             returns, with no capital call or distribution in it
+        ``expected_liquid``  that same starting value growing at the policy's expected return
+                             instead; NaN when the policy has no expected return
+        ``liquid_close``     the liquid account as it really stands, calls paid and distributions banked
+        ``private_close``    the private book, at its marks
+        ``total_close``      ``liquid_close + private_close``: everything the investor holds
+        """
+        return self.periods[TRACKED_COLUMNS]
 
     def nav_by_fund(self) -> pd.DataFrame:
         """Private NAV in base currency by date (rows) and fund (columns); zero before a fund closes."""
@@ -211,6 +232,19 @@ class Simulator:
             year: YearEndBalance(self.timeline.observation_date(t), float(self.liquid_only_usd[t]))
             for year, t in last_period_of_year.items()
         }
+        # The second of the five tracked values: the same starting value growing at the policy's
+        # expected return instead of at the market's. NaN when the policy has no expected return.
+        self.expected_liquid: np.ndarray = self._expected_liquid_path(float(levels[0]))
+
+    def _expected_liquid_path(self, initial_value: float) -> np.ndarray:
+        """The liquid portfolio had it grown at the expected return from the first observation."""
+        expected_return = getattr(self.policy, "expected_return", None)
+        if expected_return is None:
+            return np.full(self.timeline.n_observations, np.nan)
+        inception = self.timeline.observation_date(0)
+        elapsed = np.array([years_between(inception, self.timeline.observation_date(t))
+                            for t in range(self.timeline.n_observations)])
+        return initial_value * (1.0 + expected_return) ** elapsed
 
     # ------------------------------------------------------------------ run
     def run(self) -> SimulationResult:
@@ -271,13 +305,17 @@ class Simulator:
             period_rows.append({
                 "date": pd.Timestamp(day),
 
-                # what was held, before and after the day's business
+                # the five running values: the liquid portfolio three ways, the private book, the total
+                "liquid_only": float(self.liquid_only[t]),           # 1 · liquid alone, no private flow in it
+                "expected_liquid": float(self.expected_liquid[t]),   # 2 · liquid at the expected return
+                "liquid_close": liquid.balance,                      # 3 · liquid as it really stands
+                "private_close": private_close,                      # 4 · the private book at its marks
+                "total_close": liquid.balance + private_close,       # 5 · 3 + 4
+
+                # the same three, as the period opened, so each period reconciles
                 "liquid_open": liquid_open,
                 "private_open": private_open,
                 "total_open": liquid_open + private_open,
-                "liquid_close": liquid.balance,
-                "private_close": private_close,
-                "total_close": liquid.balance + private_close,
 
                 # what moved it: the market, the private flows, and the exchange rate
                 "period_return": float(self.returns[t]),
@@ -288,9 +326,8 @@ class Simulator:
                 "usd_rate": rate,
                 "fx_translation": private_nav_usd_open * (rate - float(self.fx[t - 1])) if t > 0 else 0.0,
 
-                # what was committed today, and the value it was sized on
-                "sizing_base": float(self.liquid_only[t]),
-                "sizing_base_usd": balances.liquid_only_usd,
+                # what was committed today, and the dollars it was sized on
+                "liquid_only_usd": balances.liquid_only_usd,
                 "commitments": committed_usd * rate,
                 "commitments_usd": committed_usd,
             })

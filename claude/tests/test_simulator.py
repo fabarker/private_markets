@@ -30,6 +30,36 @@ def test_without_funds_the_liquid_balance_is_the_index(currency, rate, identitie
     identities(result)
 
 
+def test_the_five_running_values(identities):
+    """1 liquid alone · 2 liquid at the expected return · 3 liquid with private flows · 4 the private book · 5 the total."""
+    portfolio = usd(levels(("2027-12-31", 1_000_000), ("2028-12-31", 1_100_000), ("2029-12-31", 1_100_000)),
+                    {"BUYOUT": {2027: 0.0, 2028: 0.02, 2029: 0.0}})
+    fund = Fund("P", "BUYOUT", "2028-12-31", unit_calls=[("2028-12-31", 1.0)], unit_nav=[("2029-12-31", 1.15)])
+    policy = AnnualRatePolicy(portfolio.commitment_rates, [fund], expected_return=0.05, years=portfolio.calendar_years)
+    result = Simulator(portfolio, [fund], policy).run()
+
+    tracked = result.tracked_values()
+    assert list(tracked.columns) == ["liquid_only", "expected_liquid", "liquid_close", "private_close", "total_close"]
+    pd.testing.assert_frame_equal(tracked, result.periods[tracked.columns])  # a view of the period table, nothing new
+
+    # 1 · the liquid returns alone: the index itself, whatever the fund calls
+    np.testing.assert_allclose(tracked["liquid_only"], [1_000_000, 1_100_000, 1_100_000])
+    # 2 · the same start growing at 5% a year, on the anniversaries of the first observation
+    np.testing.assert_allclose(tracked["expected_liquid"], [1_000_000, 1_050_000, 1_102_500])
+    # 3 · what the account really holds: 22,000 was called at the end of 2028 and never came back
+    np.testing.assert_allclose(tracked["liquid_close"], [1_000_000, 1_078_000, 1_078_000])
+    # 4 · the private book: at cost, then at its mark
+    np.testing.assert_allclose(tracked["private_close"], [0, 22_000, 25_300])
+    # 5 · the two together
+    np.testing.assert_allclose(tracked["total_close"], tracked["liquid_close"] + tracked["private_close"])
+    identities(result)
+
+
+def test_expected_liquid_is_nan_without_an_expected_return(usd_portfolio, worked_funds):
+    result = Simulator(usd_portfolio, worked_funds).run()
+    assert result.tracked_values()["expected_liquid"].isna().all()  # no expected return: no expected path
+
+
 # ------------------------------------------------------- worked examples
 def test_worked_example_in_usd(usd_portfolio, worked_funds, identities):
     policy = AnnualRatePolicy(usd_portfolio.commitment_rates, worked_funds, weights={"A": 0.6, "B": 0.4})
@@ -37,7 +67,7 @@ def test_worked_example_in_usd(usd_portfolio, worked_funds, identities):
     p = result.periods
     assert result.status == "completed"
     # sized on the liquid-only value: the index itself, not the account that has by then paid A's call
-    np.testing.assert_allclose(p["sizing_base"], [1_000_000, 1_100_000, 1_210_000])
+    np.testing.assert_allclose(p["liquid_only"], [1_000_000, 1_100_000, 1_210_000])
     np.testing.assert_allclose(p["commitments"], [0, 66_000, 48_400])
     np.testing.assert_allclose(p["calls"], [0, 16_500, 12_100])
     np.testing.assert_allclose(p["distributions"], [0, 0, 3_300])
@@ -45,7 +75,7 @@ def test_worked_example_in_usd(usd_portfolio, worked_funds, identities):
     np.testing.assert_allclose(p["private_close"], [0, 16_500, 25_300])
     np.testing.assert_allclose(p["total_close"], [1_000_000, 1_100_000, 1_208_350])
     assert (p["usd_rate"] == 1).all() and (p["fx_translation"] == 0).all()
-    np.testing.assert_array_equal(p["sizing_base_usd"], p["sizing_base"])  # a dollar portfolio: one and the same
+    np.testing.assert_array_equal(p["liquid_only_usd"], p["liquid_only"])  # a dollar portfolio: one and the same
     c = result.commitments
     assert list(c.index) == [(D("2027-03-31"), "A"), (D("2027-06-30"), "B")]
     assert c["commitment_usd"].tolist() == pytest.approx([66_000, 48_400])
@@ -68,8 +98,8 @@ def test_worked_example_in_gbp_translates_at_the_observation_rate(gbp_portfolio,
     p = result.periods
     assert result.base_currency == "GBP"
     np.testing.assert_allclose(p["usd_rate"], [0.80, 0.80, 0.75])
-    np.testing.assert_allclose(p["sizing_base"], [1_000_000, 1_100_000, 1_210_000])  # the liquid-only value, in sterling
-    np.testing.assert_allclose(p["sizing_base_usd"], [1_250_000, 1_375_000, 1_210_000 / 0.75])  # what the rate is applied to
+    np.testing.assert_allclose(p["liquid_only"], [1_000_000, 1_100_000, 1_210_000])  # the liquid-only value, in sterling
+    np.testing.assert_allclose(p["liquid_only_usd"], [1_250_000, 1_375_000, 1_210_000 / 0.75])  # what the rate is applied to
     np.testing.assert_allclose(p["commitments"], [0, 66_000, 48_400])
     np.testing.assert_allclose(p["commitments_usd"], [0, 82_500, 48_400 / 0.75])
     np.testing.assert_allclose(p["distributions"], [0, 0, 3_093.75])
@@ -205,7 +235,7 @@ def test_new_cohort_distributions_are_banked_after_sizing(identities):
     fund = Fund("E", "VC", "2027-01-10", unit_calls=[("2027-01-20", 0.3)], unit_distributions=[("2027-02-10", 0.1)])
     result = Simulator(portfolio, [fund]).run()
     row = result.periods.iloc[1]
-    assert row["sizing_base"] == 100 and row["commitments"] == 50  # its own distribution did not inflate the base
+    assert row["liquid_only"] == 100 and row["commitments"] == 50  # its own distribution did not inflate the base
     assert row["distributions"] == pytest.approx(5) and row["calls"] == pytest.approx(15)
     assert row["liquid_close"] == pytest.approx(90) and row["private_close"] == pytest.approx(10)
     identities(result)
@@ -260,7 +290,7 @@ def test_sizing_happens_in_dollars_whatever_the_base_currency(gbp_portfolio, wor
     assert c["commitment_base"].tolist() == pytest.approx([50_000 * 0.80, 50_000 * 0.75])  # the same dollars, in sterling
     np.testing.assert_allclose(c["sizing_base_usd"], c["sizing_base"] / c["usd_rate"])
     np.testing.assert_allclose(c["rate"], c["commitment_usd"] / c["sizing_base_usd"])
-    np.testing.assert_allclose(p["sizing_base_usd"], p["sizing_base"] / p["usd_rate"])
+    np.testing.assert_allclose(p["liquid_only_usd"], p["liquid_only"] / p["usd_rate"])
     np.testing.assert_allclose(p["commitments"], p["commitments_usd"] * p["usd_rate"])
     assert p["calls"].iloc[1] == pytest.approx(50_000 * 0.25 * 0.80)  # dollars called, paid in sterling at that day's rate
     identities(result)

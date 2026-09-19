@@ -100,7 +100,7 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, rat
         print(f"\nStarting balance: USD {start_usd:,.2f} = {CURRENCY} {initial_value:,.4f} "
               f"at {repository.fx_column} {rate:.4f} (first available rate, {rate_date.date()}), held at inception {inception}")
 
-    print(f"\nExpected return X for {repository.profile}: {orchestrator.expected_return:.2%} a year (Liquid Spec sheet). "
+    print(f"\nExpected return X for {repository.profile}: {orchestrator.expected_return:.2%} a year (from the workbook's expected-returns sheet). "
           f"The pacing model's liquid value is 1 on the first commitment date, {orchestrator.simulator.first_commitment_date}.")
     print(f"Pacing schedule for {repository.profile} (calendar year × type), per 1 of liquid value on that date:")
     print(repository.commitment_rates().T)
@@ -118,9 +118,11 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, rat
     print("  current_year_usd = current_year_rate / expected_value × sizing_base_usd · commitment_usd = weight × (current_year_usd + carried_usd)")
     print(result.commitments[["policy_year", "sizing_base_usd", "current_year_rate", "expected_value", "current_year_usd",
                               "carried_years", "carried_usd", "weight", "commitment_usd", "usd_rate", "commitment_base"]])
-    print(f"\nFirst observations ({result.base_currency}):")
-    print(result.periods[PERIOD_COLUMNS].head(3))
-    print(f"\nLast observations ({result.base_currency}):")
+    print(f"\nThe five running values ({result.base_currency}): liquid alone · liquid at the expected return · "
+          f"liquid with the private flows · the private book · the total")
+    tracked = result.tracked_values()
+    print(pd.concat([tracked.head(3), tracked.tail(3)]))
+    print(f"\nWhat moved them, last observations ({result.base_currency}):")
     print(result.periods[PERIOD_COLUMNS].tail(6))
     by_type = result.totals_by_fund_type()
     if not by_type.empty:
@@ -144,10 +146,11 @@ def write_csvs(orchestrator, result, out: Path) -> None:
     result.commitments.to_csv(out / "commitments.csv")
     orchestrator.map_events_to_observations().to_csv(out / "map_events_to_observations.csv")
     orchestrator.fund_summary().to_csv(out / "fund_summary.csv")
+    result.tracked_values().to_csv(out / "tracked_values.csv")
     result.compare_with_liquid_only().to_csv(out / "liquid_only_comparison.csv")
     result.public_market_equivalent().to_csv(out / "public_market_equivalent.csv")
     print(f"\nWrote periods.csv, funds.csv, commitments.csv, map_events_to_observations.csv, fund_summary.csv, "
-          f"liquid_only_comparison.csv, public_market_equivalent.csv to {out}")
+          f"tracked_values.csv, liquid_only_comparison.csv, public_market_equivalent.csv to {out}")
 
 
 def resolve_workbook(path: Path) -> Path:

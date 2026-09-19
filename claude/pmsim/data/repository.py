@@ -18,7 +18,7 @@ a database adapter will take.
                   Year is years since inception (0 = the year of the first Liquid date); Rate is decimal
     Spec          Name | Year | Type
                   Year holds the fund's closing date (dd/mm/yyyy)
-    Liquid Spec   Liquid | ExRet
+    Liquid Spec   Liquid | ExRet          (also read as Return Spec, or Expected Returns)
                   one row per portfolio, named as its Liquid column; ExRet is the yearly return X
                   its pacing schedule was built on (5.4%, which Excel stores as 0.054)
 
@@ -110,7 +110,8 @@ class SheetLayout:
     flows: str = "Flows"
     commitments: str = "Commitments"
     spec: str = "Spec"
-    liquid_spec: str = "Liquid Spec"
+    # the sheet of expected returns, under any of the names it goes by; set one name to pin it
+    liquid_spec: str | tuple[str, ...] = ("Liquid Spec", "Return Spec", "Expected Returns")
 
 
 def _sheet_key(name: Any) -> str:
@@ -291,7 +292,13 @@ class WorkbookRepository:
 
     def expected_returns(self) -> pd.Series:
         """The Liquid Spec sheet. Required: the Commitments sheet is a pacing schedule, and means nothing without its X."""
-        return normalize_expected_returns(self.raw_sheet(self.layout.liquid_spec))
+        names = (self.layout.liquid_spec,) if isinstance(self.layout.liquid_spec, str) else tuple(self.layout.liquid_spec)
+        for name in names:
+            sheet = self.raw_sheet(name, required=False)
+            if sheet is not None:
+                return normalize_expected_returns(sheet)
+        raise ValueError(f"{self.path.name}: no sheet named {' or '.join(repr(n) for n in names)}; "
+                         f"sheets are {self.sheet_names}")
 
     @cached_property
     def expected_return(self) -> float:
@@ -299,7 +306,7 @@ class WorkbookRepository:
         table = self.expected_returns()
         matches = [name for name in table.index if canonical_name(name) == canonical_name(self.profile)]
         if not matches:
-            raise ValueError(f"{self.layout.liquid_spec}: no row for portfolio {self.profile!r}; "
+            raise ValueError(f"expected returns: no row for portfolio {self.profile!r}; "
                              f"portfolios are {list(table.index)}")
         return float(table[matches[0]])
 

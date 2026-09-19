@@ -202,7 +202,7 @@ def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(wor
     # the script switches carry-forward on: no secondaries fund closes in 2010, so SEC_VI collects 2010's budget in 2011
     assert orchestrator.spec.carry_forward is True
     sec_vi = result.commitments.loc[(pd.Timestamp("2011-12-31"), "SEC_VI")]
-    balance_at_end_of_2010 = result.periods.loc[pd.Timestamp("2010-12-31"), "sizing_base_usd"]
+    balance_at_end_of_2010 = result.periods.loc[pd.Timestamp("2010-12-31"), "liquid_only_usd"]
     # 2010's budget was sized on 31 Dec 2010, the first commitment date, where the expected value is 1; 2011's a year on, at 1.045
     assert sec_vi["carried_years"] == "2010" and sec_vi["carried_usd"] == pytest.approx(0.009 * balance_at_end_of_2010)
     assert sec_vi["expected_value"] == pytest.approx(1.059) and orchestrator.expected_return == 0.059  # EUR Moderate's ExRet
@@ -212,7 +212,7 @@ def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(wor
         pytest.approx(0.009 / 1.059 * sec_vi["sizing_base_usd"])
     assert {p.name for p in (tmp_path / "out").iterdir()} == {
         "periods.csv", "funds.csv", "commitments.csv", "map_events_to_observations.csv", "fund_summary.csv",
-        "liquid_only_comparison.csv", "public_market_equivalent.csv"}
+        "tracked_values.csv", "liquid_only_comparison.csv", "public_market_equivalent.csv"}
     assert "Starting balance: USD 100.00 = EUR" in capsys.readouterr().out
     _, in_euros = eur_moderate.run(workbook, start_usd=100.0, start_in_base_currency=True)
     assert in_euros.periods["liquid_open"].iloc[0] == 100.0
@@ -289,9 +289,16 @@ def test_liquid_spec_sheet_gives_each_portfolio_its_expected_return(usd, eur, tm
     typed_as_text = workbook_with(pd.DataFrame({"Liquid": ["USD Conservative"], "ExRet": ["5.4%"]}))
     assert WorkbookRepository(typed_as_text, "USD", "Conservative").expected_return == pytest.approx(0.054)
     # the schedule means nothing without the return it assumed, so the sheet is required
-    with pytest.raises(ValueError, match=r"no sheet named 'Liquid Spec'"):
+    with pytest.raises(ValueError, match=r"no sheet named 'Liquid Spec' or 'Return Spec' or 'Expected Returns'"):
         load_profile_workbook(workbook_with(None), "USD", "Conservative", 1_000_000)
-    with pytest.raises(ValueError, match=r"Liquid Spec: no row for portfolio 'EUR Moderate'; portfolios are \['USD Conservative'\]"):
+    # the sheet is read under any of the names it has gone by, so a renamed tab keeps working
+    for sheet_name in ("Liquid Spec", "Return Spec", "Expected Returns", "returnspec"):
+        renamed = workbook_with(pd.DataFrame({"Liquid": ["USD Conservative"], "Return": [0.03]}), sheet_name=sheet_name)
+        assert WorkbookRepository(renamed, "USD", "Conservative").expected_return == 0.03
+    pinned = SheetLayout(liquid_spec="Return Spec")  # or pin exactly one
+    assert WorkbookRepository(workbook_with(pd.DataFrame({"Liquid": ["USD Conservative"], "ExRet": [0.03]}),
+                                            sheet_name="Return Spec"), "USD", "Conservative", pinned).expected_return == 0.03
+    with pytest.raises(ValueError, match=r"expected returns: no row for portfolio 'EUR Moderate'; portfolios are \['USD Conservative'\]"):
         load_profile_workbook(workbook_with(pd.DataFrame({"Liquid": ["USD Conservative"], "ExRet": [0.054]})),
                               "EUR", "Moderate", 1_000_000)
     with pytest.raises(ValueError, match=r"expected return of 'USD Conservative' must be a decimal .* \(write 5% as 0.05\), got 5.4"):

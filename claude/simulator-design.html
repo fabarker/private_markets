@@ -341,7 +341,7 @@
     <article class="cls engine">
       <header>SimulationResult <small>frozen</small></header>
       <div class="fields">base_currency: str<br>periods: DataFrame<br>funds: DataFrame<br>commitments: DataFrame<br>shortfall: Shortfall | None<br>funds_beyond_horizon: tuple[str, ...]</div>
-      <div class="methods">status<br>totals_by_fund_type() -&gt; DataFrame<br>nav_by_fund() -&gt; DataFrame<br>compare_with_liquid_only() -&gt; DataFrame<br>public_market_equivalent() -&gt; DataFrame</div>
+      <div class="methods">status<br>tracked_values() -&gt; DataFrame<br>totals_by_fund_type() -&gt; DataFrame<br>nav_by_fund() -&gt; DataFrame<br>compare_with_liquid_only() -&gt; DataFrame<br>public_market_equivalent() -&gt; DataFrame</div>
       <div class="role">Per-period balances in base currency; per-fund rows in both currencies; one row per commitment event with the rate and fx used; and a verdict.</div>
     </article>
   </div>
@@ -422,6 +422,9 @@ budget_usd        = share(d) × liquid-only value in USD on d
 
   <p>X is one number per portfolio, in the workbook's <code>Liquid Spec</code> sheet (<code>Liquid</code> | <code>ExRet</code>, the cells formatted as percentages so 5.4% is stored and read as 0.054). The sheet is required by <code>WorkbookRepository</code> &mdash; the schedule means nothing without the return it assumed &mdash; and <code>SimulationSpec(expected_return=…)</code> overrides it for a run. A policy built by hand without <code>expected_return</code> takes its table to hold shares already, which is what the worked example below does.</p>
 
+  <h3>The five running values</h3>
+  <p>The loop tracks, and <code>result.tracked_values()</code> reports, the running value of each thing the simulation holds, in base currency: <b>1</b> <code>liquid_only</code>, the liquid portfolio alone, which no call or distribution touches and which commitments are sized on; <b>2</b> <code>expected_liquid</code>, that same starting value growing at the expected return instead of at the market's; <b>3</b> <code>liquid_close</code>, the liquid account as it really stands; <b>4</b> <code>private_close</code>, the private book at its marks; and <b>5</b> <code>total_close</code>, the two together. The first three start from the same value at the first observation, so 1 against 2 is how far the portfolio ran ahead of or behind expectation, and 1 against 3 is what the private programme has taken out of the liquid account and not yet given back.</p>
+
   <h3>With carry-forward</h3>
   <p>A year in which no fund of a type closes is still sized, by the same three rules, at that year's last observation: its own share, of its own liquid-only value, at its own expected value. The dollars then wait, and accumulate, until the next year that has a fund of the type, whose funds collect <code>weight × (carried_usd + current_year_usd)</code>. Dollars are carried, never percentages.</p>
   <div class="tablewrap"><table>
@@ -475,7 +478,7 @@ total_close − total_open = liquid_pnl + private_valuation_pnl</code></pre>
       <tr class="rule-engine"><td>usd_rate</td><td class="num">0.80</td><td class="num">0.80</td><td class="num">0.75</td></tr>
       <tr class="rule-liquid"><td>liquid_pnl</td><td class="num">0.00</td><td class="num">100,000.00</td><td class="num">108,350.00</td></tr>
       <tr class="rule-private"><td>distributions</td><td class="num">0.00</td><td class="num">0.00</td><td class="num">3,093.75</td></tr>
-      <tr class="rule-liquid"><td>sizing_base (liquid-only)</td><td class="num">1,000,000.00</td><td class="num">1,100,000.00</td><td class="num">1,210,000.00</td></tr>
+      <tr class="rule-liquid"><td>liquid_only</td><td class="num">1,000,000.00</td><td class="num">1,100,000.00</td><td class="num">1,210,000.00</td></tr>
       <tr class="rule-private"><td>commitments (base)</td><td class="num">0.00</td><td class="num">66,000.00</td><td class="num">48,400.00</td></tr>
       <tr class="rule-private"><td>calls</td><td class="num">0.00</td><td class="num">16,500.00</td><td class="num">12,100.00</td></tr>
       <tr class="rule-liquid"><td>liquid_close</td><td class="num">1,000,000.00</td><td class="num">1,083,500.00</td><td class="num">1,182,843.75</td></tr>

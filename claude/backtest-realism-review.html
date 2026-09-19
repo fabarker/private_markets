@@ -1,0 +1,612 @@
+<title>Private Markets Backtest Realism</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #F5F7F5;
+    --surface: #FFFFFF;
+    --ink: #1A222B;
+    --muted: #5C6873;
+    --line: #D6DCD8;
+    --line-strong: #AEB8B2;
+    --code-bg: #ECF0EC;
+    --liquid: #0E6B66;
+    --liquid-soft: #DDEDEA;
+    --private: #A3621A;
+    --private-soft: #F4E6D4;
+    --engine: #3B4A5A;
+    --engine-soft: #E3E8ED;
+    --bad: #A63A2E;
+    --display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+    --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #121719; --surface: #1A2124; --ink: #E4E8E6; --muted: #98A4A8;
+      --line: #2B3437; --line-strong: #46535A; --code-bg: #1E272A;
+      --liquid: #4DB8AE; --liquid-soft: #173330; --private: #DBA35A; --private-soft: #3A2A16;
+      --engine: #A9B9C8; --engine-soft: #262F37; --bad: #E07A6C;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #121719; --surface: #1A2124; --ink: #E4E8E6; --muted: #98A4A8;
+    --line: #2B3437; --line-strong: #46535A; --code-bg: #1E272A;
+    --liquid: #4DB8AE; --liquid-soft: #173330; --private: #DBA35A; --private-soft: #3A2A16;
+    --engine: #A9B9C8; --engine-soft: #262F37; --bad: #E07A6C;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--body); font-size: 16px; line-height: 1.55;
+    padding-block: 0 96px; padding-inline: 24px;
+  }
+  a { color: inherit; }
+  a:focus-visible { outline: 2px solid var(--liquid); outline-offset: 2px; }
+  .page { max-width: 1080px; margin: 0 auto; }
+
+  header.top { padding-block: 56px 40px; border-bottom: 1px solid var(--line-strong); }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 18px; }
+  header.top h1 { font-family: var(--display); font-weight: 600; font-size: clamp(38px, 6vw, 60px); line-height: 1.02; letter-spacing: -.01em; margin: 0 0 18px; text-wrap: balance; max-width: 15ch; }
+  header.top .lede { font-size: 19px; line-height: 1.45; max-width: 60ch; margin: 0; }
+  .keyfacts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 28px 0 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .keyfacts b { color: var(--ink); font-weight: 500; }
+
+  .layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); gap: 48px; }
+  nav.toc { position: sticky; top: 24px; align-self: start; padding-top: 40px; font-size: 13px; max-height: calc(100vh - 24px); overflow-y: auto; }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+  nav.toc a { text-decoration: none; color: var(--muted); }
+  nav.toc a:hover { color: var(--ink); }
+  nav.toc .n { font-family: var(--mono); font-size: 11px; display: inline-block; width: 20px; }
+  nav.toc .toc-label { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+  nav.toc .gap { margin-top: 8px; }
+  main { min-width: 0; }
+  @media (max-width: 860px) {
+    .layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    nav.toc { position: static; padding-top: 28px; max-height: none; }
+    nav.toc ol { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+    nav.toc .gap { margin-top: 0; }
+  }
+
+  main > section { padding-top: 48px; }
+  main > section + section { border-top: 1px solid var(--line); margin-top: 48px; }
+  h2 { font-family: var(--display); font-weight: 600; font-size: 30px; line-height: 1.1; margin: 0 0 8px; text-wrap: balance; }
+  .kicker { color: var(--muted); margin: 0 0 22px; max-width: 62ch; }
+  p, li { max-width: 66ch; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  li::marker { color: var(--muted); }
+  code { font-family: var(--mono); font-size: .92em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre { font-family: var(--mono); font-size: 13px; line-height: 1.55; background: var(--code-bg); border: 1px solid var(--line); padding: 14px 16px; margin: 10px 0 14px; overflow-x: auto; max-width: none; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre .c { color: var(--muted); }
+
+  /* the one lifted block on the page */
+  .check { border: 1px solid var(--private); background: var(--private-soft); padding: 22px 24px 8px; }
+  .check code { background: var(--surface); }
+  .check pre { background: var(--surface); }
+
+  .tablewrap { overflow-x: auto; margin: 12px 0 18px; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { padding: 8px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+  th { font-family: var(--mono); font-weight: 500; font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); background: var(--ground); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.rank { font-family: var(--display); font-weight: 600; font-size: 17px; color: var(--muted); width: 36px; }
+  td.nowrap { white-space: nowrap; }
+  tr.total td { font-weight: 500; border-top: 1px solid var(--line-strong); }
+  td a { text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+
+  .chip { display: inline-block; font-family: var(--mono); font-size: 11px; letter-spacing: .05em; text-transform: uppercase; padding: 2px 8px; border: 1px solid var(--line-strong); color: var(--muted); white-space: nowrap; line-height: 1.5; }
+  .chip.high { background: var(--engine); border-color: var(--engine); color: var(--ground); }
+  .chip.medium { border-color: var(--engine); color: var(--engine); }
+  .chip.theme { border-color: transparent; padding-left: 0; color: var(--muted); }
+  .chip.done { background: var(--liquid); border-color: var(--liquid); color: var(--ground); }
+
+  /* suggestions: separated by rules, not boxed */
+  .sug { padding-top: 40px; margin-top: 40px; border-top: 1px solid var(--line); }
+  .sug.first { border-top: none; margin-top: 0; padding-top: 12px; }
+  .sug-head { display: grid; grid-template-columns: 44px minmax(0, 1fr); column-gap: 12px; row-gap: 8px; margin-bottom: 16px; }
+  .sug-head .rank { font-family: var(--display); font-weight: 600; font-size: 32px; line-height: 1; color: var(--muted); grid-row: 1 / span 2; }
+  .sug-head h3 { font-family: var(--display); font-weight: 600; font-size: 24px; line-height: 1.15; margin: 0; text-wrap: balance; max-width: 30ch; }
+  .tags { display: flex; flex-wrap: wrap; gap: 6px 8px; margin: 0; max-width: none; }
+  .anat { display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 12px 16px; margin: 0; }
+  .anat dt { font-family: var(--mono); font-size: 11.5px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding-top: 4px; }
+  .anat dd { margin: 0; min-width: 0; }
+  .anat dd > p:last-child, .anat dd > ul:last-child { margin-bottom: 0; }
+  @media (max-width: 560px) {
+    .anat { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+    .anat dd { margin-bottom: 10px; }
+  }
+
+  figure { margin: 6px 0 14px; }
+  .scroll { overflow-x: auto; }
+  figure svg { display: block; width: 100%; min-width: 640px; max-width: 700px; height: auto; }
+  figcaption { font-size: 13px; color: var(--muted); margin-top: 8px; max-width: 66ch; }
+  .sv-text { font-family: var(--body); font-size: 13px; fill: var(--ink); }
+  .sv-strong { font-family: var(--body); font-size: 13px; font-weight: 500; fill: var(--ink); }
+  .sv-mono { font-family: var(--mono); font-size: 11.5px; fill: var(--muted); }
+  .sv-axis { fill: none; stroke: var(--line-strong); stroke-width: 1.5; }
+  .sv-arc { fill: none; stroke: var(--private); stroke-width: 1.5; }
+  .sv-mark { fill: var(--private); stroke: none; }
+  .sv-known { fill: var(--surface); stroke: var(--private); stroke-width: 1.5; }
+  .sv-head { fill: var(--private); }
+  .sv-decision { fill: none; stroke: var(--engine); stroke-width: 1.5; stroke-dasharray: 4 3; }
+
+  .right { columns: 2 320px; column-gap: 40px; padding-left: 20px; }
+  .right li { break-inside: avoid; max-width: none; }
+  .steps { list-style: none; padding: 0; margin: 16px 0 8px; counter-reset: step; display: grid; }
+  .steps li { counter-increment: step; display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 16px; padding: 12px 0; border-top: 1px solid var(--line); max-width: none; margin: 0; }
+  .steps li:last-child { border-bottom: 1px solid var(--line); }
+  .steps li::before { content: counter(step); font-family: var(--display); font-weight: 600; font-size: 22px; line-height: 1; color: var(--muted); }
+  .steps b { font-weight: 500; }
+  .steps span { color: var(--muted); }
+  .footnote { font-size: 13.5px; color: var(--muted); border-top: 1px solid var(--line); padding-top: 20px; margin-top: 48px; max-width: 66ch; }
+</style>
+
+<div class="page">
+<header class="top">
+  <p class="eyebrow">Methodology review · private_markets/claude · 19 September 2026</p>
+  <h1>Private Markets Backtest Realism</h1>
+  <p class="lede">Where the historical simulation departs from what an investor would actually have known, held and paid &mdash; ranked by how far each gap can move the answer. Written against the engine as built (<code>pmsim</code>) and the five-sheet workbook it loads.</p>
+  <ul class="keyfacts">
+    <li><b>1</b> setting to confirm first</li>
+    <li><b>14</b> suggestions, ranked · <b>1</b> implemented</li>
+    <li><b>6</b> need no engine change</li>
+    <li>magnitudes are <b>arithmetic under stated assumptions</b>, not measurements on your data</li>
+  </ul>
+</header>
+
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <p class="toc-label">Contents</p>
+  <ol>
+    <li><a href="#scope">Before you read</a></li>
+    <li><a href="#carry">Confirm carry-forward</a></li>
+    <li><a href="#summary">Ranked summary</a></li>
+    <li class="gap"><a href="#s1"><span class="n">1</span>Counterfactual and PME</a></li>
+    <li><a href="#s2"><span class="n">2</span>Same fee basis</a></li>
+    <li><a href="#s3"><span class="n">3</span>Compare at equal risk</a></li>
+    <li><a href="#s4"><span class="n">4</span>As-known NAV</a></li>
+    <li><a href="#s5"><span class="n">5</span>Liquidity measures</a></li>
+    <li><a href="#s6"><span class="n">6</span>Cash sleeve and costs</a></li>
+    <li><a href="#s7"><span class="n">7</span>Adaptive pacing</a></li>
+    <li><a href="#s8"><span class="n">8</span>Rolling starts, stress</a></li>
+    <li><a href="#s9"><span class="n">9</span>Smoothed marks</a></li>
+    <li><a href="#s10"><span class="n">10</span>Horizon effects</a></li>
+    <li><a href="#s11"><span class="n">11</span>Hedging</a></li>
+    <li><a href="#s12"><span class="n">12</span>Client flows, minimums</a></li>
+    <li><a href="#s13"><span class="n">13</span>Small mechanics</a></li>
+    <li><a href="#s14"><span class="n">14</span>Universe</a></li>
+    <li class="gap"><a href="#right">Already right</a></li>
+    <li><a href="#order">Order of work</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="scope">
+  <h2>Before you read</h2>
+  <p class="kicker">What this is based on, and how far to trust the numbers in it.</p>
+  <ul>
+    <li><b>Scope.</b> The engine as built at commit <code>37ad348</code> and the workbook layout in your five screenshots: Liquid, FX, Flows, Commitments, Spec.</li>
+    <li><b>Nothing here is measured on your data.</b> Your workbook isn't on this machine, so every magnitude below is arithmetic under an assumption stated next to it. Two statements were checked against the engine on the sample workbook: the identity in <a href="#s1">1</a>, exact to 1e&#8209;10 in USD and EUR, and the carry-forward behaviour in the next section.</li>
+    <li><b>&ldquo;Bias today&rdquo;</b> in the summary says which way the current simplification leans. <i>Flatters</i> means the backtest looks better than an investor's experience would have been.</li>
+  </ul>
+</section>
+
+<section id="carry">
+  <h2>First, confirm one setting</h2>
+  <p class="kicker">Not a realism point, but it moves the result more than anything below it.</p>
+  <div class="check">
+    <p><code>AnnualRatePolicy</code> has <code>carry_forward=False</code> by default, and <code>examples/eur_moderate.py</code> runs with that default: a year's rate is used only if a fund of that type closes in that year, and is dropped otherwise. PEM closes every December, so BUYOUT is unaffected. Secondaries funds close every three or four years &mdash; so of the sixteen annual SECONDARIES rates for 2010&ndash;2025, five land on a closing year and eleven are never used.</p>
+    <div class="tablewrap"><table>
+      <thead><tr><th>Fund</th><th>Closes</th><th>Schedule years it could pool</th><th class="num">Rate used now</th><th class="num">With carry_forward=True</th></tr></thead>
+      <tbody>
+        <tr><td>SEC_VI</td><td class="nowrap">31/12/2011</td><td>Year 1&ndash;2 · 2010&ndash;11</td><td class="num">0.80%</td><td class="num">1.60%</td></tr>
+        <tr><td>SEC_VII</td><td class="nowrap">31/12/2015</td><td>Year 3&ndash;6 · 2012&ndash;15</td><td class="num">0.80%</td><td class="num">3.20%</td></tr>
+        <tr><td>SEC_VIII</td><td class="nowrap">31/12/2018</td><td>Year 7&ndash;9 · 2016&ndash;18</td><td class="num">0.90%</td><td class="num">2.60%</td></tr>
+        <tr><td>SEC_IX</td><td class="nowrap">31/12/2021</td><td>Year 10&ndash;12 · 2019&ndash;21</td><td class="num">1.00%</td><td class="num">2.85%</td></tr>
+        <tr><td>SEC_X</td><td class="nowrap">31/12/2025</td><td>Year 13&ndash;16 · 2022&ndash;25</td><td class="num">1.23%</td><td class="num">4.56%</td></tr>
+        <tr class="total"><td colspan="3">Sum of rates applied (USD Conservative rows of the Commitments sheet)</td><td class="num">4.73%</td><td class="num">14.81%</td></tr>
+      </tbody>
+    </table></div>
+    <p>Each rate applies to the liquid balance on its own closing date, so the sums show scale rather than dollars: as configured, the secondaries programme is about a third of the size the schedule implies. (SEC_X counts only if your Liquid series runs past December 2025; a fund closing after the last observation is never committed.) The engine confirms the mechanism on the sample workbook &mdash; SEC_VI is committed at 0.8% by default and 1.6% with carry-forward.</p>
+    <p>If the schedule is an annual budget &mdash; the plan in <code>chatgpt/simulation-implementation-plan.html</code> lists percentage carry-forward as agreed behaviour &mdash; switch it on:</p>
+<pre><code>load_profile_workbook(path, "EUR", "Moderate", initial_value, carry_forward=True)
+<span class="c"># or, in examples/eur_moderate.py</span>
+spec = repository.simulation_spec(initial_value, carry_forward=True)</code></pre>
+    <p>Two consequences. Pooled secondaries commitments become lumpy &mdash; 3% to 4.5% of the liquid balance sized on a single December month end &mdash; which is one reason to size on a trailing average (<a href="#s7">7</a>). And no BUYOUT fund closes in 2024 or 2025 in the Spec sheet, so those years' BUYOUT rates wait for a PEM2025 row either way.</p>
+  </div>
+</section>
+
+<section id="summary">
+  <h2>Ranked summary</h2>
+  <p class="kicker">Ordered by how far each can move the conclusion. Effort is S (hours), M (days), L (a week or more).</p>
+  <div class="tablewrap"><table>
+    <thead><tr><th></th><th>Suggestion</th><th>Theme</th><th>Effect on the answer</th><th>Bias today</th><th>Effort</th></tr></thead>
+    <tbody>
+      <tr><td class="rank">1</td><td><a href="#s1">Report the counterfactual and the PME &mdash; the engine already computes it</a> <span class="chip done">Implemented</span></td><td>Benchmark</td><td><span class="chip high">High</span></td><td>None: it adds the comparison</td><td>S</td></tr>
+      <tr><td class="rank">2</td><td><a href="#s2">Put both sides on the same fee basis</a></td><td>Benchmark</td><td><span class="chip high">High</span> if the index is gross</td><td>Against the programme</td><td>S</td></tr>
+      <tr><td class="rank">3</td><td><a href="#s3">Compare at equal risk</a></td><td>Benchmark</td><td><span class="chip high">High</span></td><td>Flatters: extra risk uncounted</td><td>S</td></tr>
+      <tr><td class="rank">4</td><td><a href="#s4">Value the book with what was known at the time</a></td><td>Timing</td><td><span class="chip high">High</span> once NAV drives anything</td><td>Flatters: understates the private share in a fall</td><td>M</td></tr>
+      <tr><td class="rank">5</td><td><a href="#s5">Measure liquidity the way it actually fails</a></td><td>Liquidity</td><td><span class="chip high">High</span></td><td>Flatters: the risk is invisible</td><td>M</td></tr>
+      <tr><td class="rank">6</td><td><a href="#s6">Hold a cash sleeve, respect the notice period, pay to trade</a></td><td>Liquidity</td><td><span class="chip medium">Medium</span> to high</td><td>Flatters</td><td>M</td></tr>
+      <tr><td class="rank">7</td><td><a href="#s7">Let the commitment policy react &mdash; and ask where the schedule came from</a></td><td>Policy</td><td><span class="chip high">High</span> for policy conclusions</td><td>Flatters if tuned in-sample</td><td>M</td></tr>
+      <tr><td class="rank">8</td><td><a href="#s8">Roll the start date, and add the path the sample doesn't contain</a></td><td>Robustness</td><td><span class="chip high">High</span></td><td>Either way</td><td>S</td></tr>
+      <tr><td class="rank">9</td><td><a href="#s9">Smoothed marks understate risk</a></td><td>Valuation</td><td><span class="chip high">High</span> if risk statistics are reported</td><td>Flatters risk</td><td>M</td></tr>
+      <tr><td class="rank">10</td><td><a href="#s10">The horizon hides the youngest vintages</a></td><td>Valuation</td><td><span class="chip medium">Medium</span></td><td>Either way</td><td>S</td></tr>
+      <tr><td class="rank">11</td><td><a href="#s11">Say what is hedged, then model it</a></td><td>Currency</td><td><span class="chip medium">Medium</span> to high for EUR and GBP</td><td>Either way</td><td>M</td></tr>
+      <tr><td class="rank">12</td><td><a href="#s12">Client cash flows and minimum tickets</a></td><td>Liquidity</td><td><span class="chip medium">Medium</span> for client-sized portfolios</td><td>Flatters liquidity</td><td>S</td></tr>
+      <tr><td class="rank">13</td><td><a href="#s13">Three small mechanics: event-date FX, decision lag, time-weighted flows</a></td><td>Mechanics</td><td><span class="chip">Low</span></td><td>Noise, or negligible</td><td>S</td></tr>
+      <tr><td class="rank">14</td><td><a href="#s14">Keep the universe honest</a></td><td>Process</td><td><span class="chip">Depends</span></td><td>Flatters if funds are missing</td><td>&mdash;</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<section id="suggestions">
+  <h2>The suggestions</h2>
+  <p class="kicker">Each in the same four parts: what the engine does now, why that isn't what an investor experienced, what to change, and where.</p>
+
+  <article class="sug first" id="s1">
+    <div class="sug-head">
+      <span class="rank">1</span>
+      <h3>Report the counterfactual and the PME &mdash; the engine already computes it</h3>
+      <p class="tags"><span class="chip theme">Benchmark</span><span class="chip high">Effect: high</span><span class="chip">Effort: S</span><span class="chip done">Implemented</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p>The result gives balances and flows and nothing to set them against. &ldquo;Total value reached X&rdquo; is not an answer until it stands next to the same liquid portfolio with no private programme.</p></dd>
+      <dt>Gap</dt>
+      <dd><p>Every call is paid by selling the liquid portfolio and every distribution buys it back. That makes the simulation a public-market-equivalent calculation against the investor's own portfolio &mdash; the most relevant benchmark there is &mdash; and the relationship is exact:</p>
+<pre><code>value_added(T) = total_close(T) − initial_value × I(T)/I(0)
+               = Σ (distributions(t) − calls(t)) × I(T)/I(t)  +  private_close(T)
+
+KS-PME         = ( Σ distributions(t) × I(T)/I(t) + private_close(T) )  /  Σ calls(t) × I(T)/I(t)
+
+value_added(T) = FV(calls) × (KS-PME − 1)</code></pre>
+      <p><code>I</code> is the profile's liquid level; flows are the base-currency columns of <code>result.periods</code>. Checked against the engine on the sample workbook, in USD and in EUR with conversion: equal to 1e&#8209;10.</p></dd>
+      <dt>Change</dt>
+      <dd><p>Report, for every run: the liquid-only path beside <code>total_close</code>; value added in currency and as a share of the counterfactual; KS-PME and Direct Alpha (the annualised form &mdash; the IRR of the flows once each is compounded to <code>T</code> by the index) for the programme, by fund type and by fund. Value added includes unrealised NAV, so read it with <a href="#s10">10</a>.</p></dd>
+      <dt>Built</dt>
+      <dd><p><code>pmsim/benchmark.py</code>, reached through <code>SimulationResult.compare_with_liquid_only()</code> and <code>SimulationResult.public_market_equivalent()</code> &mdash; programme, each fund type, each fund; KS-PME, IRR and direct alpha. No new data: <code>periods.return_factor</code> compounds to the index, and nothing in the loop changed. <code>examples/eur_moderate.py</code> prints both tables and writes them as CSV. The tests assert the identity above on every benchmarked run, including through a shortfall.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s2">
+    <div class="sug-head">
+      <span class="rank">2</span>
+      <h3>Put both sides on the same fee basis</h3>
+      <p class="tags"><span class="chip theme">Benchmark</span><span class="chip high">Effect: high if gross</span><span class="chip">Effort: S</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p>The Flows sheet holds what an investor actually paid and received, so it is net of management fees, carry and fund expenses. The Liquid sheet is whatever the index is; a model-portfolio total return is usually gross of advisory fee, product costs and trading.</p></dd>
+      <dt>Gap</dt>
+      <dd><p>A gross liquid index overstates the opportunity cost of every call, the reinvestment return on every distribution, and the counterfactual itself. The bias runs against the private programme and it compounds: a 1% a year difference in all-in cost is about 15% of terminal liquid wealth over fifteen years.</p></dd>
+      <dt>Change</dt>
+      <dd><p>Establish what the Liquid returns are net of. If gross, apply the client's all-in cost as a monthly drag while compounding, and check whether a client would pay any feeder or programme-level fee on top of the flows in the sheet.</p></dd>
+      <dt>Where</dt>
+      <dd><p><code>pmsim/data/orchestrator.py</code>: one parameter on <code>returns_to_levels</code>, surfaced on <code>SimulationSpec</code>.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s3">
+    <div class="sug-head">
+      <span class="rank">3</span>
+      <h3>Compare at equal risk</h3>
+      <p class="tags"><span class="chip theme">Benchmark</span><span class="chip high">Effect: high</span><span class="chip">Effort: S</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p>The natural counterfactual in <a href="#s1">1</a> is the same profile with no programme, and calls are funded pro rata from the whole liquid portfolio.</p></dd>
+      <dt>Gap</dt>
+      <dd><p>Adding private equity to a Conservative portfolio raises its risk, by more than smoothed marks reveal (<a href="#s9">9</a>). Part of the measured value added is payment for that risk, not a benefit of the programme. In practice an adviser adding a 10&ndash;15% equity-like sleeve often trims listed equity to keep the client in profile; here total risk drifts up as the private share grows.</p></dd>
+      <dt>Change</dt>
+      <dd><p>Report a second, risk-matched counterfactual: a blend of the profile and the next one up &mdash; the Liquid sheet has Conservative, Moderate and Aggressive for each currency &mdash; weighted so its volatility equals the unsmoothed volatility of the portfolio with the programme. If house practice is to fund privates from the equity sleeve, model that instead; it needs each profile's equity and bond components as separate return columns.</p></dd>
+      <dt>Where</dt>
+      <dd><p>Reporting only: a second Liquid series run through the same counterfactual calculation.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s4">
+    <div class="sug-head">
+      <span class="rank">4</span>
+      <h3>Value the book with what was known at the time</h3>
+      <p class="tags"><span class="chip theme">Timing</span><span class="chip high">Effect: high once NAV drives anything</span><span class="chip">Effort: M</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p><code>Fund.align_history</code> uses a mark from its valuation date: the 31 December NAV is in the book on 31 December.</p></dd>
+      <dt>Gap</dt>
+      <dd><p>Private funds report 45 to 90 days after quarter end, and later for funds-of-funds and audited year-end accounts. On 31 December the investor knew the 30 September mark and the cash flows since. Using the December mark in December is look-ahead.</p>
+      <figure>
+        <div class="scroll">
+        <svg viewBox="0 0 680 236" role="img" aria-label="Timeline from September to May. The 30 September mark becomes known in mid-December and the 31 December mark in mid-March. On 31 December, when a fund closes and is sized, the engine uses the 31 December mark although only the 30 September mark was known.">
+          <defs>
+            <marker id="lag-head" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+              <path d="M0,0 L10,5 L0,10 z" class="sv-head"></path>
+            </marker>
+          </defs>
+          <path d="M40,124 L668,124" class="sv-axis"></path>
+          <path d="M60,118 L60,130 M130,118 L130,130 M200,118 L200,130 M270,118 L270,130 M340,118 L340,130 M410,118 L410,130 M480,118 L480,130 M550,118 L550,130 M620,118 L620,130" class="sv-axis"></path>
+          <text x="60" y="146" text-anchor="middle" class="sv-mono">30 Sep</text>
+          <text x="130" y="146" text-anchor="middle" class="sv-mono">31 Oct</text>
+          <text x="200" y="146" text-anchor="middle" class="sv-mono">30 Nov</text>
+          <text x="270" y="146" text-anchor="middle" class="sv-mono">31 Dec</text>
+          <text x="340" y="146" text-anchor="middle" class="sv-mono">31 Jan</text>
+          <text x="410" y="146" text-anchor="middle" class="sv-mono">28 Feb</text>
+          <text x="480" y="146" text-anchor="middle" class="sv-mono">31 Mar</text>
+          <text x="550" y="146" text-anchor="middle" class="sv-mono">30 Apr</text>
+          <text x="620" y="146" text-anchor="middle" class="sv-mono">31 May</text>
+          <path d="M60,114 C60,50 232,50 232,112" class="sv-arc" marker-end="url(#lag-head)"></path>
+          <path d="M270,114 C270,50 446,50 446,112" class="sv-arc" marker-end="url(#lag-head)"></path>
+          <path d="M480,114 C480,50 653,50 653,112" class="sv-arc" marker-end="url(#lag-head)"></path>
+          <text x="146" y="54" text-anchor="middle" class="sv-mono">30 Sep mark · known mid-Dec</text>
+          <text x="358" y="54" text-anchor="middle" class="sv-mono">31 Dec mark · known mid-Mar</text>
+          <text x="567" y="54" text-anchor="middle" class="sv-mono">31 Mar mark · known mid-Jun</text>
+          <circle cx="60" cy="124" r="6" class="sv-mark"></circle>
+          <circle cx="270" cy="124" r="6" class="sv-mark"></circle>
+          <circle cx="480" cy="124" r="6" class="sv-mark"></circle>
+          <circle cx="232" cy="124" r="5" class="sv-known"></circle>
+          <circle cx="446" cy="124" r="5" class="sv-known"></circle>
+          <circle cx="653" cy="124" r="5" class="sv-known"></circle>
+          <path d="M270,154 L270,222" class="sv-decision"></path>
+          <text x="282" y="172" class="sv-strong">31 Dec: a PEM vintage closes and is sized</text>
+          <text x="282" y="194" class="sv-text">today: the 31 Dec mark, not known until mid-March</text>
+          <text x="282" y="214" class="sv-text">as-known: the 30 Sep mark + calls − distributions since</text>
+        </svg>
+        </div>
+        <figcaption>Filled dots are valuation dates; open dots are when each mark reaches the investor, about 75 days later.</figcaption>
+      </figure>
+      <p>Under today's rule &mdash; sizing on the liquid balance only &mdash; this distorts the reported total value and the private share, not the commitments. It becomes decision-critical the moment anything is sized on total value or a target allocation (<a href="#s7">7</a>) or an allocation limit is tested (<a href="#s5">5</a>). It matters most in a fall: hindsight marks write the book down a quarter before the investor saw it, so the as-valued private share understates the squeeze the investor actually felt.</p></dd>
+      <dt>Change</dt>
+      <dd><p>One parameter on the rule the engine already uses:</p>
+<pre><code>as-valued (now)   nav(t) = latest mark dated ≤ t          + calls − distributions since that mark
+as-known          nav(t) = latest mark dated ≤ t − lag    + calls − distributions since that mark</code></pre>
+      <p><code>lag = 0</code> reproduces today's behaviour. Keep both series: as-known feeds <code>SizingBalances.private_nav</code> and every allocation test; as-valued stays in the report as the hindsight valuation. Default to 75 days, or use actual report dates per fund if the database has them.</p></dd>
+      <dt>Where</dt>
+      <dd><p><code>Fund.align_history</code> (a second <code>unit_nav_known</code> array on <code>AlignedFundHistory</code>), step 4 of <code>Simulator.run</code>, and one more column in <code>periods</code>.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s5">
+    <div class="sug-head">
+      <span class="rank">5</span>
+      <h3>Measure liquidity the way it actually fails</h3>
+      <p class="tags"><span class="chip theme">Liquidity</span><span class="chip high">Effect: high</span><span class="chip">Effort: M</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p>The only liquidity test is <code>Shortfall</code>: a period's calls exceed the entire liquid balance.</p></dd>
+      <dt>Gap</dt>
+      <dd><p>At commitment rates of 1&ndash;3% of the liquid balance a year the pot cannot plausibly reach zero, so the test never fires and says nothing about liquidity risk. Investors get into trouble much earlier: when unfunded commitments are large against liquid assets, when the private share breaches its limit after a public-market fall (the denominator effect of 2022), when distributions stop and calls don't.</p></dd>
+      <dt>Change</dt>
+      <dd><p>Track unfunded commitments and report, at every observation:</p>
+<pre><code>unfunded(t)       = Σ funds  max(0, commitment_usd − cumulative calls_usd) × fx[t]
+private share(t)  = private_nav(t) / total(t)                         <span class="c"># as-known NAV, see 4</span>
+exposure(t)       = ( private_nav(t) + unfunded(t) ) / total(t)
+coverage(t)       = liquid(t) / unfunded(t)</code></pre>
+      <p>Flag breaches of a maximum private share and a minimum coverage as policy violations rather than waiting for cash to run out, and add <code>unfunded</code> to <code>SizingBalances</code> so a policy can see it. Where distributions are recallable, called capital exceeds 100% of commitment &mdash; size expectations from each fund's historical peak net cash outlay, not from the commitment. Then stress it with the path in <a href="#s8">8</a> and report the worst coverage and the largest breach.</p></dd>
+      <dt>Where</dt>
+      <dd><p><code>CommitmentBook</code> (cumulative calls per commitment), <code>SizingBalances</code>, new columns in <code>periods</code>.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s6">
+    <div class="sug-head">
+      <span class="rank">6</span>
+      <h3>Hold a cash sleeve, respect the notice period, pay to trade</h3>
+      <p class="tags"><span class="chip theme">Liquidity</span><span class="chip medium">Effect: medium to high</span><span class="chip">Effort: M</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p>The whole liquid balance earns the profile return every month and is sold, free, the day a call is due. Distributions are reinvested free the same day.</p></dd>
+      <dt>Gap</dt>
+      <dd><p>Investors keep a reserve for upcoming calls &mdash; a call notice gives about ten business days, and nobody wants to be a forced seller &mdash; and that reserve earns the cash rate, not the portfolio return. Selling to fund calls and reinvesting distributions costs a spread.</p>
+      <p>Drag &asymp; reserve share &times; (portfolio return &minus; cash return): a 3% reserve with a 4% return gap is 12 bp a year. Against a programme worth perhaps 30&ndash;45 bp a year to the whole portfolio &mdash; a 10&ndash;15% allocation earning 3% over the liquid portfolio &mdash; that is a quarter to a third of the benefit. Illustrative, but it's the right order of magnitude to care about.</p></dd>
+      <dt>Change</dt>
+      <dd><p>Split <code>LiquidAccount</code> into an invested sleeve and a cash sleeve with its own return series. A reserve rule tops the cash sleeve up to the next few months of expected calls; calls are paid from cash; transfers between sleeves pay a cost in basis points. Estimate expected calls from unfunded &times; a historical call rate &mdash; never from a fund's actual future calls, which would be look-ahead. Report cash drag as its own line.</p></dd>
+      <dt>Where</dt>
+      <dd><p><code>pmsim/state.py</code> (<code>LiquidAccount</code>) and steps 2, 3 and 5 of <code>Simulator.run</code>; a cash-rate column in the Liquid or FX sheet.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s7">
+    <div class="sug-head">
+      <span class="rank">7</span>
+      <h3>Let the commitment policy react &mdash; and ask where the schedule came from</h3>
+      <p class="tags"><span class="chip theme">Policy</span><span class="chip high">Effect: high for policy conclusions</span><span class="chip">Effort: M</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p><code>AnnualRatePolicy</code> applies a fixed glide path &mdash; the Commitments sheet, by years since inception &mdash; to the liquid balance on the closing date.</p></dd>
+      <dt>Gap</dt>
+      <dd><ul>
+        <li><b>Nobody follows a schedule blind.</b> Real pacing looks at the private share against its target, at unfunded commitments and at liquidity, and slows or accelerates.</li>
+        <li><b>Provenance.</b> If the schedule was calibrated on these same funds' cash flows &mdash; tuned until the allocation path looked right &mdash; the backtest is in-sample and will look better behaved than any forward use of the same schedule.</li>
+        <li><b>One date decides a vintage.</b> Every PEM closing is the last day of December, so each commitment is sized on a single month-end balance. PEM2019 was sized on 31 December 2018, the low of a sharp quarter; PEM2022 and SEC_IX on 31 December 2021, within days of the peak. That pro-cyclicality is a true property of percent-of-portfolio rules; the single-date noise on top of it isn't.</li>
+      </ul></dd>
+      <dt>Change</dt>
+      <dd><p>Add a target-allocation policy behind the existing <code>CommitmentPolicy</code> protocol, fed by as-known NAV (<a href="#s4">4</a>) and unfunded commitments (<a href="#s5">5</a>):</p>
+<pre><code>gap(t)        = target share × total(t) − ( private_nav(t) + k × unfunded(t) )
+commitment(t) = min( max(0, speed × gap(t)),  cap × liquid(t) )</code></pre>
+      <p>Run the fixed schedule and the adaptive rule side by side. For the schedule itself: write down how it was derived, and size on a trailing average of the balance &mdash; twelve months, say &mdash; instead of one month end.</p></dd>
+      <dt>Where</dt>
+      <dd><p><code>pmsim/policy.py</code>: a new class. The engine doesn't change.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s8">
+    <div class="sug-head">
+      <span class="rank">8</span>
+      <h3>Roll the start date, and add the path the sample doesn't contain</h3>
+      <p class="tags"><span class="chip theme">Robustness</span><span class="chip high">Effect: high</span><span class="chip">Effort: S</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p>One run, starting a period before the first Liquid return: 31 March 2009.</p></dd>
+      <dt>Gap</dt>
+      <dd><p>That is three weeks after the bottom of the financial crisis, followed by the longest bull market on record. One path is one draw. And the sample contains no episode in which a mature private book meets a deep, prolonged public fall with distributions shut &mdash; the scenario liquidity planning exists for. It does contain 2022&ndash;24, a public fall with slow distributions: checking that the simulation reproduces that experience is the best in-sample test available.</p></dd>
+      <dt>Change</dt>
+      <dd><p>The schedule is keyed to years since inception, so a later start is just a later Year 0. Start the programme at every year end from 2009 to 2018, committing only to funds that close after the start, and report the spread of value added, PME, peak private share and worst coverage rather than one number. Then a constructed stress path: liquid down 30% over six months, distributions at a quarter of history for two years, calls unchanged.</p></dd>
+      <dt>Where</dt>
+      <dd><p>A loop outside the engine: slice the Liquid series and filter <code>fund_specs</code> to closings on or after the start (the simulator rejects earlier ones by design). The stress path is a modified Liquid series and scaled <code>unit_distributions</code>.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s9">
+    <div class="sug-head">
+      <span class="rank">9</span>
+      <h3>Smoothed marks understate risk</h3>
+      <p class="tags"><span class="chip theme">Valuation</span><span class="chip high">Effect: high if risk statistics are reported</span><span class="chip">Effort: M</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p>Between marks the engine holds NAV at the last mark adjusted for cash flows, with no return. On a monthly grid private value is flat for two months and jumps in the third; the marks themselves are appraisals that trail public markets.</p></dd>
+      <dt>Gap</dt>
+      <dd><p>Volatility, drawdown, Sharpe ratio and correlation taken from <code>total_close</code> flatter a portfolio in proportion to its private share. Reported private-equity volatility is typically half, or less, of what unsmoothed estimates give.</p></dd>
+      <dt>Change</dt>
+      <dd><p>Don't publish risk statistics from the raw series without saying so. Better, unsmooth quarterly private returns first:</p>
+<pre><code>r_true(t) = ( r_reported(t) − ρ × r_reported(t−1) ) / (1 − ρ)        <span class="c"># ρ: first-order autocorrelation</span></code></pre>
+      <p>For a monthly economic view, roll NAV forward between marks with a public proxy (&beta; &times; the listed-equity return) and true up at each mark &mdash; for reporting only; decisions keep as-known NAV. For liquidity stress, haircut NAV: secondary interests change hands at a discount to NAV, and a much wider one in a crisis.</p></dd>
+      <dt>Where</dt>
+      <dd><p>Post-processing on <code>result.funds</code>; optionally a proxy series in <code>Fund.align_history</code>.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s10">
+    <div class="sug-head">
+      <span class="rank">10</span>
+      <h3>The horizon hides the youngest vintages</h3>
+      <p class="tags"><span class="chip theme">Valuation</span><span class="chip medium">Effect: medium</span><span class="chip">Effort: S</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p>Terminal value is the last liquid balance plus the last NAV.</p></dd>
+      <dt>Gap</dt>
+      <dd><p>Commitments scale with a portfolio that has grown for fifteen years, so the latest vintages are the largest in dollars, are still being called, and are carried near cost. Much of the terminal value added is unrealised and sits in funds too young to judge, and the headline is sensitive to the end date. The unfunded commitments outstanding at the horizon are a liability the terminal value ignores.</p></dd>
+      <dt>Change</dt>
+      <dd><p>Split value added into realised (distributions &minus; calls, compounded) and unrealised (NAV). Report DPI, RVPI and TVPI by vintage. Show the headline again with vintages younger than four or five years excluded, and state the unfunded balance at the horizon beside it.</p></dd>
+      <dt>Where</dt>
+      <dd><p>Reporting only, from <code>result.funds</code> and <code>result.commitments</code>.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s11">
+    <div class="sug-head">
+      <span class="rank">11</span>
+      <h3>Say what is hedged, then model it</h3>
+      <p class="tags"><span class="chip theme">Currency</span><span class="chip medium">Effect: medium to high for EUR and GBP</span><span class="chip">Effort: M</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p>Calls are converted at spot when they are paid, so the currency risk on unfunded dollar commitments is genuinely captured. Private NAV is translated at spot: the private sleeve is fully unhedged.</p></dd>
+      <dt>Gap</dt>
+      <dd><p>If the EUR and GBP liquid profiles are currency-hedged, as conservative profiles usually are, the private sleeve becomes the portfolio's main dollar exposure and the comparison mixes a hedged portfolio with an unhedged one. Investors who hedge private NAV pay or earn the interest differential &mdash; between about 1.5% and 3% a year against euro investors in 2018&ndash;19 and 2023&ndash;24 &mdash; and settle the hedge in cash from the liquid portfolio, most painfully when the dollar rallies.</p></dd>
+      <dt>Change</dt>
+      <dd><p>State the hedging assumption for each profile. Optionally hedge a ratio <code>h</code> of as-known private NAV with rolling three-month forwards:</p>
+<pre><code>F         = S(0) × ( 1 + (r_base − r_usd) × τ )                  <span class="c"># base currency per USD</span>
+hedge P&amp;L = h × nav_usd × ( F − S(τ) )                           <span class="c"># settled in cash on the liquid account</span></code></pre></dd>
+      <dt>Where</dt>
+      <dd><p><code>SimulationSpec</code> (hedge ratio, a short-rate or forward-points series per currency) and one settlement step in <code>Simulator.run</code>.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s12">
+    <div class="sug-head">
+      <span class="rank">12</span>
+      <h3>Client cash flows and minimum tickets</h3>
+      <p class="tags"><span class="chip theme">Liquidity</span><span class="chip medium">Effect: medium for client-sized portfolios</span><span class="chip">Effort: S</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p>No external flows, and a commitment of any size is allowed.</p></dd>
+      <dt>Gap</dt>
+      <dd><p>For a private client the real liquidity strain is spending: a 3&ndash;4% annual withdrawal taken entirely from the liquid sleeve, while the private book is locked, raises the private share every year. And programmes have minimum commitments &mdash; 2.2% of a 2 million portfolio is 44,000, below most of them.</p></dd>
+      <dt>Change</dt>
+      <dd><p>An optional dated external-flow series, applied with distributions in step 3 (the original function's <code>wealth_flows</code> stub). A minimum-ticket rule in the policy: below the minimum, skip and carry the rate forward until the pooled amount clears it. Run the backtest at two or three realistic portfolio sizes as well as the index-style 100.</p></dd>
+      <dt>Where</dt>
+      <dd><p>One optional series on <code>Portfolio</code>, step 3 of <code>Simulator.run</code>, and <code>AnnualRatePolicy</code>.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s13">
+    <div class="sug-head">
+      <span class="rank">13</span>
+      <h3>Three small mechanics</h3>
+      <p class="tags"><span class="chip theme">Mechanics</span><span class="chip">Effect: low</span><span class="chip">Effort: S each</span></p>
+    </div>
+    <dl class="anat">
+      <dt>FX</dt>
+      <dd><p><b>Convert each flow at the rate of the day it happened.</b> Flows are pooled in dollars onto the month end and converted at the month-end rate; a call on the 7th was paid at the 7th's rate. EURUSD moves 2&ndash;3% in a typical month, so single flows are mistranslated by a percent or two &mdash; noise, not bias. When the database supplies daily FX:</p>
+<pre><code>now        calls_base[t] = commitment_usd × Σ unit_call(i) × fx[t]
+proposed   calls_base[t] = commitment_usd × Σ unit_call(i) × fx[d(i)]</code></pre>
+      <p>Commitment dollars are a scalar per fund, so this is a second pair of precomputed arrays on <code>AlignedFundHistory</code>; the loop is unchanged. With monthly FX only, leave it.</p></dd>
+      <dt>Lag</dt>
+      <dd><p><b>Size on the balance you knew.</b> A fund closing on 31 December is sized on that day's balance, after December's return, though the commitment was decided and signed earlier. Same-bar look-ahead: tiny &mdash; a 2.2% commitment on a balance a few percent different &mdash; and unbiased on average, but free to remove. Pass the previous observation's close, or the trailing average from <a href="#s7">7</a>, as <code>SizingBalances.liquid</code>.</p></dd>
+      <dt>Dietz</dt>
+      <dd><p><b>Time-weight flows inside the period.</b> The return is applied to the whole opening balance and flows settle at the period end, so cash called on the 3rd still earns the month in the liquid portfolio. Modified Dietz corrects it:</p>
+<pre><code>liquid_pnl(t) = r(t) × ( liquid_open + Σ w(i) × flow(i) )        w(i) = days left after flow i / days in period</code></pre>
+      <p>With calls of 2&ndash;3% of the portfolio a year this is under 1 bp a year on a monthly grid and about three times that on a quarterly one. Do it for tidiness &mdash; <code>Fund.events_by_day</code> already has the dates &mdash; not for the numbers.</p></dd>
+    </dl>
+  </article>
+
+  <article class="sug" id="s14">
+    <div class="sug-head">
+      <span class="rank">14</span>
+      <h3>Keep the universe honest</h3>
+      <p class="tags"><span class="chip theme">Process</span><span class="chip">No code</span></p>
+    </div>
+    <dl class="anat">
+      <dt>Now</dt>
+      <dd><p>The backtest commits to every fund in the Spec sheet by rule, so nothing is selected on performance. That is the right design; the risk is in what the sheet contains.</p></dd>
+      <dt>Keep</dt>
+      <dd><ul>
+        <li>Every programme that was actually offered, including any that were small, merged or disappointing &mdash; fixed by what was investable on each date, not by what is on the shelf today.</li>
+        <li>Unit cash flows of an investor who committed on the Spec sheet's date: a first-close investor pays no equalisation, a later one does.</li>
+        <li>A complete list: no BUYOUT fund closes in 2024 or 2025 in the current Spec sheet.</li>
+      </ul></dd>
+    </dl>
+  </article>
+</section>
+
+<section id="right">
+  <h2>What the engine already gets right</h2>
+  <p class="kicker">Worth keeping exactly as it is while the rest changes.</p>
+  <ul class="right">
+    <li><b>Actual fund cash flows, not a model.</b> The J-curve, the pace of calls and the dispersion between vintages are real.</li>
+    <li><b>Gross calls and distributions kept apart,</b> so a liquidity need is never hidden by netting.</li>
+    <li><b>Commitments fixed in dollars at the closing rate, calls converted when paid.</b> The currency risk on unfunded commitments is captured.</li>
+    <li><b>Between marks, NAV is the last mark adjusted for cash flows</b> &mdash; the roll-forward investors themselves use &mdash; and a mark is taken to include that day's flows.</li>
+    <li><b>One sizing balance per closing date.</b> Funds closing together are sized from the same figure, and a fund's own distributions can't inflate its own commitment.</li>
+    <li><b>Flows pool onto the next pricing date, never the previous one.</b> No cash flow is used before it happened.</li>
+    <li><b>No silent drops.</b> Funds beyond the horizon are listed; a fund closing before inception is an error, not an assumption.</li>
+    <li><b>Every return is applied.</b> The run starts one period before the first return, rolled back to a business day.</li>
+  </ul>
+</section>
+
+<section id="order">
+  <h2>A sensible order of work</h2>
+  <p class="kicker">Reporting first, because it costs nothing and shows which of the rest matter on your data.</p>
+  <ol class="steps">
+    <li><div><b>Confirm carry-forward.</b> <span>A setting, today.</span></div></li>
+    <li><div><b>Reporting, no engine change:</b> counterfactual and PME (<a href="#s1">1</a>, done), realised and unrealised by vintage (<a href="#s10">10</a>), rolling starts (<a href="#s8">8</a>). <span>After this the backtest gives an answer and a spread around it.</span></div></li>
+    <li><div><b>One question, one parameter:</b> the fee basis of the Liquid returns (<a href="#s2">2</a>).</div></li>
+    <li><div><b>Honest inputs:</b> as-known NAV (<a href="#s4">4</a>), then unfunded, exposure, coverage and limits (<a href="#s5">5</a>). <span>In that order, so the limits are tested on what was known.</span></div></li>
+    <li><div><b>Frictions:</b> cash sleeve and trading costs (<a href="#s6">6</a>); client flows and minimum tickets (<a href="#s12">12</a>).</div></li>
+    <li><div><b>Policy:</b> adaptive pacing and trailing-average sizing (<a href="#s7">7</a>). <span>It now has honest inputs to react to.</span></div></li>
+    <li><div><b>Risk and currency:</b> unsmoothing and the risk-matched counterfactual (<a href="#s9">9</a>, <a href="#s3">3</a>); hedging (<a href="#s11">11</a>).</div></li>
+    <li><div><b>When the database brings daily data:</b> the small mechanics (<a href="#s13">13</a>).</div></li>
+  </ol>
+</section>
+
+<p class="footnote">Written against <code>pmsim</code> at commit <code>37ad348</code>; the as-built design is in <code>simulator-design.html</code> beside this file. Suggestion 1 has since been implemented, in <code>pmsim/benchmark.py</code>; nothing else in this review has. The SECONDARIES rates in the carry-forward table are read from the USD Conservative rows of the Commitments sheet in your screenshot; every other magnitude is illustrative arithmetic with its assumption stated where it appears.</p>
+
+</main>
+</div>
+</div>

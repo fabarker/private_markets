@@ -171,6 +171,15 @@ def report(repository, orchestrator, result, start_value, initial_value, rate, r
     print(pd.concat([tracked.head(3), tracked.tail(3)]))
     print(f"\nWhat moved them, last observations ({result.base_currency}):")
     print(result.periods[PERIOD_COLUMNS].tail(6))
+
+    # Every period row also carries the market value of each fund type and of each fund, in
+    # dollars (_usd) and in the portfolio's own currency (_base). The totals are shown here;
+    # result.market_values() has every fund's two columns as well, and periods.csv has them all.
+    market_values = result.market_values()
+    fund_type_totals = [column for column in market_values.columns if "_total_nav_" in column]
+    print(f"\nMarket value by fund type, last observations (_usd in dollars, _base in {result.base_currency}); "
+          f"{len(market_values.columns)} market-value columns in all:")
+    print(market_values[fund_type_totals].tail(6))
     by_type = result.totals_by_fund_type()
     if not by_type.empty:
         print(f"\nBy fund type at {result.periods.index[-1].date()}:")

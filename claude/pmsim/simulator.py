@@ -50,6 +50,19 @@ PERIOD_COLUMNS = [
 # The five running values, in the order SimulationResult.tracked_values reports them.
 TRACKED_COLUMNS = PERIOD_COLUMNS[:5]
 
+
+# After those fixed columns, every period row also carries the market value (NAV) of each fund
+# type and of each fund, in US dollars and in base currency. Which columns those are depends on
+# the funds in the run, so their names are built by these two functions and nowhere else.
+def fund_type_market_value_columns(fund_type: str) -> tuple[str, str]:
+    """The two period columns holding one fund type's total NAV: in USD, then in base currency."""
+    return f"{fund_type}_total_nav_usd", f"{fund_type}_total_nav_base"
+
+
+def fund_market_value_columns(fund_name: str) -> tuple[str, str]:
+    """The two period columns holding one fund's NAV: in USD, then in base currency."""
+    return f"{fund_name}_nav_usd", f"{fund_name}_nav_base"
+
 FUND_COLUMNS = [
     "fund_type", "commitment_usd", "calls_usd", "distributions_usd", "nav_usd",
     "calls_base", "distributions_base", "nav_base",
@@ -128,7 +141,10 @@ class SimulationResult:
     ``usd_rate``. Its first five columns are the running values ``tracked_values()`` returns.
     ``liquid_only`` is the liquid portfolio alone — the initial value compounded by the liquid
     returns, untouched by any call or distribution — and ``liquid_only_usd`` the same in
-    dollars, which is what commitments are sized on.
+    dollars, which is what commitments are sized on. After the fixed ``PERIOD_COLUMNS`` come
+    the market values ``market_values()`` returns: for each fund type
+    ``<TYPE>_total_nav_usd`` and ``<TYPE>_total_nav_base``, then for each fund
+    ``<fund>_nav_usd`` and ``<fund>_nav_base``; zero until a fund is committed.
 
     ``funds`` (index: date, fund) has one row per live commitment per period, in both
     currencies.
@@ -189,6 +205,17 @@ class SimulationResult:
         ``total_close``      ``liquid_close + private_close``: everything the investor holds
         """
         return self.periods[TRACKED_COLUMNS]
+
+    def market_values(self) -> pd.DataFrame:
+        """The market value (NAV) of each fund type and of each fund, by observation.
+
+        Every value twice: ``_usd`` in US dollars, as the funds report it, and ``_base`` in the
+        portfolio's base currency at that observation's exchange rate. These are the columns of
+        ``periods`` that come after the fixed ``PERIOD_COLUMNS``. The fund-type totals in base
+        currency add up to ``private_close``.
+        """
+        market_value_columns = [column for column in self.periods.columns if column not in PERIOD_COLUMNS]
+        return self.periods[market_value_columns]
 
     def nav_by_fund(self) -> pd.DataFrame:
         """Private NAV in base currency by date (rows) and fund (columns); zero before a fund closes."""
@@ -284,6 +311,11 @@ class Simulator:
             first_closing_period = min(self._closings_by_period)
             self.first_commitment_date = self.timeline.observation_date(first_closing_period)
 
+        # The fund types among the funds, in the order they first appear, and the names of the
+        # market-value columns every period row will carry: the fund types' totals, then the funds.
+        self.fund_types: tuple[str, ...] = tuple(dict.fromkeys(fund.fund_type for fund in funds))
+        self.market_value_columns: list[str] = self._market_value_column_names()
+
         # The liquid-only value at each calendar year's last observation.
         self._year_ends: dict[int, YearEndBalance] = self._year_end_balances()
 
@@ -338,6 +370,27 @@ class Simulator:
 
         # A rate is a state, not an event: each observation uses the last rate on or before it.
         return self.timeline.last_value_on_or_before(self.portfolio.usd_rate, name="usd_rate")
+
+    def _market_value_column_names(self) -> list[str]:
+        """The names of the market-value columns: two per fund type, then two per fund."""
+        names: list[str] = []
+
+        for fund_type in self.fund_types:
+            names.extend(fund_type_market_value_columns(fund_type))
+
+        for fund in self.funds:
+            names.extend(fund_market_value_columns(fund.name))
+
+        # A fund called "BUYOUT_total", say, would collide with the BUYOUT total's columns.
+        all_names = PERIOD_COLUMNS + names
+        repeated = sorted({name for name in all_names if all_names.count(name) > 1})
+        if repeated:
+            raise ValueError(
+                f"fund and fund-type names give the periods table the same column twice: {repeated}; "
+                f"rename the fund"
+            )
+
+        return names
 
     def _year_end_balances(self) -> dict[int, YearEndBalance]:
         """The liquid-only value in USD at each calendar year's last observation."""
@@ -447,7 +500,7 @@ class Simulator:
             else:
                 fx_translation = 0.0
 
-            period_rows.append({
+            period_row = {
                 "date": pd.Timestamp(day),
 
                 # the five running values: the liquid portfolio three ways, the private book, the total
@@ -475,7 +528,13 @@ class Simulator:
                 "liquid_only_usd": balances.liquid_only_usd,
                 "commitments": committed_usd * rate,
                 "commitments_usd": committed_usd,
-            })
+            }
+
+            # The market value of each fund type and of each fund, in dollars and in base currency.
+            market_values = self._market_values(t, book, rate)
+            period_row.update(market_values)
+
+            period_rows.append(period_row)
             fund_rows.extend(self._fund_rows(t, day, book, rate))
             private_open = private_close
 
@@ -488,7 +547,7 @@ class Simulator:
 
         return SimulationResult(
             base_currency=self.portfolio.base_currency,
-            periods=_build_table(period_rows, PERIOD_COLUMNS, ["date"]),
+            periods=_build_table(period_rows, PERIOD_COLUMNS + self.market_value_columns, ["date"]),
             funds=_build_table(fund_rows, FUND_COLUMNS, ["date", "fund"]),
             commitments=_build_table(commitment_rows, COMMITMENT_COLUMNS, ["date", "fund"]),
             draws=_build_table(draw_rows, DRAW_COLUMNS, ["date", "fund", "year"]),
@@ -560,6 +619,43 @@ class Simulator:
         return commitments_usd
 
     # ------------------------------------------------------- rows of the result tables
+    def _market_values(self, t: int, book: CommitmentBook, rate: float) -> dict[str, float]:
+        """The market value (NAV) of every fund type and of every fund at observation ``t``.
+
+        Each value twice: in US dollars, as the fund reports it, and in base currency at this
+        observation's exchange rate. A fund that has not been committed yet is worth zero.
+        """
+        # Every fund's NAV in dollars: zero until it is in the book.
+        nav_usd_by_fund = {fund.name: 0.0 for fund in self.funds}
+
+        for commitment in book.commitments:
+            nav_usd_by_fund[commitment.fund.name] = commitment.nav_at(t)
+
+        values: dict[str, float] = {}
+
+        # Each fund type: the sum of its funds.
+        for fund_type in self.fund_types:
+            navs_of_this_type = [
+                nav_usd_by_fund[fund.name]
+                for fund in self.funds
+                if fund.fund_type == fund_type
+            ]
+            total_nav_usd = math.fsum(navs_of_this_type)
+
+            usd_column, base_column = fund_type_market_value_columns(fund_type)
+            values[usd_column] = total_nav_usd
+            values[base_column] = total_nav_usd * rate
+
+        # Each fund on its own.
+        for fund in self.funds:
+            nav_usd = nav_usd_by_fund[fund.name]
+
+            usd_column, base_column = fund_market_value_columns(fund.name)
+            values[usd_column] = nav_usd
+            values[base_column] = nav_usd * rate
+
+        return values
+
     def _fund_rows(self, t: int, day: date, book: CommitmentBook, rate: float) -> list[dict[str, Any]]:
         """One row per live commitment: this period's figures, in dollars and in base currency."""
         rows = []

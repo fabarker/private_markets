@@ -186,6 +186,17 @@ below) — then the same three as the period opened, `liquid_open`, `private_ope
 was committed, `liquid_only_usd` (the dollars the rate was applied to), `commitments`,
 `commitments_usd`.
 
+After those fixed columns every row carries the **market value (NAV) of each fund type and of
+each fund, in both currencies**: `<TYPE>_total_nav_usd` and `<TYPE>_total_nav_base` for each
+fund type, in the order the types first appear among the funds, then `<fund>_nav_usd` and
+`<fund>_nav_base` for each fund, in the order given — `BUYOUT_total_nav_usd`,
+`BUYOUT_total_nav_base`, `SECONDARIES_total_nav_usd`, …, `PEM2011_nav_usd`, `PEM2011_nav_base`,
+…. `_usd` is the fund's own dollar figure; `_base` is that figure in the portfolio's base
+(local) currency at the observation's exchange rate, so it moves with the rate as well as with
+the NAV. A fund is worth zero until it is committed. The fund-type totals in base currency add
+up to `private_close`. `result.market_values()` returns just these columns. A fund whose name
+would collide with one of them (a fund called `BUYOUT_total`, say) is refused.
+
 `funds` (index `date`, `fund`): `fund_type`, `commitment_usd`, `calls_usd`,
 `distributions_usd`, `nav_usd`, `calls_base`, `distributions_base`, `nav_base`.
 

@@ -300,7 +300,9 @@ def test_fund_order_does_not_change_any_result(gbp_portfolio, worked_funds):
     a, b = worked_funds
     forward = Simulator(gbp_portfolio, [a, b], AnnualRatePolicy(gbp_portfolio.commitment_rates, [a, b], {"A": .6, "B": .4})).run()
     reverse = Simulator(gbp_portfolio, [b, a], AnnualRatePolicy(gbp_portfolio.commitment_rates, [b, a], {"A": .6, "B": .4})).run()
-    pd.testing.assert_frame_equal(forward.periods, reverse.periods, check_exact=True)
+    # each fund's market-value columns sit in the order the funds were given in; no value may differ
+    assert list(reverse.market_values().columns)[-4:] == ["B_nav_usd", "B_nav_base", "A_nav_usd", "A_nav_base"]
+    pd.testing.assert_frame_equal(forward.periods, reverse.periods[forward.periods.columns], check_exact=True)
     pd.testing.assert_frame_equal(forward.funds.sort_index(), reverse.funds.sort_index(), check_exact=True)
     pd.testing.assert_frame_equal(forward.commitments.sort_index(), reverse.commitments.sort_index(), check_exact=True)
 
@@ -471,7 +473,10 @@ def test_runs_repeat_exactly_and_leave_inputs_untouched(gbp_portfolio, worked_fu
 def test_result_tables_have_stable_columns_and_dtypes(usd_portfolio, worked_funds):
     result = Simulator(usd_portfolio, worked_funds).run()
     from pmsim.simulator import COMMITMENT_COLUMNS, FUND_COLUMNS, PERIOD_COLUMNS
-    assert list(result.periods.columns) == PERIOD_COLUMNS
+    # the fixed columns, then the market values: the one fund type's total, then funds A and B, each in USD and base
+    assert list(result.periods.columns) == PERIOD_COLUMNS + [
+        "BUYOUT_total_nav_usd", "BUYOUT_total_nav_base", "A_nav_usd", "A_nav_base", "B_nav_usd", "B_nav_base"]
+    assert list(result.market_values().columns) == list(result.periods.columns)[len(PERIOD_COLUMNS):]
     assert list(result.funds.columns) == FUND_COLUMNS
     assert list(result.commitments.columns) == COMMITMENT_COLUMNS
     assert result.periods.index.name == "date" and isinstance(result.periods.index, pd.DatetimeIndex)
@@ -527,3 +532,69 @@ def test_a_multiplier_shows_as_one_row_carrying_it():
     assert result.commitments.iloc[0]["drawn_years"] == "2028x3"
     draw = result.draws.iloc[0]
     assert draw["multiplier"] == 3.0 and draw["rate"] == 0.10 and draw["commitment_usd"] == pytest.approx(300_000.0)
+
+
+# ------------------------------------------- market values on every period row
+def test_every_period_row_carries_each_funds_and_each_fund_types_market_value_in_both_currencies(identities):
+    portfolio = Portfolio("GBP", levels(("2027-01-31", 1_000_000), ("2027-02-28", 1_000_000), ("2027-03-31", 1_000_000)),
+                          {"BUYOUT": {2027: 0.10}, "SECONDARIES": {2027: 0.05}},
+                          usd_rate=[("2027-01-31", 0.80), ("2027-02-28", 0.75), ("2027-03-31", 0.50)])
+    funds = [
+        Fund("B1", "BUYOUT", "2027-01-31", unit_calls=[("2027-01-31", 0.5)], unit_nav=[("2027-03-31", 0.8)]),
+        Fund("S1", "SECONDARIES", "2027-02-28", unit_calls=[("2027-02-28", 1.0)]),
+        Fund("B2", "BUYOUT", "2027-02-28", unit_calls=[("2027-02-28", 0.25)]),
+    ]
+    policy = AnnualRatePolicy(portfolio.commitment_rates, funds, weights={"B1": 0.5, "B2": 0.5},
+                              years=portfolio.calendar_years)
+    result = Simulator(portfolio, funds, policy).run()
+    p = result.periods
+
+    # fund types in the order they first appear, then the funds in the order given
+    assert list(result.market_values().columns) == [
+        "BUYOUT_total_nav_usd", "BUYOUT_total_nav_base", "SECONDARIES_total_nav_usd", "SECONDARIES_total_nav_base",
+        "B1_nav_usd", "B1_nav_base", "S1_nav_usd", "S1_nav_base", "B2_nav_usd", "B2_nav_base"]
+
+    # the two buyout funds split 2027's 10% equally, each sized where it closes:
+    # B1: half of 10% of $1,250,000 committed, half of that called, then marked at 0.8
+    # B2: half of 10% of $1,333,333, a quarter called · S1: 5% of $1,333,333, all called
+    # A fund is worth nothing until it is committed.
+    b1 = 0.5 * 0.10 * 1_000_000 / 0.80
+    b2 = 0.5 * 0.10 * 1_000_000 / 0.75
+    s1 = 0.05 * 1_000_000 / 0.75
+    assert p["B1_nav_usd"].tolist() == pytest.approx([0.5 * b1, 0.5 * b1, 0.8 * b1])
+    assert p["B2_nav_usd"].tolist() == pytest.approx([0.0, 0.25 * b2, 0.25 * b2])
+    assert p["S1_nav_usd"].tolist() == pytest.approx([0.0, s1, s1])
+
+    # the base-currency value is the dollar value at that observation's rate: it moves with the rate alone
+    assert p["S1_nav_base"].tolist() == pytest.approx([0.0, s1 * 0.75, s1 * 0.50])
+
+    # a fund type's total is the sum of its funds, in each currency
+    assert p["BUYOUT_total_nav_usd"].tolist() == pytest.approx((p["B1_nav_usd"] + p["B2_nav_usd"]).tolist())
+    assert p["BUYOUT_total_nav_base"].tolist() == pytest.approx((p["B1_nav_base"] + p["B2_nav_base"]).tolist())
+    assert p["SECONDARIES_total_nav_usd"].tolist() == pytest.approx(p["S1_nav_usd"].tolist())
+
+    # and the types together are the private book
+    totals = p["BUYOUT_total_nav_base"] + p["SECONDARIES_total_nav_base"]
+    assert totals.tolist() == pytest.approx(p["private_close"].tolist())
+    by_type = result.totals_by_fund_type()["nav_usd"].unstack("fund_type")
+    assert p.loc[by_type.index, "BUYOUT_total_nav_usd"].tolist() == pytest.approx(by_type["BUYOUT"].tolist())
+    identities(result)
+
+
+def test_a_fund_beyond_the_horizon_keeps_its_columns_at_zero_and_a_run_without_funds_has_none():
+    portfolio = usd(levels(("2027-01-31", 100.0), ("2027-02-28", 100.0)), {"VC": {2027: 0.1, 2028: 0.1}})
+    never_committed = Fund("LATE", "VC", "2028-06-30")
+    result = Simulator(portfolio, [never_committed]).run()
+    assert result.funds_beyond_horizon == ("LATE",)
+    assert (result.market_values() == 0).all().all()
+    assert list(result.market_values().columns) == ["VC_total_nav_usd", "VC_total_nav_base", "LATE_nav_usd", "LATE_nav_base"]
+
+    from pmsim.simulator import PERIOD_COLUMNS
+    no_funds = Simulator(portfolio).run()
+    assert list(no_funds.periods.columns) == PERIOD_COLUMNS and no_funds.market_values().shape == (2, 0)
+
+
+def test_a_fund_name_that_collides_with_a_market_value_column_is_refused():
+    portfolio = usd(levels(("2027-01-31", 100.0)), {"VC": {2027: 0.1}})
+    with pytest.raises(ValueError, match=r"the same column twice: \['VC_total_nav_base', 'VC_total_nav_usd'\]; rename the fund"):
+        Simulator(portfolio, [Fund("VC_total", "VC", "2027-01-31")])

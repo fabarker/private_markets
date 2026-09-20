@@ -28,6 +28,22 @@ def check_identities(result: SimulationResult, atol: float = 1e-6) -> None:
     close(f["distributions_base"], p["distributions"].reindex(f.index))
     close(f["nav_base"], p["private_close"].reindex(f.index))
     close(result.nav_by_fund().sum(axis=1), p["private_close"])
+
+    # the market values on every period row: each fund's, and each fund type's, in both currencies
+    market_values = result.market_values()
+    type_totals_base = [column for column in market_values if column.endswith("_total_nav_base")]
+    close(market_values[type_totals_base].sum(axis=1), p["private_close"])  # the types add up to the private book
+    for column in market_values:
+        if column.endswith("_nav_usd"):  # and each dollar value, at the period's rate, is its base-currency twin
+            close(market_values[column] * p["usd_rate"], market_values[column[:-len("usd")] + "base"])
+    for currency in ("usd", "base"):  # and each fund's two columns are exactly its rows of the fund table
+        from_fund_table = result.funds[f"nav_{currency}"].unstack("fund")
+        for fund_name in from_fund_table.columns:
+            on_period_rows = p.loc[from_fund_table.index, f"{fund_name}_nav_{currency}"]
+            held = from_fund_table[fund_name].notna()  # the fund table has a row only once the fund is committed
+            assert (on_period_rows[held] == from_fund_table[fund_name][held]).all()
+            assert (on_period_rows[~held] == 0).all()  # and before that the period row says zero
+
     c = result.commitments.groupby(level="date")["commitment_base"].sum()
     close(c, p["commitments"].reindex(c.index))
 

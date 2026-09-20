@@ -155,10 +155,11 @@ def report(repository, orchestrator, result, start_value, initial_value, rate, r
     planned = orchestrator.draw_plans
     print(f"\nDraw plans from the Spec sheet's Draws column: {len(planned)} of {len(orchestrator.funds)} funds name their years.")
     if not result.draws.empty:
-        forward = result.draws[result.draws["plan_date"] > result.draws["funding_date"]]
-        print(f"  {len(result.draws)} drawn years behind {len(result.commitments)} commitments; "
-              f"{len(forward)} of them a year the run had not reached, funded at the closing instead.")
-        print(result.draws[["multiplier", "rate", "plan_date", "expected_value", "funding_date", "liquid_only_usd",
+        priced_with_hindsight = result.draws[result.draws["looks_ahead"]]
+        print(f"  {len(result.draws)} drawn years behind {len(result.commitments)} commitments. Every year is priced on "
+              f"its own year end; {len(priced_with_hindsight)} of them lie after their fund's closing,")
+        print("  so the run looked ahead to the liquid value at that later year end (looks_ahead = True).")
+        print(result.draws[["multiplier", "rate", "sizing_date", "looks_ahead", "expected_value", "liquid_only_usd",
                             "year_budget_unrounded_usd", "year_budget_usd", "commitment_usd", "commitment_base"]])
     unclaimed = {t: years for t, years in orchestrator.policy.unclaimed_schedule_years().items() if years}
     for fund_type, years in unclaimed.items():

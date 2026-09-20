@@ -63,8 +63,8 @@ COMMITMENT_COLUMNS = [
 
 # One row per schedule year a fund draws: the audit trail behind its commitment.
 DRAW_COLUMNS = [
-    "fund_type", "policy_year", "multiplier", "rate", "plan_date", "expected_value",
-    "funding_date", "liquid_only_usd", "year_budget_unrounded_usd", "year_budget_usd",
+    "fund_type", "policy_year", "multiplier", "rate", "sizing_date", "looks_ahead", "expected_value",
+    "liquid_only_usd", "year_budget_unrounded_usd", "year_budget_usd",
     "commitment_usd", "usd_rate", "commitment_base",
 ]
 
@@ -74,8 +74,9 @@ EVENT_COLUMNS = ["observation_date", "period", "unit_call", "unit_distribution",
 EXPLAINED_NUMBER_COLUMNS = ("own_year_rate", "expected_value", "weight", "own_year_usd", "other_years_usd")
 
 _TEXT_COLUMNS = {"fund", "fund_type", "drawn_years"}
-_DATE_COLUMNS = {"date", "closing_date", "event_date", "observation_date", "plan_date", "funding_date"}
+_DATE_COLUMNS = {"date", "closing_date", "event_date", "observation_date", "sizing_date"}
 _INT_COLUMNS = {"policy_year", "period", "year"}
+_TRUE_OR_FALSE_COLUMNS = {"looks_ahead"}
 
 
 def _build_table(rows: list[dict[str, Any]], columns: list[str], index: list[str]) -> pd.DataFrame:
@@ -88,6 +89,9 @@ def _build_table(rows: list[dict[str, Any]], columns: list[str], index: list[str
 
         elif column in _INT_COLUMNS:
             frame[column] = frame[column].astype("int64")
+
+        elif column in _TRUE_OR_FALSE_COLUMNS:
+            frame[column] = frame[column].astype(bool)
 
         elif column not in _TEXT_COLUMNS:
             frame[column] = frame[column].astype(float)
@@ -136,10 +140,11 @@ class SimulationResult:
     every schedule year that went into it.
 
     ``draws`` (index: date, fund, year) breaks each commitment down one drawn year at a time —
-    its rate, the two dates behind it (``plan_date`` normalises the rate, ``funding_date``
-    supplies the liquid value), the year's dollar commitment as computed and as rounded
+    its rate, the ``sizing_date`` it was priced on and the expected value and liquid-only value
+    on that date, the year's dollar commitment as computed and as rounded
     (``year_budget_unrounded_usd``, ``year_budget_usd``) and the dollars it contributed, which
-    sum to the fund's ``commitment_usd``.
+    sum to the fund's ``commitment_usd``. ``looks_ahead`` is True for a year that lies after
+    the fund's closing: it was priced on its own year end, with hindsight.
 
     ``shortfall`` names the first failed observation, or is ``None``.
     ``funds_beyond_horizon`` lists funds whose closing falls after the last observation;
@@ -495,12 +500,22 @@ class Simulator:
     def _sizing_balances(self, t: int, day: date, liquid_account_usd: float,
                          private_nav_usd: float) -> SizingBalances:
         """What the policy is shown: US dollars throughout, and the liquid-only value to size on."""
-        # Completed calendar years only. This is the guarantee against look-ahead: a
-        # commitment is never sized on a balance from a year that has not finished.
+        # The year ends fall into two groups, and they are kept apart on purpose.
+        #
+        # Completed years are what the investor could have known today. Carry-forward reads
+        # only these.
+        #
+        # The current year's end and every later one's could NOT have been known today. They
+        # are handed over because a draw plan may name a year after the fund's closing, and
+        # such a year is priced on its own year-end value — a deliberate look ahead.
         completed_year_ends = {}
+        future_year_ends = {}
+
         for year, year_end in self._year_ends.items():
             if year < day.year:
                 completed_year_ends[year] = year_end
+            else:
+                future_year_ends[year] = year_end
 
         return SizingBalances(
             t,
@@ -510,6 +525,7 @@ class Simulator:
             private_nav_usd=private_nav_usd,
             year_ends=completed_year_ends,
             first_commitment_date=self.first_commitment_date,
+            future_year_ends=future_year_ends,
         )
 
     def _size_commitments(self, cohort: Sequence[Fund], balances: SizingBalances) -> dict[str, float]:
@@ -651,10 +667,11 @@ class Simulator:
                 "multiplier": drawn.multiplier,
                 "rate": drawn.rate,
 
-                # the date that normalises the rate, and the date that supplies the value
-                "plan_date": pd.Timestamp(drawn.plan_date),
+                # the date the year is priced on, whether that date lies after the closing,
+                # and the pacing model's value and the liquid-only value on it
+                "sizing_date": pd.Timestamp(drawn.sizing_date),
+                "looks_ahead": drawn.looks_ahead,
                 "expected_value": drawn.expected_value,
-                "funding_date": pd.Timestamp(drawn.funding_date),
                 "liquid_only_usd": drawn.liquid_only_usd,
 
                 # the year's own dollar commitment, as computed and then as rounded

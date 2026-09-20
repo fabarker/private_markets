@@ -199,14 +199,13 @@ other_years_usd)`. `rate` is always `commitment_usd / sizing_base_usd`.
 
 `draws` (index `date`, `fund`, `year`): one row per schedule year a fund drew, which is the
 audit trail behind its commitment — `fund_type`, `policy_year`, `multiplier`, `rate`, then
-the two dates and what each supplies (`plan_date` and `expected_value` normalise the rate;
-`funding_date` and `liquid_only_usd` supply the value), the year's dollar commitment as
-computed and as rounded (`year_budget_unrounded_usd`, `year_budget_usd`), then
-`commitment_usd` — multiplier × the rounded budget, with the fund's weight already applied —
-`usd_rate` and `commitment_base`. A fund's rows sum to its
-`commitment_usd`, and a row whose `plan_date` is later than its `funding_date` is a year the
-run had not reached when the fund closed. Empty for a policy that cannot break a commitment
-down.
+the `sizing_date` the year was priced on with the `expected_value` and `liquid_only_usd` on
+that date, the year's dollar commitment as computed and as rounded
+(`year_budget_unrounded_usd`, `year_budget_usd`), then `commitment_usd` — multiplier × the
+rounded budget, with the fund's weight already applied — `usd_rate` and `commitment_base`. A
+fund's rows sum to its `commitment_usd`. `looks_ahead` is True for a year that lies after the
+fund's closing: it was priced on its own year end, with hindsight. Empty for a policy that
+cannot break a commitment down.
 
 `result.tracked_values()` is the first five columns of `periods` on their own — the running
 value of each thing the simulation holds, in base currency, one row per observation:
@@ -313,7 +312,7 @@ that has a fund of the type, whose funds collect them by weight:
 
 ```text
 commitment_usd  = weight × ( own_year_usd + other_years_usd )
-other_years_usd = Σ over the other years drawn  share(plan date) × liquid-only value in USD on the funding date
+other_years_usd = Σ over the other years drawn  share(that year's end) × liquid-only value in USD at that year's end
 ```
 
 Dollars are carried, never percentages: three carried years are three budgets, each from its
@@ -333,22 +332,29 @@ commitment, `1-4, 7` combines terms, and blank keeps the default years. Naming a
 type switches carry-forward off for that whole type. `SimulationSpec(draws=…)` overrides the
 sheet, in calendar years.
 
-A plan may name a year the run has not reached when the fund closes, which splits one date
-into two:
+**Every drawn year is priced at its own year end — even one still to come.** One date does
+all the work, the year's *sizing date*:
 
 ```text
-funding date = the year end of min(drawn year, closing year)   the liquid-only value; never a later date
-plan date    = the drawn year's own year end, or 31 December of it when the run has not got there
-budget_usd   = multiplier × schedule[year, type] / expected_value(plan date) × liquid-only value in USD on the funding date
+sizing date = the drawn year's own year end            for a year before the closing, and for one after it
+            = the closing observation                  for the fund's own closing year
+budget_usd  = multiplier × schedule[year, type] / expected_value(sizing date) × liquid-only value in USD on the sizing date
 ```
 
-The funding date is the no-look-ahead guarantee: `SizingBalances.year_ends` holds completed
-calendar years only, so a commitment is never sized on a balance the investor could not have
-known. The plan date is what keeps a forward year honest — the pacing model earmarked that
-amount for the larger portfolio it expects in that year, so dividing by the closing date's
-expected value instead would commit `(1 + X)^years ahead` too much. For a fund that draws
-only its own year and earlier ones the two dates coincide, so carry-forward's numbers are
-unchanged. `result.draws` shows both dates per drawn year, and
+For a year after the fund's closing this **looks ahead**: the run takes the liquid value the
+portfolio will have at that later year end, which nobody could have known on the day the
+commitment was made. That is deliberate. It makes a fund that draws `1-4` collect exactly the
+four dollar commitments the schedule computes for those four years, to the cent — a test
+asserts that a year drawn ahead equals what a fund closing in that year would have got. The
+price is hindsight in the backtest: SEC_VI is committed on 31 Dec 2011 and its size depends
+on the portfolio's value at the end of 2013.
+
+The hindsight is kept visible and contained. `SizingBalances.year_ends` still holds completed
+calendar years only, and carry-forward reads nothing else; the year ends still to come travel
+separately, in `SizingBalances.future_year_ends`, and only a draw plan naming a later year
+reads them. Every row of `result.draws` priced that way has `looks_ahead = True`. A plan
+naming a year the liquid series does not reach is an error: there is no value to look ahead
+to, and another year's is never substituted.
 `policy.unclaimed_schedule_years()` names the years, per fund type, that no fund draws.
 
 **Rounding.** With `rounding_unit_usd`, each drawn year's dollar commitment is rounded to the

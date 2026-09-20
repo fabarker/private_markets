@@ -236,16 +236,17 @@ def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(wor
     assert orchestrator.policy.rates.at[2010, "BUYOUT"] == 0.030  # EUR Moderate's year-1 BUYOUT rate
     assert orchestrator.expected_return == 0.059  # EUR Moderate's ExRet
 
-    # SEC_VI's Draws cell says years 1-4. It closes in year 2, so 2010 is funded from its own year
-    # end — the first commitment date, where the expected value is 1 — and 2011, 2012 and 2013 from
-    # the closing. The schedule grows at X, so every one of them is the same 1.1% share.
+    # SEC_VI's Draws cell says years 1-4. It closes in year 2, and every year is priced on its own
+    # year end: 2010 behind it, 2011 on the closing day, 2012 and 2013 still to come and seen with
+    # hindsight. The schedule grows at X, so every one of them is the same 1.1% share of its own value.
     sec_vi = result.commitments.loc[(pd.Timestamp("2011-12-31"), "SEC_VI")]
-    balance_at_end_of_2010 = result.periods.loc[pd.Timestamp("2010-12-31"), "liquid_only_usd"]
+    liquid_only_usd = result.periods["liquid_only_usd"]
+    balance_at_end_of_2010 = liquid_only_usd.loc[pd.Timestamp("2010-12-31")]
     assert sec_vi["drawn_years"] == "2010, 2011, 2012, 2013"
     assert sec_vi["expected_value"] == pytest.approx(1.059)
     assert sec_vi["own_year_usd"] == pytest.approx(0.011 * sec_vi["sizing_base_usd"], rel=1e-3)
-    assert sec_vi["commitment_usd"] == pytest.approx(
-        0.011 * balance_at_end_of_2010 + 3 * 0.011 * sec_vi["sizing_base_usd"], rel=1e-3)
+    four_year_ends = [liquid_only_usd.loc[pd.Timestamp(f"{year}-12-31")] for year in (2010, 2011, 2012, 2013)]
+    assert sec_vi["commitment_usd"] == pytest.approx(0.011 * sum(four_year_ends), rel=1e-3)
 
     # with the plans switched off, the script's carry-forward switch decides the years again:
     # no secondaries fund closes in 2010, so SEC_VI collects that year's budget and no more
@@ -416,28 +417,38 @@ def test_the_secondaries_draw_four_vintages_then_three_times_one_year(workbook):
 
     assert secondaries.loc["SEC_VI", "drawn_years"] == "2010, 2011, 2012, 2013"
     assert secondaries.loc["SEC_IX", "drawn_years"] == "2021x3"
-    # the sample's schedule grows at X, so under this convention each drawn year is the same 0.8%
-    # share of whatever value funds it: four years for SEC_VI, three years' worth for SEC_IX
+    # SEC_IX draws its own year three times, all on its closing day: three times the 0.8% share
     assert secondaries.loc["SEC_IX", "rate"] == pytest.approx(3 * 0.008, rel=1e-3)
-    assert secondaries.loc["SEC_VIII", "rate"] == pytest.approx(3 * 0.008, rel=1e-3)
-    # SEC_VI draws one year at end-2010 and three at end-2011, so its share spans two balances
-    assert secondaries.loc["SEC_VI", "commitment_usd"] == pytest.approx(2.930, abs=5e-4)
-    assert secondaries["commitment_usd"].sum() == pytest.approx(20.495, abs=5e-4)
+
+    # the sample's schedule grows at X, so every drawn year is 0.8% of the liquid-only value at
+    # THAT YEAR'S OWN year end — read here straight off the periods table, future years included
+    liquid_only_usd = result.periods["liquid_only_usd"]
+    year_end_value = {year: liquid_only_usd[liquid_only_usd.index.year == year].iloc[-1] for year in range(2010, 2026)}
+    for name, years in {"SEC_VI": (2010, 2011, 2012, 2013), "SEC_VII": (2014, 2015, 2016, 2017), "SEC_VIII": (2018, 2019, 2020)}.items():
+        expected = sum(0.008 * year_end_value[year] for year in years)
+        assert secondaries.loc[name, "commitment_usd"] == pytest.approx(expected, rel=1e-4)
+    # SEC_VI is committed on 31 Dec 2011 and its dollars depend on the portfolio's value two years later
+    assert secondaries.loc["SEC_VI", "date"] == pd.Timestamp("2011-12-31")
 
     # relative years 13, 14, 15 and 17 onwards are drawn by nobody: the plan stops at year 16
     assert orchestrator.policy.unclaimed_schedule_years()["SECONDARIES"] == [2022, 2023, 2024, 2026, 2027, 2028, 2029]
     check_identities(result)
 
 
-def test_every_drawn_year_is_funded_from_a_date_no_later_than_the_closing(workbook):
-    """The no-look-ahead guarantee, over the whole sample run."""
+def test_every_drawn_year_is_priced_on_its_own_year_end_and_hindsight_is_marked(workbook):
     result = run_profile_workbook(workbook, "EUR", "Moderate", 100.0)
     draws = result.draws.reset_index()
-    assert (draws["funding_date"] <= draws["date"]).all()
-    # a forward draw is exactly a row whose plan date is later than the date funding it
-    forward = draws[draws["plan_date"] > draws["funding_date"]]
-    assert set(forward["fund"]) == {"SEC_VI", "SEC_VII", "SEC_VIII"}  # the three that reach past their closing
-    assert (forward["funding_date"] == forward["date"]).all()  # and all of them funded at the closing
+
+    # every year is priced in the year it names, on a value that really is the liquid-only value that day
+    assert (draws["sizing_date"].dt.year == draws["year"]).all()
+    on_the_sizing_date = result.periods["liquid_only_usd"].reindex(draws["sizing_date"]).to_numpy()
+    np.testing.assert_allclose(draws["liquid_only_usd"], on_the_sizing_date)
+
+    # looks_ahead marks exactly the years priced on a date after the commitment was made
+    assert (draws["looks_ahead"] == (draws["sizing_date"] > draws["date"])).all()
+    ahead = draws[draws["looks_ahead"]]
+    assert set(ahead["fund"]) == {"SEC_VI", "SEC_VII", "SEC_VIII"} and len(ahead) == 6  # the three that reach past their closing
+    assert not draws[draws["fund_type"] == "BUYOUT"]["looks_ahead"].any()  # a buyout fund draws its own year, on the day
 
     # the dollars of a fund's drawn years add up to its commitment
     totals = draws.groupby(["date", "fund"])["commitment_usd"].sum().reindex(result.commitments.index)

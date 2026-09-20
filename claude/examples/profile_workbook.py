@@ -191,10 +191,10 @@ if __name__ == "__main__":
     print(f"\nCommitments (sized in USD; carry-forward {'on' if CARRY_FORWARD else 'off'}; commitment = weight × (own_year_usd + other_years_usd)):")
     print(result.commitments[["policy_year", "sizing_base_usd", "own_year_rate", "expected_value", "own_year_usd",
                               "drawn_years", "other_years_usd", "weight", "commitment_usd", "usd_rate", "commitment_base"]])
-    # Each fund's commitment, one drawn schedule year at a time: a fund whose Draws cell names
-    # years collects those, and a forward year shows a plan_date later than its funding_date.
+    # Each fund's commitment, one drawn schedule year at a time. Every year is priced on its own
+    # year end; looks_ahead marks a year that lies after the fund's closing, priced with hindsight.
     print(f"\nDrawn schedule years ({len(result.draws)} behind {len(result.commitments)} commitments):")
-    print(result.draws[["multiplier", "rate", "plan_date", "expected_value", "funding_date",
+    print(result.draws[["multiplier", "rate", "sizing_date", "looks_ahead", "expected_value",
                         "liquid_only_usd", "commitment_usd"]])
     for fund_type, years in orchestrator.policy.unclaimed_schedule_years().items():
         if years:

@@ -24,6 +24,13 @@ gives a dollar budget per year and fund type, and each fund collects the budgets
 years it **draws**. Which years those are is its draw plan — by default its own closing
 year, plus, with carry-forward, the years its type passed without a closing; or, stated
 explicitly, any set of years at any multiple, including years after the closing.
+
+Every drawn year is priced on the liquid-only value at **that year's own year end** — always,
+including a year that lies after the fund's closing. Such a year is priced with hindsight:
+the run looks forward to what the liquid portfolio will be worth at that year's end and uses
+it. That is a deliberate choice, made so that a fund collecting years 1 to 4 collects exactly
+the four dollar commitments the schedule computes for those years; it means a commitment
+made in 2011 can depend on the portfolio's value in 2013.
 """
 from __future__ import annotations
 
@@ -70,9 +77,13 @@ class SizingBalances:
     translated. Those two are here for policies that want them, and ``AnnualRatePolicy``
     uses neither.
 
-    ``year_ends`` holds completed calendar years only. That is the engine's guarantee against
-    look-ahead, and it is why a fund that draws a year the run has not reached is funded from
-    its closing observation instead.
+    ``year_ends`` holds completed calendar years only: what the investor could have known at
+    this observation. Carry-forward reads nothing else.
+
+    ``future_year_ends`` holds the rest — the current calendar year's end and every later
+    one's — which the investor could *not* have known. It is here for one purpose: a draw plan
+    may name a year after the fund's closing, and such a year is priced on its own year-end
+    value, with hindsight. Nothing else may read it.
 
     ``first_commitment_date`` is the observation at which the run's first fund is committed.
     """
@@ -84,6 +95,7 @@ class SizingBalances:
     private_nav_usd: float
     year_ends: Mapping[int, YearEndBalance] = field(default_factory=dict)
     first_commitment_date: date | None = None
+    future_year_ends: Mapping[int, YearEndBalance] = field(default_factory=dict)
 
     @property
     def total_usd(self) -> float:
@@ -103,6 +115,22 @@ class SizingBalances:
         latest_year = max(years_known_by_then)
         return self.year_ends[latest_year]
 
+    def year_end_seen_with_hindsight(self, year: int) -> YearEndBalance | None:
+        """The year end of ``year`` itself, whether or not it has happened yet.
+
+        None when the data has no such year. Looks among the years still to come first, then
+        among the completed ones. Unlike ``year_end_on_or_before`` it never falls back to a
+        different year: pricing a year on some other year's value would be wrong, and doing so
+        silently would be worse.
+        """
+        if year in self.future_year_ends:
+            return self.future_year_ends[year]
+
+        if year in self.year_ends:
+            return self.year_ends[year]
+
+        return None
+
 
 class CommitmentPolicy(Protocol):
     def size_commitments(self, cohort: Sequence[Fund], balances: SizingBalances) -> Mapping[str, float]:
@@ -114,12 +142,12 @@ class CommitmentPolicy(Protocol):
 class DrawnYear:
     """One schedule year a fund draws, and the dollars that year's commitment came to.
 
-    There are two dates, and they differ only for a year the run had not reached when the
-    fund closed. ``plan_date`` is where the pacing model puts the year, and is what the rate
-    is divided by, so the year contributes the share the schedule meant it to.
-    ``funding_date`` is the observation whose liquid-only value the dollars are taken from:
-    the year's own year end when the run has reached it, the closing observation otherwise,
-    and never anything later.
+    ``sizing_date`` is the one date the year is priced on: the pacing model's expected value
+    is taken on it, and so is the liquid-only value. It is the year's own year end — except
+    for the fund's own closing year, which is priced on the closing observation.
+    ``looks_ahead`` is True when that date is later than the closing: the year lies after the
+    fund's closing and was priced with hindsight, on a value nobody could have known on the
+    day the commitment was made.
 
     ``year_budget_unrounded_usd`` is the year's dollar commitment as computed,
     ``rate / expected_value × liquid_only_usd``. ``year_budget_usd`` is the same amount
@@ -130,10 +158,10 @@ class DrawnYear:
     year: int
     multiplier: float
     rate: float
-    plan_date: date
+    sizing_date: date
     expected_value: float
-    funding_date: date
     liquid_only_usd: float
+    looks_ahead: bool
     year_budget_unrounded_usd: float
     year_budget_usd: float
     commitment_usd: float
@@ -419,11 +447,18 @@ class AnnualRatePolicy:
     ``draws`` states the years instead, per fund, as ``{calendar year: multiplier}``: a
     secondaries subscription can take four vintages' worth of budget, or three times one
     year's. Each drawn year is priced as its own dollar commitment and the dollars are added.
-    A year **after** the closing is funded from the closing observation, since the run has not
-    reached that year and a commitment is fixed the day it is made; its rate is still divided
-    by the pacing model's value on its own date, so it contributes the share the schedule
-    meant it to rather than one inflated by the growth expected in between. Naming any fund of
-    a type in ``draws`` switches carry-forward off for that type.
+    Naming any fund of a type in ``draws`` switches carry-forward off for that type.
+
+    **Every year is priced at its own year end, even one still to come.** A drawn year's
+    dollars are ``rate / expected value × liquid-only value``, all three taken at that year's
+    own year end. For a year after the fund's closing that means looking ahead: the liquid
+    value the portfolio *will* have at that year's end is used, although nobody could have
+    known it on the day the commitment was made. This is deliberate. It makes a fund that
+    draws years 1 to 4 collect exactly the four dollar commitments the schedule computes for
+    those years. The price is hindsight in the backtest, and ``DrawnYear.looks_ahead`` marks
+    every year it touches. The fund's own closing year is priced on the closing observation,
+    which for a 31 December closing is the year end. A plan naming a year the liquid series
+    does not reach is an error: there is no value to look ahead to.
 
     **Rounding.** With ``rounding_unit_usd`` each drawn year's dollar commitment is rounded to
     the nearest multiple of the unit, halves away from zero, exactly as Excel's ROUND does,
@@ -541,10 +576,11 @@ class AnnualRatePolicy:
     def drawn_years(self, fund_name: str, balances: SizingBalances) -> list[DrawnYear]:
         """Every schedule year the fund draws, with the dollars each one's commitment came to.
 
-        A year before the closing is funded from its own year end, as carry-forward has always
-        done. A year at or after the closing is funded from the closing observation, because
-        that is the last balance known when the commitment is fixed. The rate is always
-        divided by the pacing model's value on the drawn year's own date.
+        Every year is priced on one date, its sizing date: the pacing model's expected value
+        and the liquid-only value are both taken there. For a year before the closing that is
+        the year's own year end, as carry-forward has always done. For the fund's own year it
+        is the closing observation. For a year after the closing it is, again, that year's own
+        year end — seen with hindsight, because the run has not reached it.
         """
         entitlement = self.entitlements[fund_name]
         first_commitment_date = balances.first_commitment_date
@@ -554,30 +590,39 @@ class AnnualRatePolicy:
         for year, multiplier in entitlement.draws.items():
             rate = float(self.rates.at[year, entitlement.fund_type])
 
-            # 1 ── Which balance funds this year, and which date the pacing model puts it on.
+            # 1 ── The date this year is priced on, and the liquid-only value on that date.
             if year < entitlement.policy_year:
-                # A year already over: its own year end supplies both.
+                # A year already over: its own year end.
                 year_end = balances.year_end_on_or_before(year)
                 if year_end is None:
                     continue  # a year before the run began had no portfolio to size on
 
-                plan_date = year_end.date
-                funding_date = year_end.date
+                sizing_date = year_end.date
                 liquid_only_usd = year_end.liquid_only_usd
 
-            else:
-                # The fund's own year, or a later one: the closing observation funds it.
-                funding_date = balances.date
+            elif year == entitlement.policy_year:
+                # The fund's own year: the closing observation.
+                sizing_date = balances.date
                 liquid_only_usd = balances.liquid_only_usd
 
-                # The fund's own year is dated by the closing; a later year by the model's own calendar.
-                if year == entitlement.policy_year:
-                    plan_date = balances.date
-                else:
-                    plan_date = date(year, 12, 31)
+            else:
+                # A year still to come: its own year end, seen with hindsight. The run looks
+                # forward to what the liquid portfolio will be worth then, and uses it.
+                year_end = balances.year_end_seen_with_hindsight(year)
+                if year_end is None:
+                    raise ValueError(
+                        f"{fund_name!r} draws {year}, but the liquid series has no observation in {year} "
+                        f"to take that year's value from"
+                    )
 
-            # 2 ── The year's own dollar commitment: its share of the liquid-only value.
-            expected_value = self.expected_value(plan_date, first_commitment_date)
+                sizing_date = year_end.date
+                liquid_only_usd = year_end.liquid_only_usd
+
+            looks_ahead = sizing_date > balances.date
+
+            # 2 ── The year's own dollar commitment: its share of the liquid-only value,
+            #      with the share and the value both taken on the sizing date.
+            expected_value = self.expected_value(sizing_date, first_commitment_date)
             year_budget_unrounded_usd = rate / expected_value * liquid_only_usd
 
             # 3 ── Rounded the way the spreadsheet rounds it, when a rounding unit is set.
@@ -592,10 +637,10 @@ class AnnualRatePolicy:
                 year=year,
                 multiplier=multiplier,
                 rate=rate,
-                plan_date=plan_date,
+                sizing_date=sizing_date,
                 expected_value=expected_value,
-                funding_date=funding_date,
                 liquid_only_usd=liquid_only_usd,
+                looks_ahead=looks_ahead,
                 year_budget_unrounded_usd=year_budget_unrounded_usd,
                 year_budget_usd=year_budget_usd,
                 commitment_usd=commitment_usd,

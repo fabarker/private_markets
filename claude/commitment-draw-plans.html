@@ -195,7 +195,16 @@
     same <code>{year: multiplier}</code> mapping, and <code>result.draws</code> is the per-drawn-year audit table
     of §8. Old behaviour is unchanged to the bit: across six sample runs the <code>periods</code> and
     <code>funds</code> tables are byte-identical to before, and every commitment matches to 0.000e+00.</p>
-    <p>The figures in §5 were the prediction. The run gives SEC_VI <b>2.930</b>, SEC_VII <b>3.819</b>,
+    <p><b>Changed since, at your direction: a year after the closing is now priced on its own year end, with
+    hindsight.</b> §3 and §4 below argue for the opposite — funding a later year from the closing day so that
+    nothing is sized on a balance the investor could not have known — and that is how it was first built. You
+    decided the liquid value must <em>always</em> be the one on the date of the year being drawn, even when that
+    year is still to come, so the run now looks ahead. With that, the plan date and the funding date of §4 are the
+    same day for every year and the distinction has gone from the code: there is one <code>sizing_date</code>, and
+    <code>looks_ahead</code> marks the rows priced with hindsight. On the sample it moves SEC_VI by +2.7%, SEC_VII
+    by +6.3% and SEC_VIII by +7.3%; the sleeve goes from 20.495 to 21.093. §3, §4 and the figures in §5 are kept
+    as the record of the earlier rule.</p>
+    <p>The figures in §5 were the prediction for that earlier rule. The run gives SEC_VI <b>2.930</b>, SEC_VII <b>3.819</b>,
     SEC_VIII <b>3.802</b>, SEC_IX <b>4.555</b>, SEC_X <b>5.389</b>, <b>20.495</b> for the sleeve — the plan's
     numbers to three figures.</p>
   </div>
@@ -365,7 +374,7 @@
 </section>
 
 <section id="forward">
-  <h2>3 · Drawing forward, without look-ahead</h2>
+  <h2>3 · Drawing forward, without look-ahead <span class="settled">superseded</span></h2>
   <p class="kicker">The engine deliberately hides the future from the policy. That guard has to stay.</p>
 
   <p>Commitment sizing today is scrupulous about information. <code>Simulator._sizing_balances</code> hands the
@@ -394,7 +403,7 @@
 </section>
 
 <section id="dates">
-  <h2>4 · Plan date and funding date</h2>
+  <h2>4 · Plan date and funding date <span class="settled">superseded</span></h2>
   <p class="kicker">Forward draws split one date into two, and the split changes the answer. This is the part I'd most like you to check.</p>
 
   <p>Recall how a rate becomes a share. The <code>Commitments</code> sheet is a pacing schedule quoted per 1 of

@@ -481,8 +481,8 @@ def test_result_tables_have_stable_columns_and_dtypes(usd_portfolio, worked_fund
 
 
 # ------------------------------------------------------------- the draws table
-def test_a_drawn_year_after_the_closing_is_funded_at_the_closing():
-    """The engine never shows a policy a balance from a year it has not finished."""
+def test_a_drawn_year_after_the_closing_is_priced_on_its_own_year_end():
+    """The run looks ahead: a year drawn before it has happened is priced on what the portfolio will be worth then."""
     portfolio = usd(levels(("2027-12-31", 1_000_000), ("2028-12-31", 2_000_000), ("2029-12-31", 4_000_000)),
                     {"VC": {2027: 0.10, 2028: 0.10, 2029: 0.10}})
     fund = Fund("V", "VC", "2027-12-31")
@@ -492,16 +492,29 @@ def test_a_drawn_year_after_the_closing_is_funded_at_the_closing():
     result = Simulator(portfolio, [fund], policy).run()
 
     row = result.commitments.iloc[0]
-    # three years at 10% of the only balance known on 31 Dec 2027: not of 2028's or 2029's
-    assert row["commitment_usd"] == pytest.approx(300_000.0) and row["drawn_years"] == "2027, 2028, 2029"
-    assert row["own_year_usd"] == pytest.approx(100_000.0) and row["other_years_usd"] == pytest.approx(200_000.0)
+    # 10% of each year's own year-end value: 1,000,000 then 2,000,000 then 4,000,000 — the last two
+    # seen with hindsight from a commitment made on 31 Dec 2027
+    assert row["commitment_usd"] == pytest.approx(700_000.0) and row["drawn_years"] == "2027, 2028, 2029"
+    assert row["own_year_usd"] == pytest.approx(100_000.0) and row["other_years_usd"] == pytest.approx(600_000.0)
+    assert result.commitments.index[0][0] == pd.Timestamp("2027-12-31")  # and it is all committed on the closing day
 
     draws = result.draws.reset_index()
     assert draws["year"].tolist() == [2027, 2028, 2029]
-    assert (draws["funding_date"] == pd.Timestamp("2027-12-31")).all()      # every year funded at the closing
-    assert (draws["liquid_only_usd"] == 1_000_000).all()                    # on that day's value alone
-    assert draws["commitment_usd"].tolist() == pytest.approx([100_000] * 3)
+    assert draws["sizing_date"].tolist() == [pd.Timestamp("2027-12-31"), pd.Timestamp("2028-12-31"), pd.Timestamp("2029-12-31")]
+    assert draws["liquid_only_usd"].tolist() == [1_000_000, 2_000_000, 4_000_000]
+    assert draws["looks_ahead"].tolist() == [False, True, True] and draws["looks_ahead"].dtype == bool
+    assert draws["commitment_usd"].tolist() == pytest.approx([100_000, 200_000, 400_000])
     assert draws["commitment_usd"].sum() == pytest.approx(row["commitment_usd"])
+
+
+def test_a_plan_naming_a_year_beyond_the_liquid_series_stops_the_run_with_a_clear_error():
+    portfolio = usd(levels(("2027-12-31", 1_000_000), ("2028-12-31", 2_000_000)),
+                    {"VC": {2027: 0.10, 2028: 0.10, 2029: 0.10}})
+    fund = Fund("V", "VC", "2027-12-31")
+    policy = AnnualRatePolicy(portfolio.commitment_rates, [fund], years=portfolio.calendar_years,
+                              draws={"V": {2027: 1.0, 2029: 1.0}})  # the rates reach 2029; the liquid series stops in 2028
+    with pytest.raises(ValueError, match="'V' draws 2029, but the liquid series has no observation in 2029"):
+        Simulator(portfolio, [fund], policy).run()
 
 
 def test_a_multiplier_shows_as_one_row_carrying_it():

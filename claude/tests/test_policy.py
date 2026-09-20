@@ -29,7 +29,8 @@ def test_sizing_balances_are_us_dollars_only_and_name_the_liquid_only_value():
     assert BALANCES.total_usd == 900_000.0 + 250_000.0  # the account and the private book: what the investor actually holds
     # sizing happens exclusively in USD, and on the liquid-only value: both facts are in the field names
     assert [f.name for f in fields(SizingBalances)] == [
-        "t", "date", "liquid_only_usd", "liquid_account_usd", "private_nav_usd", "year_ends", "first_commitment_date"]
+        "t", "date", "liquid_only_usd", "liquid_account_usd", "private_nav_usd", "year_ends", "first_commitment_date",
+        "future_year_ends"]  # the last is the one place hindsight enters: year ends the investor could not have known
 
 
 def test_commitments_are_sized_on_the_liquid_only_value_not_on_the_account():
@@ -71,9 +72,10 @@ RATES = {"BUYOUT": {2027: 0.10, 2028: 0.08, 2029: 0.12}}
 YEAR_ENDS = {2027: YearEndBalance(date(2027, 12, 31), 1_000_000.0), 2028: YearEndBalance(date(2028, 12, 31), 1_250_000.0)}
 
 
-def balances(on, liquid_only_usd, year_ends=None, first_commitment_date=None, t=0):
+def balances(on, liquid_only_usd, year_ends=None, first_commitment_date=None, t=0, future_year_ends=None):
     return SizingBalances(t=t, date=on, liquid_only_usd=liquid_only_usd, liquid_account_usd=liquid_only_usd,
-                          private_nav_usd=0.0, year_ends=year_ends or {}, first_commitment_date=first_commitment_date)
+                          private_nav_usd=0.0, year_ends=year_ends or {}, first_commitment_date=first_commitment_date,
+                          future_year_ends=future_year_ends or {})
 
 
 AT_C = balances(date(2029, 3, 31), 1_250_000.0, YEAR_ENDS)
@@ -229,19 +231,23 @@ def test_a_plan_replaces_the_years_a_fund_would_otherwise_draw():
     assert policy.size_commitments([b], at_closing) == {"B": pytest.approx(20_000.0)}  # 2% of the liquid value
 
 
-def test_a_forward_year_is_funded_at_the_closing_but_normalised_on_its_own_date():
-    """Convention b: each drawn year keeps the share the schedule meant it to have."""
+def test_a_year_after_the_closing_is_priced_on_its_own_year_end_with_hindsight():
+    """A drawn year is always priced where it falls, even when the run has not got there yet."""
     policy, b = drawing({2028: 1.0, 2029: 1.0, 2030: 1.0})
-    at_closing = balances(date(2028, 12, 31), 1_000_000.0, first_commitment_date=SEED)
-    # three years, each 2% of the liquid value on the closing day: 2.1%/1.05 and 2.205%/1.1025 are both 2%
-    assert policy.size_commitments([b], at_closing) == {"B": pytest.approx(60_000.0)}
-    # normalising every year on the closing date instead would have committed the later years' larger
-    # rates against today's smaller portfolio: 5% too much for 2029, 10.25% too much for 2030
-    assert policy.size_commitments([b], at_closing)["B"] != pytest.approx((0.02 + 0.021 + 0.02205) * 1_000_000)
+    still_to_come = {2029: YearEndBalance(date(2029, 12, 31), 1_500_000.0),
+                     2030: YearEndBalance(date(2030, 12, 31), 2_000_000.0)}
+    at_closing = balances(date(2028, 12, 31), 1_000_000.0, first_commitment_date=SEED, future_year_ends=still_to_come)
+
+    # the schedule grows at X, so each year is 2% of the liquid value at ITS OWN year end:
+    # 2% of 1,000,000 · 2% of 1,500,000 · 2% of 2,000,000
+    assert policy.size_commitments([b], at_closing) == {"B": pytest.approx(20_000 + 30_000 + 40_000)}
+    # pricing all three on the closing day's value, as the engine once did, would have given 60,000
+    assert policy.size_commitments([b], at_closing)["B"] != pytest.approx(60_000.0)
 
     drawn = {d.year: d for d in policy.drawn_years("B", at_closing)}
-    assert [d.plan_date.year for d in drawn.values()] == [2028, 2029, 2030]  # each year dated by itself
-    assert {d.funding_date for d in drawn.values()} == {date(2028, 12, 31)}  # all funded at the closing
+    assert [d.sizing_date for d in drawn.values()] == [date(2028, 12, 31), date(2029, 12, 31), date(2030, 12, 31)]
+    assert [d.liquid_only_usd for d in drawn.values()] == [1_000_000.0, 1_500_000.0, 2_000_000.0]
+    assert [d.looks_ahead for d in drawn.values()] == [False, True, True]  # hindsight is marked wherever it is used
     assert drawn[2030].expected_value == pytest.approx(1.1025) and drawn[2030].rate == 0.02205
 
 
@@ -255,14 +261,43 @@ def test_a_multiplier_draws_one_year_several_times():
     assert [d.multiplier for d in tripled.drawn_years("B", at_closing)] == [3.0]
 
 
-def test_a_forward_year_never_touches_a_balance_from_its_own_year():
-    """The engine hides unfinished years; a policy handed one anyway must still not use it."""
+def test_a_year_drawn_ahead_is_exactly_the_commitment_a_fund_closing_that_year_would_get():
+    """Why hindsight: a fund collecting a later year collects that year's own dollar commitment, to the cent."""
+    end_of_2030 = YearEndBalance(date(2030, 12, 31), 1_331_000.0)
+
+    early, b = drawing({2030: 1.0}, closing="2028-12-31")  # closes two years before the year it draws
+    at_2028 = balances(date(2028, 12, 31), 1_000_000.0, first_commitment_date=SEED, future_year_ends={2030: end_of_2030})
+
+    on_time, _ = drawing({2030: 1.0}, closing="2030-12-31")  # closes in the year it draws
+    at_2030 = balances(date(2030, 12, 31), 1_331_000.0, first_commitment_date=SEED)
+
+    assert early.size_commitments([b], at_2028) == on_time.size_commitments([b], at_2030)
+    assert early.size_commitments([b], at_2028) == {"B": pytest.approx(26_620.0)}  # 2.205% / 1.1025 × 1,331,000
+
+
+def test_a_plan_cannot_draw_a_year_the_liquid_series_does_not_reach():
     policy, b = drawing({2028: 1.0, 2030: 1.0})
-    without = balances(date(2028, 12, 31), 1_000_000.0, first_commitment_date=SEED)
-    leaked = balances(date(2028, 12, 31), 1_000_000.0,
-                     {2030: YearEndBalance(date(2030, 12, 31), 9_999_999.0)}, first_commitment_date=SEED)
-    assert policy.size_commitments([b], leaked) == policy.size_commitments([b], without)
-    assert all(d.funding_date == date(2028, 12, 31) for d in policy.drawn_years("B", leaked))
+    nothing_beyond_2028 = balances(date(2028, 12, 31), 1_000_000.0, first_commitment_date=SEED)
+    with pytest.raises(ValueError, match="'B' draws 2030, but the liquid series has no observation in 2030"):
+        policy.size_commitments([b], nothing_beyond_2028)
+
+
+def test_a_year_drawn_ahead_is_never_priced_on_a_different_years_value():
+    policy, b = drawing({2028: 1.0, 2030: 1.0})
+    only_2029_ahead = balances(date(2028, 12, 31), 1_000_000.0, first_commitment_date=SEED,
+                               future_year_ends={2029: YearEndBalance(date(2029, 12, 31), 1_500_000.0)})
+    with pytest.raises(ValueError, match="no observation in 2030"):  # 2029's value is not a stand-in for 2030's
+        policy.size_commitments([b], only_2029_ahead)
+
+
+def test_carry_forward_never_reads_a_year_end_still_to_come():
+    """Hindsight is for draw plans that name a later year. Carried years lie behind the closing, always."""
+    late = fund("L", closing="2029-03-01")
+    policy = AnnualRatePolicy(RATES, [late], carry_forward=True)
+    with_hindsight = balances(date(2029, 3, 31), 1_250_000.0, YEAR_ENDS,
+                              future_year_ends={2029: YearEndBalance(date(2029, 12, 31), 9_999_999.0)})
+    assert policy.size_commitments([late], with_hindsight) == policy.size_commitments([late], AT_C)
+    assert not any(d.looks_ahead for d in policy.drawn_years("L", with_hindsight))
 
 
 def test_a_plan_naming_the_carried_years_is_carry_forward():
@@ -325,8 +360,9 @@ def test_funds_closing_together_may_draw_the_same_years_and_split_them():
     plan = {2028: 1.0, 2029: 1.0}
     policy = AnnualRatePolicy(DRAW_SCHEDULE, [a, b], weights={"A": 0.75, "B": 0.25},
                               expected_return=0.05, draws={"A": plan, "B": plan})
-    at_closing = balances(date(2028, 12, 31), 1_000_000.0, first_commitment_date=SEED)
-    # 4% of the liquid value between them, split by weight
+    at_closing = balances(date(2028, 12, 31), 1_000_000.0, first_commitment_date=SEED,
+                          future_year_ends={2029: YearEndBalance(date(2029, 12, 31), 1_000_000.0)})
+    # 2% of 2028's value and 2% of 2029's between them, split by weight
     assert policy.size_commitments([a, b], at_closing) == {"A": pytest.approx(30_000.0), "B": pytest.approx(10_000.0)}
 
 

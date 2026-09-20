@@ -1,4 +1,5 @@
-"""Three runs of the simulator. From the claude directory: python -m examples.basic
+"""Four runs of the simulator. Run this file straight from PyCharm, or from the claude
+directory: python -m examples.basic
 
 1. The worked example from the design note: a sterling portfolio, two dollar buyout funds,
    a 10% annual rate split 60/40, and the dollar weakening between the two closings.
@@ -8,9 +9,17 @@
    liquid value by dividing by the pacing model's expected value, which grows at the expected return X.
 4. A liquidity shortfall: the run stops at the observation whose calls exceed the cash.
 """
-import pandas as pd
+import sys
+from pathlib import Path
 
-from pmsim import AnnualRatePolicy, Fund, Portfolio, Simulator
+# Make `import pmsim` work when PyCharm runs this file directly (not as `python -m ...`).
+ROOT = Path(__file__).resolve().parents[1]  # the claude/ directory
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+import pandas as pd  # noqa: E402
+
+from pmsim import AnnualRatePolicy, Fund, Portfolio, Simulator  # noqa: E402
 
 
 def worked_example_gbp():

@@ -37,9 +37,29 @@ from .tables import (
 )
 
 __all__ = [
-    "SimulationSpec", "Orchestrator", "build_funds", "build_portfolio", "returns_to_levels", "infer_inception_date",
-    "load_profile_workbook", "run_profile_workbook",
-    "DataRepository", "FrameRepository", "WorkbookRepository", "SheetLayout", "calendar_rates_for_profile",
-    "normalize_fund_specs", "normalize_fund_market_data", "normalize_market_data", "normalize_commitment_rates",
+    # what a run needs that the data does not say
+    "SimulationSpec",
+
+    # from tables to a run
+    "Orchestrator",
+    "build_funds",
+    "build_portfolio",
+    "returns_to_levels",
+    "infer_inception_date",
+    "load_profile_workbook",
+    "run_profile_workbook",
+
+    # where the tables come from
+    "DataRepository",
+    "FrameRepository",
+    "WorkbookRepository",
+    "SheetLayout",
+    "calendar_rates_for_profile",
+
+    # the tables, normalized
+    "normalize_fund_specs",
+    "normalize_fund_market_data",
+    "normalize_market_data",
+    "normalize_commitment_rates",
     "normalize_expected_returns",
 ]

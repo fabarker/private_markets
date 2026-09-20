@@ -24,11 +24,37 @@ from .state import Commitment, CommitmentBook, LiquidAccount
 from .timeline import AlignedFundHistory, Timeline
 
 __all__ = [
-    "PRIVATE_CURRENCY", "Fund", "Portfolio",
-    "Timeline", "AlignedFundHistory",
-    "LiquidAccount", "Commitment", "CommitmentBook",
-    "SizingBalances", "YearEndBalance", "CommitmentPolicy", "AnnualRatePolicy", "Entitlement", "DrawnYear",
-    "commitment_rounding_unit", "round_like_excel",
-    "Simulator", "SimulationResult", "Shortfall",
-    "compare_with_liquid_only", "public_market_equivalent", "annualised_irr",
+    # the inputs
+    "PRIVATE_CURRENCY",
+    "Fund",
+    "Portfolio",
+
+    # dates → periods
+    "Timeline",
+    "AlignedFundHistory",
+
+    # the state of a run
+    "LiquidAccount",
+    "Commitment",
+    "CommitmentBook",
+
+    # commitment sizing
+    "SizingBalances",
+    "YearEndBalance",
+    "CommitmentPolicy",
+    "AnnualRatePolicy",
+    "Entitlement",
+    "DrawnYear",
+    "commitment_rounding_unit",
+    "round_like_excel",
+
+    # the loop and what it returns
+    "Simulator",
+    "SimulationResult",
+    "Shortfall",
+
+    # benchmarks read off a result
+    "compare_with_liquid_only",
+    "public_market_equivalent",
+    "annualised_irr",
 ]

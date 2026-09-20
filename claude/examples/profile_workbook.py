@@ -1,9 +1,9 @@
 """The portfolio workbook (Liquid, Liquid Spec, FX, Flows, Commitments, Spec), run for one profile.
 
     python examples/profile_workbook.py                                   # or run it straight from PyCharm
-    python -m examples.profile_workbook                                   # sample workbook → temp folder; USD Conservative from 1,000,000
-    python -m examples.profile_workbook book.xlsx USD Conservative 1e6    # a real workbook: path, currency, risk, starting balance
-    python -m examples.profile_workbook book.xlsx EUR Conservative 5e6
+    python -m examples.profile_workbook                                   # sample workbook → temp folder; USD Conservative, from 100,000,000
+    python -m examples.profile_workbook book.xlsx USD Conservative        # a real workbook: path, currency, risk
+    python -m examples.profile_workbook book.xlsx EUR Conservative
 
 If the path does not exist, a sample in the same layout as the real workbook is written
 there first. The sample's shape is the point: compare a real file against it sheet by sheet.
@@ -167,12 +167,11 @@ if __name__ == "__main__":
     path = Path(sys.argv[1]) if len(sys.argv) > 1 else Path(tempfile.mkdtemp()) / "portfolio_workbook.xlsx"
     currency = sys.argv[2] if len(sys.argv) > 2 else "USD"
     risk = sys.argv[3] if len(sys.argv) > 3 else "Conservative"
-    initial_value = float(sys.argv[4]) if len(sys.argv) > 4 else 1_000_000.0
     if not path.exists():
         write_sample_workbook(path)
         print(f"Wrote sample workbook to {path}")
 
-    orchestrator = load_profile_workbook(path, currency, risk, initial_value, carry_forward=CARRY_FORWARD)
+    orchestrator = load_profile_workbook(path, currency, risk, carry_forward=CARRY_FORWARD)  # always starts from 100,000,000
     repository = orchestrator.repository
     print(f"\n{repository}")
     print(f"liquid column: {repository.liquid_column!r} · fx column: {repository.fx_column!r} ({repository.fx_quote})"

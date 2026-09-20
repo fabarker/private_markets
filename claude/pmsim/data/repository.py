@@ -39,7 +39,7 @@ from typing import Any, Mapping, Protocol
 import pandas as pd
 
 from ..inputs import PRIVATE_CURRENCY
-from ..policy import commitment_rounding_unit
+from ..policy import COMMITMENT_ROUNDING_UNIT_USD
 from .spec import SimulationSpec
 from .tables import (
     _drop_blank_rows,
@@ -500,25 +500,25 @@ class WorkbookRepository:
         return float(table[matches[0]])
 
     # ------------------------------------------------------------------- spec
-    def simulation_spec(self, initial_value: float, **overrides: Any) -> SimulationSpec:
+    def simulation_spec(self, **overrides: Any) -> SimulationSpec:
         """The ``SimulationSpec`` for this profile.
 
-        Returns compounded from ``initial_value``, the FX rate inverted when it is quoted as
-        dollars per unit of base currency, and the profile's expected return.
+        Returns compounded from the starting value — always 100,000,000 of the profile's own
+        currency, which is not a setting — the FX rate inverted when it is quoted as dollars
+        per unit of base currency, and the profile's expected return.
 
-        Commitments are rounded as the spreadsheet rounds them: to one ten-thousandth of
-        ``initial_value``, which is ``ROUND(value, -4)`` when that is 100,000,000. Pass
-        ``commitment_rounding_unit_usd`` to choose another unit, or None to round nothing.
+        Commitments are rounded as the spreadsheet rounds them: to the nearest 10,000 dollars,
+        ``ROUND(value, -4)``. Pass ``commitment_rounding_unit_usd`` to choose another unit, or
+        None to round nothing.
         """
         settings: dict[str, Any] = {
             "base_currency": self.currency,
             "liquid_series": self.liquid_column,
             "liquid_kind": "returns",
-            "initial_value": initial_value,
             "fx_series": self.fx_column,
             "fx_quote": self.fx_quote,
             "expected_return": self.expected_return,
-            "commitment_rounding_unit_usd": commitment_rounding_unit(initial_value),
+            "commitment_rounding_unit_usd": COMMITMENT_ROUNDING_UNIT_USD,
         }
 
         # Anything the caller passes wins over the profile's own settings.

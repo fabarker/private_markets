@@ -1,7 +1,9 @@
 """Data layer: where the engine's inputs come from.
 
     from pmsim.data import load_profile_workbook
-    result = load_profile_workbook("portfolio.xlsx", "USD", "Conservative", initial_value=1_000_000).run()
+    result = load_profile_workbook("portfolio.xlsx", "USD", "Conservative").run()
+
+Every run starts with ``pmsim.STARTING_VALUE``, 100,000,000, of the portfolio's own currency.
 
 A ``DataRepository`` hands over four normalized tables (``tables.py``). ``WorkbookRepository``
 reads them from the portfolio workbook (Liquid, Liquid Spec, FX, Flows, Commitments, Spec),
@@ -16,6 +18,7 @@ from .orchestrator import (
     build_funds,
     build_portfolio,
     infer_inception_date,
+    levels_rescaled_to_the_starting_value,
     load_profile_workbook,
     returns_to_levels,
     run_profile_workbook,
@@ -45,6 +48,7 @@ __all__ = [
     "build_funds",
     "build_portfolio",
     "returns_to_levels",
+    "levels_rescaled_to_the_starting_value",
     "infer_inception_date",
     "load_profile_workbook",
     "run_profile_workbook",

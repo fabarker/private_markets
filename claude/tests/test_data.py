@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from pmsim import AnnualRatePolicy, Simulator
+from pmsim import STARTING_VALUE, AnnualRatePolicy, Portfolio, Simulator
 from pmsim.data import FrameRepository, Orchestrator, SimulationSpec, build_funds, build_portfolio
 from pmsim.data.tables import (
     normalize_commitment_rates,
@@ -36,9 +36,18 @@ def tables():
     return fund_spec, fund_market, market, rates
 
 
+def started_at_the_starting_value(portfolio):
+    """The same portfolio as the data layer always builds it: its levels rescaled to start at 100,000,000."""
+    levels = portfolio.liquid_levels * (STARTING_VALUE / portfolio.liquid_levels.iloc[0])
+    usd_rate = portfolio.usd_rate if portfolio.requires_fx_conversion else None
+    return Portfolio(portfolio.base_currency, levels, portfolio.commitment_rates, usd_rate=usd_rate)
+
+
 def expected(gbp_portfolio, worked_funds):
-    policy = AnnualRatePolicy(gbp_portfolio.commitment_rates, worked_funds, {"A": 0.6, "B": 0.4})
-    return Simulator(gbp_portfolio, worked_funds, policy).run()
+    """The worked example run on the engine directly, from the 100,000,000 every assembled run starts with."""
+    portfolio = started_at_the_starting_value(gbp_portfolio)
+    policy = AnnualRatePolicy(portfolio.commitment_rates, worked_funds, {"A": 0.6, "B": 0.4})
+    return Simulator(portfolio, worked_funds, policy).run()
 
 
 # ------------------------------------------------------------ end to end
@@ -48,7 +57,8 @@ def test_tables_reproduce_the_worked_example(gbp_portfolio, worked_funds):
     pd.testing.assert_frame_equal(result.periods, want.periods)
     pd.testing.assert_frame_equal(result.funds, want.funds)
     pd.testing.assert_frame_equal(result.commitments, want.commitments)
-    assert result.periods["total_close"].iloc[-1] == pytest.approx(1_207_318.75)
+    assert result.periods["liquid_open"].iloc[0] == 100_000_000.0  # the tables quote 1,000,000; the run starts at 100,000,000
+    assert result.periods["total_close"].iloc[-1] == pytest.approx(120_731_875.0)  # the worked example's 1,207,318.75, × 100
     check_identities(result)
 
 
@@ -186,7 +196,7 @@ def test_series_and_currency_configuration_errors():
     with pytest.raises(ValueError, match="fx_series is set but base_currency is USD"):
         Orchestrator(repository, SimulationSpec("USD", liquid_series="liquid_gbp", fx_series="gbp_per_usd")).portfolio
     usd = Orchestrator(repository, SimulationSpec("USD", liquid_series="liquid_gbp", weights={"A": .6, "B": .4}))
-    assert usd.portfolio.usd_rate is None and usd.run().periods["total_close"].iloc[-1] == pytest.approx(1_208_350)
+    assert usd.portfolio.usd_rate is None and usd.run().periods["total_close"].iloc[-1] == pytest.approx(120_835_000)
     with pytest.raises(ValueError, match="liquid_series must name"):
         SimulationSpec("USD", liquid_series=" ")
 
@@ -241,7 +251,7 @@ def test_expected_return_changes_the_second_commitment_of_the_worked_example():
     c = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates, returns), SPEC).run().commitments
     # A is the first commitment (31 Mar): expected value 1. B is 91 days into a year that runs to 31 Mar 2028 and holds a 29 Feb
     assert c["expected_value"].tolist() == pytest.approx([1.0, 1.05 ** (91 / 366)])
-    assert c["commitment_usd"].tolist() == pytest.approx([82_500, 0.04 / 1.05 ** (91 / 366) * 1_210_000 / 0.75])
+    assert c["commitment_usd"].tolist() == pytest.approx([8_250_000, 0.04 / 1.05 ** (91 / 366) * 121_000_000 / 0.75])
 
 
 # -------------------------------------------------------------- repository
@@ -263,7 +273,8 @@ def test_frame_repository_normalizes_once_and_hands_out_copies():
 def test_build_portfolio_directly():
     fund_spec, fund_market, market, rates = tables()
     portfolio = build_portfolio(normalize_market_data(market), SPEC, normalize_commitment_rates(rates))
-    assert portfolio.liquid_levels.tolist() == [1e6, 1.1e6, 1.21e6] and portfolio.usd_rate.tolist() == [0.8, 0.8, 0.75]
+    # the sheet quotes 1,000,000, 1,100,000, 1,210,000: read as an index, and started at 100,000,000
+    assert portfolio.liquid_levels.tolist() == [1e8, 1.1e8, 1.21e8] and portfolio.usd_rate.tolist() == [0.8, 0.8, 0.75]
 
 
 # ---------------------------------------------------------- draw plans
@@ -333,13 +344,38 @@ def test_the_spec_carries_the_rounding_unit_to_the_policy():
     plain = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates), SPEC)
     assert plain.spec.commitment_rounding_unit_usd is None and plain.policy.rounding_unit_usd is None  # off unless asked for
 
-    rounded_spec = SimulationSpec(**{**vars(SPEC), "commitment_rounding_unit_usd": 50_000})
+    rounded_spec = SimulationSpec(**{**vars(SPEC), "commitment_rounding_unit_usd": 1_000_000})
     rounded = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates), rounded_spec)
-    assert rounded.policy.rounding_unit_usd == 50_000.0
+    assert rounded.policy.rounding_unit_usd == 1_000_000.0
     commitments = rounded.run().commitments["commitment_usd"]
-    # each fund's own-year budget is rounded to 50,000 dollars, then split 60/40
-    assert commitments.tolist() == pytest.approx([0.6 * 150_000, 0.4 * 150_000])
+    # the two own-year budgets — 10% of $137,500,000 and of $161,333,333 — go to the nearest million, then split 60/40
+    assert commitments.tolist() == pytest.approx([0.6 * 14_000_000, 0.4 * 16_000_000])
     assert commitments.tolist() != pytest.approx(plain.run().commitments["commitment_usd"].tolist())
 
     with pytest.raises(ValueError, match="commitment_rounding_unit_usd must be a positive number of dollars"):
         SimulationSpec(**{**vars(SPEC), "commitment_rounding_unit_usd": -1})
+
+
+# ------------------------------------------------------- the starting value
+@pytest.mark.parametrize("quoted_from", [1.0, 100.0, 1_000_000.0, 100_000_000.0, 2_500_000_000.0])
+def test_a_level_series_is_an_index_and_the_run_always_starts_at_a_hundred_million(quoted_from):
+    """Only the changes in a level series matter. Whatever scale it is quoted on, the run starts at 100,000,000."""
+    fund_spec, fund_market, market, rates = tables()
+    market["liquid_gbp"] = [quoted_from, quoted_from * 1.1, quoted_from * 1.21]
+    result = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates), SPEC).run()
+
+    assert result.periods["liquid_open"].iloc[0] == pytest.approx(100_000_000.0, rel=1e-12)
+    np.testing.assert_allclose(result.periods["liquid_only"], [1e8, 1.1e8, 1.21e8])
+    np.testing.assert_allclose(result.periods["period_return"], [0.0, 0.1, 0.1])  # the returns are what the series said
+    assert result.periods["total_close"].iloc[-1] == pytest.approx(120_731_875.0)  # and so the same run every time
+
+
+def test_the_spec_has_no_starting_value_and_a_level_series_must_be_positive():
+    assert "initial_value" not in SimulationSpec.__dataclass_fields__
+    with pytest.raises(TypeError, match="initial_value"):
+        SimulationSpec("GBP", liquid_series="liquid_gbp", fx_series="gbp_per_usd", initial_value=1_000_000)
+
+    fund_spec, fund_market, market, rates = tables()
+    market["liquid_gbp"] = [0.0, 1.1e6, 1.21e6]
+    with pytest.raises(ValueError, match="liquid levels must be strictly positive; the first is 0.0"):
+        Orchestrator(FrameRepository(fund_spec, fund_market, market, rates), SPEC).portfolio

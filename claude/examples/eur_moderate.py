@@ -11,16 +11,12 @@ If WORKBOOK does not exist, a sample workbook in the same layout is generated
 next to it and used instead, so the script runs on a fresh checkout — the notice printed
 at the top says which file was used.
 
-The EUR portfolio's balance is kept in euros. With START_IN_BASE_CURRENCY = True, START_VALUE
-is read as euros and used as it is. Set it to False to read START_VALUE as US dollars
-instead: they are then converted at the first available EURUSD rate — the rate the engine
-also carries at the inception date, one month before the first Liquid return — and the
-script prints that conversion.
+The run always starts with 100,000,000 euros: pmsim.STARTING_VALUE of the profile's own
+currency, held at the inception date one month before the first Liquid return. That is not
+a setting. There is no other starting amount, and no starting from dollars converted in.
 
-Commitments are rounded the way the spreadsheet rounds them. Each year's dollar commitment
-goes to the nearest multiple of START_VALUE / 10,000, halves away from zero: from
-100,000,000 that is the nearest 10,000, Excel's ROUND(value, -4), and any other starting
-value gets the same relative precision.
+Commitments are rounded the way the spreadsheet rounds them: each year's dollar commitment
+goes to the nearest 10,000 dollars, halves away from zero — Excel's ROUND(value, -4).
 """
 import sys
 from pathlib import Path
@@ -32,17 +28,15 @@ if str(ROOT) not in sys.path:
 
 import pandas as pd  # noqa: E402
 
-from pmsim import commitment_rounding_unit  # noqa: E402
+from pmsim import COMMITMENT_ROUNDING_UNIT_USD, STARTING_VALUE  # noqa: E402
 from pmsim.data import Orchestrator, WorkbookRepository  # noqa: E402
 
 # ---- settings: edit these, then Run / Debug this file -------------------------------------------
 WORKBOOK = ROOT / "data" / "portfolio.xlsx"   # your workbook; a sample is generated here if it is missing
 OUTPUT_DIR = None                             # e.g. ROOT / "data" / "out" to also write the result tables as CSV
 CURRENCY, RISK = "EUR", "Moderate"            # the profile: a Liquid column "<CURRENCY> <RISK>" and Commitments rows
-START_VALUE = 100_000_000.0                   # the starting balance ...
-START_IN_BASE_CURRENCY = True                 # ... True: in euros, used as it is. False: in dollars, converted at the first rate
-ROUND_COMMITMENTS = True                      # round each year's dollar commitment like Excel's ROUND(value, -4) on 100,000,000:
-                                              # to the nearest START_VALUE / 10,000 dollars, halves away from zero. False: no rounding
+ROUND_COMMITMENTS = True                      # round each year's dollar commitment like Excel's ROUND(value, -4):
+                                              # to the nearest 10,000 dollars, halves away from zero. False: no rounding
 CARRY_FORWARD = True                          # a year with no fund of a type is still sized (its rate × that year-end's
                                               # balance) and the dollars wait for the next fund of the type; False: not used
 # --------------------------------------------------------------------------------------------------
@@ -51,43 +45,22 @@ PERIOD_COLUMNS = ["liquid_open", "liquid_pnl", "distributions", "commitments", "
                   "liquid_close", "private_close", "total_close", "fx_translation"]
 
 
-def starting_balance(repository: WorkbookRepository, start_usd: float) -> tuple[float, float, pd.Timestamp]:
-    """The starting balance in the profile's currency, the rate used, and the date of that rate."""
-    market = repository.market_data()
-    first_liquid_date = market[repository.liquid_column].dropna().index[0]
-    if repository.fx_column is None:  # a USD profile: nothing to convert
-        return start_usd, 1.0, first_liquid_date
-    rates = market[repository.fx_column].dropna()
-    rate = rates.asof(first_liquid_date)  # the first known rate; the engine carries it at inception too
-    if pd.isna(rate):
-        raise ValueError(f"no {repository.fx_column} rate on or before {first_liquid_date.date()} to convert the starting balance")
-    rate_date = rates.index[rates.index <= first_liquid_date][-1]
-    # usd_per_base (EURUSD): euros = dollars / rate; base_per_usd (USDEUR): euros = dollars × rate
-    base = start_usd / rate if repository.fx_quote == "usd_per_base" else start_usd * rate
-    return float(base), float(rate), rate_date
-
-
-def run(path, start_value: float = START_VALUE, out_dir=None, *, start_in_base_currency: bool = START_IN_BASE_CURRENCY,
-        carry_forward: bool = CARRY_FORWARD, draws=None, round_commitments: bool = ROUND_COMMITMENTS):
+def run(path, out_dir=None, *, carry_forward: bool = CARRY_FORWARD, draws=None,
+        round_commitments: bool = ROUND_COMMITMENTS):
     """Load the workbook, build the engine's inputs step by step, run, and report.
 
     Each step is its own local variable so a breakpoint shows one thing at a time:
-    repository (the sheets), initial_value (the conversion), spec (the settings), funds,
-    portfolio, policy (the inputs the engine sees), then result. Step into
+    repository (the sheets), spec (the settings), funds, portfolio, policy (the inputs the
+    engine sees), then result. The run starts with STARTING_VALUE, 100,000,000, of the
+    profile's own currency; that is fixed, so there is nothing to pass in for it. Step into
     orchestrator.run() to follow the period loop in Simulator.run().
     """
     repository = WorkbookRepository(path, CURRENCY, RISK)                       # 1. read every sheet, pick the profile
 
-    if start_in_base_currency:                                                  # 2. the starting balance in euros
-        initial_value, rate, rate_date = float(start_value), float("nan"), None
-    else:
-        initial_value, rate, rate_date = starting_balance(repository, start_value)
-
-    # The rounding unit comes from the number typed as START_VALUE, whichever currency it is
-    # read in: 100,000,000 rounds commitments to the nearest 10,000 dollars.
+    # 2. how commitments are rounded: to the nearest 10,000 dollars, or not at all
     rounding_unit_usd = None
     if round_commitments:
-        rounding_unit_usd = commitment_rounding_unit(start_value)
+        rounding_unit_usd = COMMITMENT_ROUNDING_UNIT_USD
 
     settings = {
         "carry_forward": carry_forward,
@@ -99,7 +72,7 @@ def run(path, start_value: float = START_VALUE, out_dir=None, *, start_in_base_c
     if draws is not None:
         settings["draws"] = draws
 
-    spec = repository.simulation_spec(initial_value, **settings)                # 3. currency, series, fx quote, expected return
+    spec = repository.simulation_spec(**settings)                # 3. currency, series, fx quote, expected return
     orchestrator = Orchestrator(repository, spec)
 
     funds = orchestrator.funds                                                  # 4. one Fund per Spec row, unit histories from Flows
@@ -108,23 +81,20 @@ def run(path, start_value: float = START_VALUE, out_dir=None, *, start_in_base_c
 
     result = orchestrator.run()                                                 # 7. the period loop
 
-    report(repository, orchestrator, result, start_value, initial_value, rate, rate_date, start_in_base_currency)
+    report(repository, orchestrator, result)
     if out_dir is not None:
         write_csvs(orchestrator, result, Path(out_dir))
     return orchestrator, result
 
 
-def report(repository, orchestrator, result, start_value, initial_value, rate, rate_date, start_in_base_currency):
+def report(repository, orchestrator, result):
     inception = orchestrator.portfolio.first_date  # one period before the first Liquid return
     print(f"Workbook: {repository.path}")
     print(f"Sheets:   {repository.sheet_names}")
     print(f"Profile:  {repository.profile} · liquid column {repository.liquid_column!r} · "
           f"fx column {repository.fx_column!r} ({repository.fx_quote}) · inception year {repository.inception_year}")
-    if start_in_base_currency:
-        print(f"\nStarting balance: {CURRENCY} {initial_value:,.2f} at inception {inception}")
-    else:
-        print(f"\nStarting balance: USD {start_value:,.2f} = {CURRENCY} {initial_value:,.4f} "
-              f"at {repository.fx_column} {rate:.4f} (first available rate, {rate_date.date()}), held at inception {inception}")
+    print(f"\nStarting balance: {CURRENCY} {STARTING_VALUE:,.2f} at inception {inception} — always, and always in "
+          f"the portfolio's own currency")
 
     print(f"\nExpected return X for {repository.profile}: {orchestrator.expected_return:.2%} a year (from the workbook's expected-returns sheet). "
           f"The pacing model's liquid value is 1 on the first commitment date, {orchestrator.simulator.first_commitment_date}.")

@@ -5,9 +5,7 @@ one, so it lives apart from both.
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
-from numbers import Real
 from typing import Any, Mapping
 
 from ..policy import validate_expected_return, validate_rounding_unit
@@ -21,12 +19,16 @@ class SimulationSpec:
     """Everything a run needs that the tables do not carry.
 
     **The liquid portfolio.** ``liquid_series`` names its column of market_data, and
-    ``liquid_kind`` says what that column holds. ``levels`` are used as they are, and the
-    first level is the starting balance. ``returns`` are simple per-period returns: the
-    simulation then starts one period before the first return — on ``inception_date`` if
-    given, otherwise on a date inferred from the series' frequency and rolled back to a
-    business day — where the balance is ``initial_value``, and every return is applied from
-    there.
+    ``liquid_kind`` says what that column holds. With ``levels`` the series is read as an
+    index — only its changes matter — and rescaled to start at the starting value.
+    ``returns`` are simple per-period returns: the simulation then starts one
+    period before the first return — on ``inception_date`` if given, otherwise on a date
+    inferred from the series' frequency and rolled back to a business day — and every return
+    is applied from there.
+
+    **The starting value is not a setting.** Every run starts with
+    ``pmsim.STARTING_VALUE``, 100,000,000, in the portfolio's own base currency. There is no
+    field for another amount, and no way to start from an amount of another currency.
 
     **The exchange rate.** ``fx_series`` names its column of market_data, and ``fx_quote`` says
     how it is quoted: ``base_per_usd`` (GBP per 1 USD, used as it is) or ``usd_per_base``
@@ -54,9 +56,8 @@ class SimulationSpec:
 
     **Rounding.** ``commitment_rounding_unit_usd`` rounds each year's dollar commitment to the
     nearest multiple of that many dollars, halves away from zero, as Excel's ROUND does;
-    10_000 is ``ROUND(value, -4)``. ``pmsim.commitment_rounding_unit(starting_value)`` gives
-    the unit with that precision for any starting value, and
-    ``WorkbookRepository.simulation_spec`` applies it by default. None rounds nothing.
+    10_000 is ``ROUND(value, -4)``, which is ``pmsim.COMMITMENT_ROUNDING_UNIT_USD`` and what
+    ``WorkbookRepository.simulation_spec`` applies by default. None rounds nothing.
 
     **The run.** ``stop_on_shortfall`` ends the run at the first observation whose calls the
     liquid account cannot meet; ``cash_tolerance`` is how far short it may fall before that
@@ -68,7 +69,6 @@ class SimulationSpec:
     fx_series: str | None = None
     fx_quote: str = "base_per_usd"
     liquid_kind: str = "levels"
-    initial_value: float | None = None
     inception_date: Any = None
     commitment_rates: Any = None
     expected_return: float | None = None
@@ -91,10 +91,8 @@ class SimulationSpec:
         if not isinstance(self.liquid_series, str) or not self.liquid_series.strip():
             raise ValueError("liquid_series must name a market_data column")
 
-        # Returns need a starting balance; levels carry their own, and have no inception date to set.
-        if self.liquid_kind == "returns":
-            self._check_initial_value()
-        elif self.inception_date is not None:
+        # Levels carry their own first date, so there is no inception date to set.
+        if self.liquid_kind == "levels" and self.inception_date is not None:
             raise ValueError("inception_date only applies when liquid_kind is 'returns'")
 
         if self.expected_return is not None:
@@ -102,16 +100,3 @@ class SimulationSpec:
 
         if self.commitment_rounding_unit_usd is not None:
             validate_rounding_unit(self.commitment_rounding_unit_usd, label="commitment_rounding_unit_usd")
-
-    def _check_initial_value(self) -> None:
-        """The starting liquid balance: a finite number above zero."""
-        value = self.initial_value
-
-        # numbers.Real: numpy scalars count as numbers; a bool does not, though Python says it is one
-        is_a_number = isinstance(value, Real) and not isinstance(value, bool)
-
-        if not is_a_number or not math.isfinite(value) or value <= 0:
-            raise ValueError(
-                "initial_value (the starting liquid balance) must be a positive number "
-                "when liquid_kind is 'returns'"
-            )

@@ -24,6 +24,11 @@ from .dates import as_date, coerce_dated_series
 from .timeline import AlignedFundHistory, Timeline
 
 PRIVATE_CURRENCY = "USD"  # fund flows and NAV marks are always in dollars
+
+# Every run assembled from data starts with this much, in the portfolio's own base currency.
+# It is not a setting: there is no option to start from another amount, or from an amount of
+# another currency converted in.
+STARTING_VALUE = 100_000_000.0
 UNIT_NAV_TOLERANCE = 1e-12  # floating-point slack before a negative unit NAV is a data error
 YEAR_RANGE = (1900, 9999)
 

@@ -39,7 +39,7 @@ package. Dependencies are NumPy, pandas and openpyxl (for `.xlsx`); pytest for t
 `claude/data/portfolio.xlsx`; `claude/data/` is git-ignored), put a breakpoint in `run()`
 and press Debug. The script puts `claude/` on `sys.path` itself, so it runs as a plain file
 with any working directory; if the workbook is missing it generates a sample beside it and
-says so. `run()` is written as numbered steps — repository, starting balance, spec, funds,
+says so. `run()` is written as numbered steps — repository, rounding, spec, funds,
 portfolio, policy, result — so each breakpoint shows one object; step into
 `orchestrator.run()` to follow the period loop in `Simulator.run()`.
 
@@ -88,8 +88,11 @@ may be dated before the closing.
   decides whether conversion happens: `"USD"` means none and `usd_rate` must be omitted;
   anything else requires `usd_rate`.
 - `liquid_levels` — dated total-return levels in base currency. **Their dates are the
-  simulation grid and the first level is the starting balance.** Scale the index before
-  input; later levels only supply returns and never overwrite the simulated balance.
+  simulation grid and the first level is the starting balance.** Later levels only supply
+  returns and never overwrite the simulated balance. This is the engine class, which takes
+  the levels it is given; every run *assembled from data* — a workbook, or any repository —
+  is given levels that start at `STARTING_VALUE`, 100,000,000 of base currency (see
+  **The starting value** below).
 - `commitment_rates` — calendar year × fund type. Either shares of the liquid-only value
   (`0.10` means commit 10% of it) or, with an expected return, a pacing schedule that is
   turned into such shares first — see Policy. List every year from the first to the last
@@ -275,6 +278,25 @@ carrying value, so part of the value added is unrealised. Ratios are NaN where u
 nothing called yet, or every flow on one date. `annualised_irr(dates, amounts)` (ACT/365,
 money out negative) is exported for use on its own.
 
+## The starting value
+
+**Every run assembled from data starts with 100,000,000 of the portfolio's own base
+currency.** It is a constant, `pmsim.STARTING_VALUE`, and not a setting: `SimulationSpec` has
+no field for it, `load_profile_workbook`, `run_profile_workbook`,
+`WorkbookRepository.simulation_spec` and `returns_to_levels` take no starting amount, and
+the example scripts have no switch for it. Passing one is a `TypeError`.
+
+It is always base currency. A EUR profile starts with 100,000,000 euros and a GBP profile
+with 100,000,000 pounds; what that is in dollars is whatever the first exchange rate makes
+it. There is no way to start from an amount of another currency converted in.
+
+One place applies it, `build_portfolio` in `data/orchestrator.py`. A **returns** series is
+compounded from 100,000,000 at the inception date. A **level** series is read as an index —
+only its changes matter, since they are the returns — and rescaled so its first level is
+100,000,000; quote it from 1, 100 or 1,000,000 and the run is the same. The engine class
+`Portfolio` itself still takes whatever levels it is handed, which is what the
+hand-checkable worked examples and the engine's own tests use.
+
 ## Policy
 
 `AnnualRatePolicy(rates, funds, weights=None, carry_forward=False, years=None,
@@ -375,18 +397,10 @@ nearest multiple of the unit, halves away from zero — Excel's `ROUND`, which P
 multiplier and the fund's weight are applied, so a fund drawing `1-4` collects four rounded
 amounts and one drawing `12x3` collects three times one rounded amount.
 
-```text
-commitment_rounding_unit(starting_value) = starting_value / 10,000
-    100,000,000 → 10,000   ROUND(value, -4)
-      1,000,000 → 100      ROUND(value, -2)
-            100 → 0.01     ROUND(value, 2)
-```
-
-The unit is proportional to the starting value, so every starting value gets the relative
-precision `ROUND(value, -4)` gives 100,000,000, and a run from 100 is the run from
-100,000,000 divided by a million, rounding included. `WorkbookRepository.simulation_spec`
-applies that unit by default; pass `commitment_rounding_unit_usd=None` (or another unit) to
-change it. `AnnualRatePolicy` and `SimulationSpec` built by hand round nothing unless asked.
+A run always starts from 100,000,000, and the unit that goes with it is 10,000 dollars:
+`COMMITMENT_ROUNDING_UNIT_USD`, which is `ROUND(value, -4)`. `WorkbookRepository.simulation_spec`
+applies it by default; pass `commitment_rounding_unit_usd=None` (or another unit) to change
+it. `AnnualRatePolicy` and `SimulationSpec` built by hand round nothing unless asked.
 `examples/eur_moderate.py` has `ROUND_COMMITMENTS = True` at the top.
 
 Any object with `size_commitments(cohort, balances) -> {fund name: US-dollar amount}` is a
@@ -410,13 +424,13 @@ the FX column.
 ```python
 from pmsim.data import load_profile_workbook
 
-o = load_profile_workbook("portfolio.xlsx", "USD", "Conservative", initial_value=1_000_000)
+o = load_profile_workbook("portfolio.xlsx", "USD", "Conservative")   # always starts from 100,000,000 USD
 o.repository.commitment_rates()   # the schedule for this profile on calendar years
 o.fund_summary()
 result = o.run()
 ```
 
-`python -m examples.profile_workbook book.xlsx EUR Conservative 5e6` does the same from
+`python -m examples.profile_workbook book.xlsx EUR Conservative` does the same from
 the command line, and writes a sample workbook in this layout first if the file is missing —
 a full one to compare a real file against: nine profiles of monthly returns from April 2009
 to December 2026, the two exchange rates, a pacing schedule per profile growing at its own
@@ -455,7 +469,8 @@ spec = SimulationSpec(
     fx_series="gbp_per_usd",         # market_data column holding the USD rate; omit when base is USD
     fx_quote="base_per_usd",         # or "usd_per_base" if the series quotes USD per 1 GBP
     weights={"A": 0.6, "B": 0.4},    # optional; carry_forward=True also available
-    # liquid_kind="returns", initial_value=1_000_000   # when the series holds returns, not levels
+    # liquid_kind="returns"                            # when the series holds returns, not levels
+    # there is no starting value to set: every run starts with 100,000,000 of base currency
     # commitment_rates=...                             # optional: overrides the repository's rate table
 )
 orchestrator = Orchestrator(repository, spec)

@@ -5,7 +5,7 @@ from datetime import date
 import pytest
 
 from pmsim import (AnnualRatePolicy, Entitlement, Fund, SizingBalances, YearEndBalance,
-                   commitment_rounding_unit, round_like_excel)
+                   COMMITMENT_ROUNDING_UNIT_USD, STARTING_VALUE, round_like_excel)
 
 BALANCES = SizingBalances(t=3, date=date(2029, 3, 31), liquid_only_usd=1_000_000.0, liquid_account_usd=900_000.0,
                           private_nav_usd=250_000.0)
@@ -384,14 +384,12 @@ def test_rounding_follows_excels_round(value, unit, expected):
     assert round_like_excel(value, unit) == expected
 
 
-def test_the_rounding_unit_keeps_the_relative_precision_of_round_minus_four_on_a_hundred_million():
-    assert commitment_rounding_unit(100_000_000) == 10_000.0
-    assert commitment_rounding_unit(1_000_000) == 100.0
-    assert commitment_rounding_unit(100) == 0.01
-    assert commitment_rounding_unit(250_000_000) == 25_000.0  # proportional, not only powers of ten
-    for bad in (0, -5, float("nan"), float("inf"), True, "100"):
-        with pytest.raises(ValueError, match="starting_value must be a positive number"):
-            commitment_rounding_unit(bad)
+def test_the_starting_value_and_its_rounding_unit_are_fixed():
+    import pmsim
+    assert STARTING_VALUE == 100_000_000.0
+    assert COMMITMENT_ROUNDING_UNIT_USD == 10_000.0  # Excel's ROUND(value, -4)
+    assert round_like_excel(2_345_000.0, COMMITMENT_ROUNDING_UNIT_USD) == 2_350_000.0
+    assert not hasattr(pmsim, "commitment_rounding_unit")  # no unit to derive: there is one starting value
 
 
 def test_each_drawn_year_is_rounded_before_its_multiplier_and_weight():

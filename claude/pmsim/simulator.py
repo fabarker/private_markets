@@ -409,7 +409,7 @@ class Simulator:
 
         return year_ends
 
-    def _expected_liquid_path(self, initial_value: float) -> np.ndarray:
+    def _expected_liquid_path(self, first_level: float) -> np.ndarray:
         """The liquid portfolio had it grown at the expected return from the first observation."""
         n_observations = self.timeline.n_observations
 
@@ -425,7 +425,7 @@ class Simulator:
             for t in range(n_observations)
         ])
 
-        return initial_value * (1.0 + expected_return) ** years_since_inception
+        return first_level * (1.0 + expected_return) ** years_since_inception
 
     # ------------------------------------------------------------------ run
     def run(self) -> SimulationResult:

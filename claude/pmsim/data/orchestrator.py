@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 
 from ..dates import as_date
-from ..inputs import PRIVATE_CURRENCY, Fund, Portfolio
+from ..inputs import PRIVATE_CURRENCY, STARTING_VALUE, Fund, Portfolio
 from ..policy import AnnualRatePolicy
 from ..simulator import SimulationResult, Simulator
 from .repository import DataRepository, SheetLayout, WorkbookRepository
@@ -57,11 +57,12 @@ def infer_inception_date(dates: Any) -> pd.Timestamp:
     return pd.offsets.BDay().rollback(one_period_earlier)
 
 
-def returns_to_levels(returns: pd.Series, initial_value: float, *, inception_date: Any = None) -> pd.Series:
+def returns_to_levels(returns: pd.Series, *, inception_date: Any = None) -> pd.Series:
     """Total-return levels from simple per-period returns, starting one period before the first.
 
     The inception date — ``inception_date`` if given, otherwise ``infer_inception_date`` of
-    the return dates — carries ``initial_value``; every return is then applied:
+    the return dates — carries the starting value, ``STARTING_VALUE``: always 100,000,000, in
+    the portfolio's own base currency. Every return is then applied:
     ``level[t] = level[t-1] × (1 + returns[t])``.
     """
     if returns.empty:
@@ -84,12 +85,28 @@ def returns_to_levels(returns: pd.Series, initial_value: float, *, inception_dat
                 f"inception_date {inception.date()} must be before the first return on {dates[0].date()}"
             )
 
-    # Compound: the starting balance, then every return applied in turn.
+    # Compound: the starting value, then every return applied in turn.
     growth_since_inception = np.cumprod(np.concatenate([[1.0], return_factors]))
-    levels = float(initial_value) * growth_since_inception
+    levels = STARTING_VALUE * growth_since_inception
 
     dates_with_inception = pd.DatetimeIndex([inception]).append(dates)
     return pd.Series(levels, index=dates_with_inception, name=returns.name)
+
+
+def levels_rescaled_to_the_starting_value(levels: pd.Series) -> pd.Series:
+    """A level series read as an index, rescaled so that the run starts at ``STARTING_VALUE``.
+
+    Only the changes from one level to the next matter — they are the returns — so the scale
+    the series happens to be quoted on is dropped, and the first level becomes 100,000,000.
+    """
+    if levels.empty:
+        return levels  # Portfolio reports the empty series itself
+
+    first_level = float(levels.iloc[0])
+    if not first_level > 0:
+        raise ValueError(f"liquid levels must be strictly positive; the first is {first_level!r}")
+
+    return levels * (STARTING_VALUE / first_level)
 
 
 def _rate_at_inception(usd_rate: pd.Series, inception: pd.Timestamp) -> pd.Series:
@@ -195,11 +212,14 @@ def select_market_series(market: pd.DataFrame, name: str, *, label: str) -> pd.S
 
 def build_portfolio(market: pd.DataFrame, spec: SimulationSpec, rates: Any) -> Portfolio:
     """The ``Portfolio`` for a spec: liquid index and, unless the base currency is USD, the USD rate."""
-    # The liquid index: levels as they are, or compounded from returns.
+    # The liquid index, always starting at STARTING_VALUE in base currency: compounded from
+    # returns, or a level series rescaled to start there.
     liquid = select_market_series(market, spec.liquid_series, label="liquid_series")
 
     if spec.liquid_kind == "returns":
-        liquid = returns_to_levels(liquid, spec.initial_value, inception_date=spec.inception_date)
+        liquid = returns_to_levels(liquid, inception_date=spec.inception_date)
+    else:
+        liquid = levels_rescaled_to_the_starting_value(liquid)
 
     # A dollar portfolio has no exchange rate, and must not name one.
     is_dollar_portfolio = spec.base_currency.strip().upper() == PRIVATE_CURRENCY
@@ -408,20 +428,21 @@ class Orchestrator:
 
 
 # ------------------------------------------------------------------ front doors
-def load_profile_workbook(path: Any, currency: str, risk: str, initial_value: float, *,
+def load_profile_workbook(path: Any, currency: str, risk: str, *,
                           layout: SheetLayout = SheetLayout(), **overrides: Any) -> Orchestrator:
     """An ``Orchestrator`` for one profile of the portfolio workbook.
 
-    ``overrides`` are ``SimulationSpec`` settings.
+    The run starts with ``STARTING_VALUE`` of the profile's currency. ``overrides`` are
+    ``SimulationSpec`` settings.
     """
     repository = WorkbookRepository(path, currency, risk, layout)
-    spec = repository.simulation_spec(initial_value, **overrides)
+    spec = repository.simulation_spec(**overrides)
 
     return Orchestrator(repository, spec)
 
 
-def run_profile_workbook(path: Any, currency: str, risk: str, initial_value: float, *,
+def run_profile_workbook(path: Any, currency: str, risk: str, *,
                          layout: SheetLayout = SheetLayout(), **overrides: Any) -> SimulationResult:
     """Load one profile of the portfolio workbook and run it."""
-    orchestrator = load_profile_workbook(path, currency, risk, initial_value, layout=layout, **overrides)
+    orchestrator = load_profile_workbook(path, currency, risk, layout=layout, **overrides)
     return orchestrator.run()

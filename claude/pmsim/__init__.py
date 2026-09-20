@@ -8,15 +8,15 @@ liquid index turns every dated input into per-period arrays once. The Simulator 
 the one loop; a CommitmentPolicy decides how much to commit when funds close.
 """
 from .benchmark import annualised_irr, compare_with_liquid_only, public_market_equivalent
-from .inputs import PRIVATE_CURRENCY, Fund, Portfolio
+from .inputs import PRIVATE_CURRENCY, STARTING_VALUE, Fund, Portfolio
 from .policy import (
+    COMMITMENT_ROUNDING_UNIT_USD,
     AnnualRatePolicy,
     CommitmentPolicy,
     DrawnYear,
     Entitlement,
     SizingBalances,
     YearEndBalance,
-    commitment_rounding_unit,
     round_like_excel,
 )
 from .simulator import Shortfall, SimulationResult, Simulator
@@ -26,6 +26,7 @@ from .timeline import AlignedFundHistory, Timeline
 __all__ = [
     # the inputs
     "PRIVATE_CURRENCY",
+    "STARTING_VALUE",
     "Fund",
     "Portfolio",
 
@@ -45,7 +46,7 @@ __all__ = [
     "AnnualRatePolicy",
     "Entitlement",
     "DrawnYear",
-    "commitment_rounding_unit",
+    "COMMITMENT_ROUNDING_UNIT_USD",
     "round_like_excel",
 
     # the loop and what it returns

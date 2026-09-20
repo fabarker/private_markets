@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("openpyxl")
 
 from examples.profile_workbook import FUNDS, LIQUID_SPEC, sample_tables, write_sample_workbook  # noqa: E402
-from pmsim import round_like_excel  # noqa: E402
+from pmsim import COMMITMENT_ROUNDING_UNIT_USD, STARTING_VALUE, round_like_excel  # noqa: E402
 from pmsim.data import (  # noqa: E402
     Orchestrator,
     SheetLayout,
@@ -100,11 +100,13 @@ def test_commitment_schedule_maps_relative_years_onto_the_calendar(usd, eur):
 # ------------------------------------------------------- returns and levels
 def test_returns_to_levels_starts_one_period_before_the_first_return():
     month_ends = pd.to_datetime(["2027-01-31", "2027-02-28", "2027-03-31"])
-    levels = returns_to_levels(pd.Series([0.05, 0.10, -0.50], index=month_ends), 1000.0)
+    levels = returns_to_levels(pd.Series([0.05, 0.10, -0.50], index=month_ends))
     assert list(levels.index) == [pd.Timestamp("2026-12-31"), *month_ends]  # a month back; 31 Dec 2026 is a Thursday
-    np.testing.assert_allclose(levels, [1000.0, 1050.0, 1155.0, 577.5])  # every return applied
+    # always from 100,000,000, and every return applied
+    np.testing.assert_allclose(levels, [100_000_000.0, 105_000_000.0, 115_500_000.0, 57_750_000.0])
+    assert levels.iloc[0] == STARTING_VALUE == 100_000_000.0
     with pytest.raises(ValueError, match="greater than -100%"):
-        returns_to_levels(pd.Series([0.0, -1.0, 0.0], index=month_ends), 1.0)
+        returns_to_levels(pd.Series([0.0, -1.0, 0.0], index=month_ends))
 
 
 def test_inception_date_follows_the_inferred_frequency():
@@ -115,49 +117,66 @@ def test_inception_date_follows_the_inferred_frequency():
     assert infer_inception_date(pd.date_range("2027-01-08", periods=3, freq="W-FRI")) == pd.Timestamp("2027-01-01")
     irregular = pd.Series([0.1, 0.1, 0.1], index=pd.to_datetime(["2027-01-05", "2027-02-17", "2027-05-30"]))
     with pytest.raises(ValueError, match="cannot infer the frequency"):
-        returns_to_levels(irregular, 1.0)
+        returns_to_levels(irregular)
     with pytest.raises(ValueError, match="at least three"):
-        returns_to_levels(irregular.iloc[:2], 1.0)
-    explicit = returns_to_levels(irregular, 1.0, inception_date="2027-01-01")  # the escape hatch
-    assert explicit.index[0] == pd.Timestamp("2027-01-01") and explicit.iloc[1] == pytest.approx(1.1)
+        returns_to_levels(irregular.iloc[:2])
+    explicit = returns_to_levels(irregular, inception_date="2027-01-01")  # the escape hatch
+    assert explicit.index[0] == pd.Timestamp("2027-01-01") and explicit.iloc[1] == pytest.approx(1.1 * STARTING_VALUE)
     with pytest.raises(ValueError, match="must be before the first return"):
-        returns_to_levels(irregular, 1.0, inception_date="2027-01-05")
+        returns_to_levels(irregular, inception_date="2027-01-05")
     with pytest.raises(ValueError, match="inception_date only applies"):
         SimulationSpec("USD", "x", inception_date="2027-01-01")
 
 
-def test_initial_value_validation():
-    for bad in (None, 0, -1, float("nan"), True, "100"):
-        with pytest.raises(ValueError, match="initial_value"):
-            SimulationSpec("USD", "x", liquid_kind="returns", initial_value=bad)
-    for good in (100, 100.0, np.int64(100), np.float64(100.0)):  # numpy scalars from a DataFrame are numbers too
-        assert SimulationSpec("USD", "x", liquid_kind="returns", initial_value=good).initial_value == 100
+def test_the_starting_value_is_not_a_setting(usd, workbook):
+    """Every run starts with 100,000,000 of base currency. There is nowhere to say otherwise."""
+    assert "initial_value" not in SimulationSpec.__dataclass_fields__
+    with pytest.raises(TypeError, match="initial_value"):
+        SimulationSpec("USD", "x", liquid_kind="returns", initial_value=1_000_000)
+    with pytest.raises(TypeError, match="initial_value"):
+        usd.simulation_spec(initial_value=1_000_000)
+    with pytest.raises(TypeError):  # and no positional slot for it on the front doors either
+        load_profile_workbook(workbook, "USD", "Conservative", 1_000_000)
+    with pytest.raises(TypeError):
+        returns_to_levels(pd.Series([0.05, 0.10, 0.02], index=pd.to_datetime(["2027-01-31", "2027-02-28", "2027-03-31"])), 1000.0)
     with pytest.raises(ValueError, match="liquid_kind must be one of"):
         SimulationSpec("USD", "x", liquid_kind="prices")
 
 
+@pytest.mark.parametrize("currency", ["USD", "EUR", "GBP"])
+def test_every_profile_starts_with_a_hundred_million_of_its_own_currency(workbook, currency):
+    result = run_profile_workbook(workbook, currency, "Moderate")
+    first = result.periods.iloc[0]
+    assert result.base_currency == currency
+    # 100,000,000 of the base currency itself: never an amount of dollars converted in
+    assert first["liquid_open"] == first["liquid_close"] == first["liquid_only"] == 100_000_000.0
+    assert first["liquid_only_usd"] == pytest.approx(100_000_000.0 / first["usd_rate"])
+    if currency != "USD":
+        assert first["liquid_only_usd"] != pytest.approx(100_000_000.0)  # so in dollars it is whatever the rate makes it
+
+
 def test_profile_spec_builds_levels_and_inverts_fx(usd, eur):
-    spec = usd.simulation_spec(1_000_000)
-    assert (spec.base_currency, spec.liquid_series, spec.liquid_kind, spec.initial_value, spec.fx_series) == \
-        ("USD", "USD Conservative", "returns", 1_000_000, None)
+    spec = usd.simulation_spec()
+    assert (spec.base_currency, spec.liquid_series, spec.liquid_kind, spec.fx_series) == \
+        ("USD", "USD Conservative", "returns", None)
     portfolio = Orchestrator(usd, spec).portfolio
     returns = usd.market_data()["USD Conservative"]
     levels = portfolio.liquid_levels
     assert levels.index[0] == pd.Timestamp("2009-03-31") and levels.index[1] == pd.Timestamp("2009-04-30")  # inception: a month back
-    np.testing.assert_allclose(levels.to_numpy(), 1_000_000 * np.cumprod(np.r_[1.0, 1.0 + returns.to_numpy()]))
+    np.testing.assert_allclose(levels.to_numpy(), 100_000_000 * np.cumprod(np.r_[1.0, 1.0 + returns.to_numpy()]))
     assert portfolio.usd_rate is None
-    eur_portfolio = Orchestrator(eur, eur.simulation_spec(2_000_000)).portfolio
+    eur_portfolio = Orchestrator(eur, eur.simulation_spec()).portfolio
     rate = eur_portfolio.usd_rate
     assert rate.index[0] == pd.Timestamp("2009-03-31") and rate.iloc[0] == rate.iloc[1]  # first known rate applies at inception
     np.testing.assert_allclose(rate.to_numpy()[1:], 1.0 / eur.market_data()["EURUSD"].to_numpy())
-    assert eur_portfolio.base_currency == "EUR" and eur_portfolio.liquid_levels.iloc[0] == 2_000_000
-    overridden = usd.simulation_spec(1_000_000, carry_forward=True, stop_on_shortfall=False)
+    assert eur_portfolio.base_currency == "EUR" and eur_portfolio.liquid_levels.iloc[0] == 100_000_000  # euros
+    overridden = usd.simulation_spec(carry_forward=True, stop_on_shortfall=False)
     assert overridden.carry_forward and not overridden.stop_on_shortfall
 
 
 # ----------------------------------------------------------------- end to end
 def test_usd_conservative_runs_end_to_end(workbook):
-    orchestrator = load_profile_workbook(workbook, "USD", "Conservative", 1_000_000)
+    orchestrator = load_profile_workbook(workbook, "USD", "Conservative")
     result = orchestrator.run()
     assert result.status == "completed" and result.base_currency == "USD"
     assert result.funds_beyond_horizon == ()  # the liquid series runs to 2026, past every closing in the Spec sheet
@@ -168,10 +187,11 @@ def test_usd_conservative_runs_end_to_end(workbook):
     level = orchestrator.portfolio.liquid_levels.loc["2010-12-31"]  # a USD profile: the liquid-only value is the levels
     assert pem2011["policy_year"] == 2010 and pem2011["own_year_rate"] == 0.022  # relative year 1 of the schedule
     assert pem2011["expected_value"] == 1.0 and pem2011["other_years_usd"] == 0  # the first commitment: the model is worth 1 here
-    # from 1,000,000 the commitments are rounded to the nearest 100: ROUND(value, -4) on 100,000,000, scaled
-    assert orchestrator.spec.commitment_rounding_unit_usd == 100.0
+    # the run starts from 100,000,000 and commitments are rounded to the nearest 10,000: ROUND(value, -4)
+    assert orchestrator.portfolio.liquid_levels.iloc[0] == 100_000_000.0
+    assert orchestrator.spec.commitment_rounding_unit_usd == COMMITMENT_ROUNDING_UNIT_USD == 10_000.0
     assert pem2011["sizing_base"] == pytest.approx(level)
-    assert pem2011["commitment_usd"] == round_like_excel(0.022 * level, 100.0)
+    assert pem2011["commitment_usd"] == round_like_excel(0.022 * level, 10_000.0)
     assert orchestrator.simulator.first_commitment_date == date(2010, 12, 31) and orchestrator.expected_return == 0.054
 
     # the sample's schedule grows at X and is then divided by X, so before rounding every drawn
@@ -181,7 +201,7 @@ def test_usd_conservative_runs_end_to_end(workbook):
     np.testing.assert_allclose(share[draws["fund_type"] == "BUYOUT"], 0.022, rtol=1e-4)
     np.testing.assert_allclose(share[draws["fund_type"] == "SECONDARIES"], 0.008, rtol=1e-4)
     # and rounding moves each of them by half a unit at most
-    assert ((draws["year_budget_usd"] - draws["year_budget_unrounded_usd"]).abs() <= 50.0).all()
+    assert ((draws["year_budget_usd"] - draws["year_budget_unrounded_usd"]).abs() <= 5_000.0).all()
     pem2012 = c.loc[(pd.Timestamp("2011-12-31"), "PEM2012")]  # same date as SEC_VI, different type: no weights needed
     assert pem2012["own_year_rate"] == pytest.approx(0.022 * 1.054) and pem2012["expected_value"] == pytest.approx(1.054)
     # SEC_VI's plan is years 1-4: 2010 funded at its own year end, 2011-2013 at the closing
@@ -198,7 +218,7 @@ def test_usd_conservative_runs_end_to_end(workbook):
 
 
 def test_eur_conservative_translates_at_the_inverted_rate(workbook):
-    result = run_profile_workbook(workbook, "EUR", "Conservative", 1_000_000)
+    result = run_profile_workbook(workbook, "EUR", "Conservative")
     assert result.status == "completed" and result.base_currency == "EUR"
     row = result.commitments.loc[(pd.Timestamp("2010-12-31"), "PEM2011")]
     eurusd = sample_tables()["FX"].loc["2010-12-31", "EURUSD"]
@@ -208,12 +228,19 @@ def test_eur_conservative_translates_at_the_inverted_rate(workbook):
     check_identities(result)
 
 
-def test_eur_moderate_script_defaults_to_a_hundred_million_euros_with_rounded_commitments(workbook):
+def test_eur_moderate_script_starts_with_a_hundred_million_euros_and_rounds_commitments(workbook):
     from examples import eur_moderate
-    assert eur_moderate.START_VALUE == 100_000_000 and eur_moderate.START_IN_BASE_CURRENCY is True
+    # the start is not a setting of the script, and neither is its currency
+    for removed in ("START_VALUE", "START_USD", "START_IN_BASE_CURRENCY", "starting_balance"):
+        assert not hasattr(eur_moderate, removed)
+    with pytest.raises(TypeError):
+        eur_moderate.run(workbook, start_value=100.0)
+    with pytest.raises(TypeError):
+        eur_moderate.run(workbook, start_in_base_currency=False)
+
     orchestrator, result = eur_moderate.run(workbook)
     assert result.base_currency == "EUR" and result.status == "completed"
-    assert result.periods["liquid_open"].iloc[0] == 100_000_000.0  # euros, used as they are: no conversion
+    assert result.periods["liquid_open"].iloc[0] == 100_000_000.0  # euros: never dollars converted in
     # ROUND(value, -4): every year's commitment, and so every fund's, is a whole number of 10,000 dollars
     assert orchestrator.spec.commitment_rounding_unit_usd == 10_000.0
     assert (result.draws["year_budget_usd"] % 10_000 == 0).all()
@@ -223,16 +250,15 @@ def test_eur_moderate_script_defaults_to_a_hundred_million_euros_with_rounded_co
     check_identities(result)
 
 
-def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(workbook, tmp_path, capsys):
+def test_eur_moderate_script_switches_and_output_files(workbook, tmp_path, capsys):
     from examples import eur_moderate
     # the draw-plan arithmetic below is exact only before rounding, so rounding is switched off here
-    from_dollars = dict(start_value=100.0, start_in_base_currency=False, round_commitments=False)
-    orchestrator, result = eur_moderate.run(workbook, out_dir=tmp_path / "out", **from_dollars)
-    eurusd = sample_tables()["FX"].loc["2009-04-30", "EURUSD"]
+    unrounded = dict(round_commitments=False)
+    orchestrator, result = eur_moderate.run(workbook, out_dir=tmp_path / "out", **unrounded)
     assert orchestrator.repository.profile == "EUR Moderate"
-    assert orchestrator.spec.initial_value == pytest.approx(100.0 / eurusd)
+    assert orchestrator.spec.commitment_rounding_unit_usd is None
     assert result.base_currency == "EUR" and result.status == "completed"
-    assert result.periods["liquid_open"].iloc[0] == pytest.approx(100.0 / eurusd)
+    assert result.periods["liquid_open"].iloc[0] == 100_000_000.0
     assert orchestrator.policy.rates.at[2010, "BUYOUT"] == 0.030  # EUR Moderate's year-1 BUYOUT rate
     assert orchestrator.expected_return == 0.059  # EUR Moderate's ExRet
 
@@ -251,20 +277,17 @@ def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(wor
     # with the plans switched off, the script's carry-forward switch decides the years again:
     # no secondaries fund closes in 2010, so SEC_VI collects that year's budget and no more
     assert orchestrator.spec.carry_forward is True
-    _, carried = eur_moderate.run(workbook, draws={}, **from_dollars)
+    _, carried = eur_moderate.run(workbook, draws={}, **unrounded)
     row = carried.commitments.loc[(pd.Timestamp("2011-12-31"), "SEC_VI")]
     assert row["drawn_years"] == "2010, 2011"
     assert row["commitment_usd"] == pytest.approx(0.011 * balance_at_end_of_2010 + 0.011 * row["sizing_base_usd"], rel=1e-3)
-    _, without = eur_moderate.run(workbook, carry_forward=False, draws={}, **from_dollars)
+    _, without = eur_moderate.run(workbook, carry_forward=False, draws={}, **unrounded)
     assert without.commitments.loc[(pd.Timestamp("2011-12-31"), "SEC_VI"), "commitment_usd"] == \
         pytest.approx(0.011 * row["sizing_base_usd"], rel=1e-3)
     assert {p.name for p in (tmp_path / "out").iterdir()} == {
         "periods.csv", "funds.csv", "commitments.csv", "draws.csv", "map_events_to_observations.csv",
         "fund_summary.csv", "tracked_values.csv", "liquid_only_comparison.csv", "public_market_equivalent.csv"}
-    assert "Starting balance: USD 100.00 = EUR" in capsys.readouterr().out
-    _, in_euros = eur_moderate.run(workbook, start_value=100.0, start_in_base_currency=True)
-    assert in_euros.periods["liquid_open"].iloc[0] == 100.0
-    assert (in_euros.draws["year_budget_usd"].mul(100).round(6) % 1 == 0).all()  # from 100: whole cents, ROUND(value, 2)
+    assert "Starting balance: EUR 100,000,000.00 at inception 2009-03-31" in capsys.readouterr().out
     check_identities(result)
 
 
@@ -279,7 +302,7 @@ def test_january_start_puts_inception_in_the_previous_year_without_needing_its_r
         tables["FX"].to_excel(writer, sheet_name="FX")
         for sheet in ("Liquid Spec", "Flows", "Commitments", "Spec"):
             tables[sheet].to_excel(writer, sheet_name=sheet, index=False)
-    orchestrator = load_profile_workbook(path, "EUR", "Conservative", 1_000_000)
+    orchestrator = load_profile_workbook(path, "EUR", "Conservative")
     assert orchestrator.repository.inception_year == 2010  # schedule Year 0: the first Liquid year, not the inception row's
     assert orchestrator.portfolio.first_date == date(2009, 12, 31)  # a Thursday
     assert list(orchestrator.repository.commitment_rates().index)[:2] == [2010, 2011]
@@ -308,7 +331,7 @@ def test_date_column_need_not_be_first(tmp_path):
     assert list(market.columns) == list(LIQUID_SPEC) + ["EURUSD", "GBPUSD"]
     pd.testing.assert_frame_equal(market, WorkbookRepository(write_sample_workbook(tmp_path / "usual.xlsx"),
                                                              "EUR", "Conservative").market_data())
-    check_identities(Orchestrator(repository, repository.simulation_spec(1_000_000)).run())
+    check_identities(Orchestrator(repository, repository.simulation_spec()).run())
 
 
 def test_liquid_spec_sheet_gives_each_portfolio_its_expected_return(usd, eur, tmp_path):
@@ -318,7 +341,7 @@ def test_liquid_spec_sheet_gives_each_portfolio_its_expected_return(usd, eur, tm
                                "GBP Conservative": 0.054, "GBP Moderate": 0.064, "GBP Aggressive": 0.075}
     assert table.index.name == "portfolio" and table.name == "expected_return"
     assert usd.expected_return == 0.054 and eur.expected_return == 0.047  # only this profile's row is used
-    assert usd.simulation_spec(100).expected_return == 0.054 and usd.simulation_spec(100, expected_return=0.07).expected_return == 0.07
+    assert usd.simulation_spec().expected_return == 0.054 and usd.simulation_spec(expected_return=0.07).expected_return == 0.07
 
     def workbook_with(liquid_spec, sheet_name="Liquid Spec"):
         path = tmp_path / f"{sheet_name or 'none'}-{len(list(tmp_path.iterdir()))}.xlsx"
@@ -339,7 +362,7 @@ def test_liquid_spec_sheet_gives_each_portfolio_its_expected_return(usd, eur, tm
     assert WorkbookRepository(typed_as_text, "USD", "Conservative").expected_return == pytest.approx(0.054)
     # the schedule means nothing without the return it assumed, so the sheet is required
     with pytest.raises(ValueError, match=r"no sheet named 'Liquid Spec' or 'Return Spec' or 'Expected Returns'"):
-        load_profile_workbook(workbook_with(None), "USD", "Conservative", 1_000_000)
+        load_profile_workbook(workbook_with(None), "USD", "Conservative")
     # the sheet is read under any of the names it has gone by, so a renamed tab keeps working
     for sheet_name in ("Liquid Spec", "Return Spec", "Expected Returns", "returnspec"):
         renamed = workbook_with(pd.DataFrame({"Liquid": ["USD Conservative"], "Return": [0.03]}), sheet_name=sheet_name)
@@ -349,13 +372,13 @@ def test_liquid_spec_sheet_gives_each_portfolio_its_expected_return(usd, eur, tm
                                             sheet_name="Return Spec"), "USD", "Conservative", pinned).expected_return == 0.03
     with pytest.raises(ValueError, match=r"expected returns: no row for portfolio 'EUR Moderate'; portfolios are \['USD Conservative'\]"):
         load_profile_workbook(workbook_with(pd.DataFrame({"Liquid": ["USD Conservative"], "ExRet": [0.054]})),
-                              "EUR", "Moderate", 1_000_000)
+                              "EUR", "Moderate")
     with pytest.raises(ValueError, match=r"expected return of 'USD Conservative' must be a decimal .* \(write 5% as 0.05\), got 5.4"):
         load_profile_workbook(workbook_with(pd.DataFrame({"Liquid": ["USD Conservative"], "ExRet": [5.4]})),
-                              "USD", "Conservative", 1_000_000)
+                              "USD", "Conservative")
     with pytest.raises(ValueError, match=r"each portfolio needs one expected return; duplicated: \['USD Conservative'\]"):
         load_profile_workbook(workbook_with(pd.DataFrame({"Liquid": ["USD Conservative"] * 2, "ExRet": [0.054, 0.064]})),
-                              "USD", "Conservative", 1_000_000)
+                              "USD", "Conservative")
 
 
 def test_layout_override_and_missing_sheets(tmp_path):
@@ -370,7 +393,7 @@ def test_layout_override_and_missing_sheets(tmp_path):
         tables["Liquid Spec"].to_excel(writer, sheet_name="PacingAssumptions", index=False)
     layout = SheetLayout(liquid="returns", fx="spot", flows="fund-data", commitments="schedule", spec="funds",
                          liquid_spec="pacing assumptions")
-    result = run_profile_workbook(path, "USD", "Conservative", 1_000_000, layout=layout)
+    result = run_profile_workbook(path, "USD", "Conservative", layout=layout)
     assert result.status == "completed"
     with pytest.raises(ValueError, match=r"no sheet named 'Liquid'; sheets are \['Returns'"):
         WorkbookRepository(path, "USD", "Conservative").liquid_column
@@ -404,13 +427,13 @@ def test_a_workbook_without_a_draws_column_leaves_every_fund_on_its_default_year
             frame.to_excel(writer, sheet_name=sheet, index=sheet in ("Liquid", "FX"))
     repository = WorkbookRepository(path, "USD", "Conservative")
     assert repository.draw_plans() == {}
-    policy = Orchestrator(repository, repository.simulation_spec(initial_value=100.0)).policy
+    policy = Orchestrator(repository, repository.simulation_spec()).policy
     assert policy.entitlements["SEC_VI"].draws == {2011: 1.0}  # its own closing year, nothing else
 
 
 def test_the_secondaries_draw_four_vintages_then_three_times_one_year(workbook):
     # exact shares are asserted below, so nothing is rounded here; the rounding has its own tests
-    orchestrator = load_profile_workbook(workbook, "USD", "Conservative", 100.0, commitment_rounding_unit_usd=None)
+    orchestrator = load_profile_workbook(workbook, "USD", "Conservative", commitment_rounding_unit_usd=None)
     result = orchestrator.run()
     c = result.commitments.reset_index().set_index("fund")
     secondaries = c[c["fund_type"] == "SECONDARIES"]
@@ -436,7 +459,7 @@ def test_the_secondaries_draw_four_vintages_then_three_times_one_year(workbook):
 
 
 def test_every_drawn_year_is_priced_on_its_own_year_end_and_hindsight_is_marked(workbook):
-    result = run_profile_workbook(workbook, "EUR", "Moderate", 100.0)
+    result = run_profile_workbook(workbook, "EUR", "Moderate")
     draws = result.draws.reset_index()
 
     # every year is priced in the year it names, on a value that really is the liquid-only value that day
@@ -456,26 +479,23 @@ def test_every_drawn_year_is_priced_on_its_own_year_end_and_hindsight_is_marked(
 
 
 # ------------------------------------------------------ rounding the commitments
-def test_the_workbook_rounds_commitments_like_excel_round_at_any_starting_value(workbook):
-    """ROUND(value, -4) on 100,000,000, and the same relative precision everywhere else."""
+def test_the_workbook_rounds_commitments_like_excel_round_minus_four(workbook):
+    """A run always starts at 100,000,000, and the unit that goes with it is 10,000 dollars: ROUND(value, -4)."""
     repository = WorkbookRepository(workbook, "USD", "Conservative")
-    assert repository.simulation_spec(100_000_000).commitment_rounding_unit_usd == 10_000.0  # ROUND(value, -4)
-    assert repository.simulation_spec(1_000_000).commitment_rounding_unit_usd == 100.0       # ROUND(value, -2)
-    assert repository.simulation_spec(100).commitment_rounding_unit_usd == 0.01              # ROUND(value, 2)
-    assert repository.simulation_spec(100, commitment_rounding_unit_usd=None).commitment_rounding_unit_usd is None
+    assert repository.simulation_spec().commitment_rounding_unit_usd == COMMITMENT_ROUNDING_UNIT_USD == 10_000.0
+    assert repository.simulation_spec(commitment_rounding_unit_usd=None).commitment_rounding_unit_usd is None
+    assert repository.simulation_spec(commitment_rounding_unit_usd=250_000).commitment_rounding_unit_usd == 250_000
 
-    large = run_profile_workbook(workbook, "USD", "Conservative", 100_000_000)
-    small = run_profile_workbook(workbook, "USD", "Conservative", 100)
-    assert (large.draws["year_budget_usd"] % 10_000 == 0).all() and (large.commitments["commitment_usd"] % 10_000 == 0).all()
-    # the same relative precision: the run from 100 is the run from 100,000,000 divided by a million, rounding included
-    np.testing.assert_allclose(small.commitments["commitment_usd"] * 1_000_000, large.commitments["commitment_usd"])
-    np.testing.assert_allclose(small.periods["total_close"] * 1_000_000, large.periods["total_close"])
-    check_identities(large)
+    for currency in ("USD", "EUR"):  # the unit is dollars, whatever the portfolio's own currency
+        result = run_profile_workbook(workbook, currency, "Conservative")
+        assert (result.draws["year_budget_usd"] % 10_000 == 0).all()
+        assert (result.commitments["commitment_usd"] % 10_000 == 0).all()
+        check_identities(result)
 
 
 def test_each_drawn_year_is_rounded_before_its_multiplier_and_the_years_are_then_added(workbook):
-    rounded = run_profile_workbook(workbook, "USD", "Conservative", 100_000_000)
-    exact = run_profile_workbook(workbook, "USD", "Conservative", 100_000_000, commitment_rounding_unit_usd=None)
+    rounded = run_profile_workbook(workbook, "USD", "Conservative")
+    exact = run_profile_workbook(workbook, "USD", "Conservative", commitment_rounding_unit_usd=None)
     draws = rounded.draws
     # every year's budget is the Excel rounding of the unrounded one, which is what the unrounded run computes
     np.testing.assert_allclose(draws["year_budget_unrounded_usd"], exact.draws["year_budget_usd"])

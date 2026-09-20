@@ -12,10 +12,9 @@ commitment follows from the liquid returns, the initial value, the exchange rate
 schedule alone.
 
 It can be **rounded the way the spreadsheet rounds it**: each year's dollar commitment goes to
-the nearest multiple of a rounding unit, halves away from zero, which is Excel's ROUND. The
-unit is one ten-thousandth of the starting value, so a 100,000,000 portfolio rounds to the
-nearest 10,000 — ``ROUND(value, -4)`` — and any other starting value to the same relative
-precision.
+the nearest multiple of a rounding unit, halves away from zero, which is Excel's ROUND. A run
+always starts from 100,000,000, and the unit that goes with it is 10,000 dollars —
+``ROUND(value, -4)``.
 
 The engine asks a policy one question: given the funds closing at this observation and a
 snapshot of the balances, how many dollars to commit to each. The policy reads and never
@@ -48,9 +47,9 @@ from .inputs import Fund, coerce_rate_table
 
 WEIGHT_TOLERANCE = 1e-9
 
-# Excel's ROUND(value, -4) on a 100,000,000 portfolio rounds to units of 10,000: the
-# starting value divided by this number.
-ROUNDING_UNITS_PER_STARTING_VALUE = 10_000
+# Excel's ROUND(value, -4): the nearest 10,000 dollars. The unit that goes with a portfolio
+# that starts at 100,000,000, which every run assembled from data does.
+COMMITMENT_ROUNDING_UNIT_USD = 10_000.0
 
 FundGroups = dict[tuple[int, str], list[Fund]]  # funds by (closing year, fund type)
 DrawPlans = Mapping[str, Mapping[int, float]]  # fund name → calendar year → multiplier
@@ -216,18 +215,6 @@ def validate_rounding_unit(value: Any, *, label: str = "rounding_unit_usd") -> f
 
 
 # -------------------------------------------------------------------------- rounding
-def commitment_rounding_unit(starting_value: float) -> float:
-    """The rounding unit that gives every starting value the precision ROUND(value, -4) gives 100,000,000.
-
-    100,000,000 → 10,000 · 1,000,000 → 100 · 100 → 0.01. Proportional, so a run started
-    from any value is the 100,000,000 run scaled, rounding included.
-    """
-    if not _is_a_finite_number(starting_value) or starting_value <= 0:
-        raise ValueError(f"starting_value must be a positive number, got {starting_value!r}")
-
-    return float(starting_value) / ROUNDING_UNITS_PER_STARTING_VALUE
-
-
 def round_like_excel(value: float, unit: float) -> float:
     """``value`` to the nearest multiple of ``unit``, halves going away from zero: Excel's ROUND.
 
@@ -464,8 +451,8 @@ class AnnualRatePolicy:
     the nearest multiple of the unit, halves away from zero, exactly as Excel's ROUND does,
     before its multiplier and the fund's weight are applied: a fund that draws four years
     collects four rounded amounts, and one that draws ``12x3`` three times one rounded amount.
-    ``commitment_rounding_unit(starting_value)`` gives the unit that matches
-    ``ROUND(value, -4)`` on a 100,000,000 portfolio at any starting value.
+    ``COMMITMENT_ROUNDING_UNIT_USD`` is 10,000 dollars, ``ROUND(value, -4)``: the unit that
+    goes with the 100,000,000 every run starts from.
 
     ``weights`` split a year's budget among the funds of one type closing that year; they must
     be given for all funds of such a group or none (equal split), and sum to 1. ``years``

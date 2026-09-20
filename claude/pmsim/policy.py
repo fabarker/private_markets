@@ -11,6 +11,12 @@ with no capital call or distribution in it. Private assets never interfere, so e
 commitment follows from the liquid returns, the initial value, the exchange rates and the
 schedule alone.
 
+It can be **rounded the way the spreadsheet rounds it**: each year's dollar commitment goes to
+the nearest multiple of a rounding unit, halves away from zero, which is Excel's ROUND. The
+unit is one ten-thousandth of the starting value, so a 100,000,000 portfolio rounds to the
+nearest 10,000 — ``ROUND(value, -4)`` — and any other starting value to the same relative
+precision.
+
 The engine asks a policy one question: given the funds closing at this observation and a
 snapshot of the balances, how many dollars to commit to each. The policy reads and never
 moves cash, and keeps no state. ``AnnualRatePolicy`` is the default: the pacing schedule
@@ -23,6 +29,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from decimal import ROUND_HALF_UP, Decimal
 from datetime import date
 from numbers import Real
 from typing import Any, Iterable, Mapping, Protocol, Sequence
@@ -102,7 +109,9 @@ class DrawnYear:
     expected_value: float
     funding_date: date
     liquid_only_usd: float
-    commitment_usd: float  # multiplier × rate / expected_value × liquid_only_usd
+    year_budget_unrounded_usd: float  # rate / expected_value × liquid_only_usd: the year's dollar commitment as computed
+    year_budget_usd: float  # the same, rounded to the policy's rounding unit; equal to it when nothing is rounded
+    commitment_usd: float  # multiplier × year_budget_usd
 
 
 @dataclass(frozen=True)
@@ -122,6 +131,48 @@ def validate_expected_return(value: Any, *, label: str = "expected_return") -> f
     if not -1.0 < value < 1.0:
         raise ValueError(f"{label} must be a decimal between -1 and 1 (write 5% as 0.05), got {value!r}")
     return float(value)
+
+
+ROUNDING_UNITS_PER_STARTING_VALUE = 10_000  # Excel's ROUND(value, -4) on a 100,000,000 portfolio: units of 10,000
+
+
+def commitment_rounding_unit(starting_value: float) -> float:
+    """The rounding unit that gives every starting value the precision ROUND(value, -4) gives 100,000,000.
+
+    100,000,000 → 10,000 · 1,000,000 → 100 · 100 → 0.01. Proportional, so a run started
+    from any value is the 100,000,000 run scaled, rounding included.
+    """
+    if isinstance(starting_value, bool) or not isinstance(starting_value, Real) or not math.isfinite(starting_value):
+        raise ValueError(f"starting_value must be a positive number, got {starting_value!r}")
+    if starting_value <= 0:
+        raise ValueError(f"starting_value must be a positive number, got {starting_value!r}")
+    return float(starting_value) / ROUNDING_UNITS_PER_STARTING_VALUE
+
+
+def validate_rounding_unit(value: Any, *, label: str = "rounding_unit_usd") -> float:
+    """A rounding unit in US dollars: a finite number above zero, such as 10_000."""
+    if isinstance(value, bool) or not isinstance(value, Real) or not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{label} must be a positive number of dollars such as 10_000, got {value!r}")
+    return float(value)
+
+
+def round_like_excel(value: float, unit: float) -> float:
+    """``value`` to the nearest multiple of ``unit``, halves going away from zero: Excel's ROUND.
+
+    ``ROUND(value, -4)`` is ``round_like_excel(value, 10_000)`` and ``ROUND(value, 2)`` is
+    ``round_like_excel(value, 0.01)``. Python's own ``round`` sends a half to the even
+    neighbour (25,000 → 20,000); Excel sends it away from zero (25,000 → 30,000), and so
+    does this. The division is done in decimal arithmetic on the digits the numbers print
+    with, so 2.675 rounds to 2.68 as it does in Excel, instead of being caught by its binary
+    form lying a hair below the half.
+    """
+    value = float(value)
+    if not math.isfinite(value):
+        return value
+
+    decimal_unit = Decimal(repr(float(unit)))
+    whole_units = (Decimal(repr(value)) / decimal_unit).quantize(Decimal(1), rounding=ROUND_HALF_UP)
+    return float(whole_units * decimal_unit)
 
 
 def format_draw_plan(draws: Mapping[int, float]) -> str:
@@ -250,6 +301,13 @@ class AnnualRatePolicy:
     meant it to rather than one inflated by the growth expected in between. Naming any fund of
     a type in ``draws`` switches carry-forward off for that type.
 
+    **Rounding.** With ``rounding_unit_usd`` each drawn year's dollar commitment is rounded to
+    the nearest multiple of the unit, halves away from zero, exactly as Excel's ROUND does,
+    before its multiplier and the fund's weight are applied: a fund that draws four years
+    collects four rounded amounts, and one that draws ``12x3`` three times one rounded amount.
+    ``commitment_rounding_unit(starting_value)`` gives the unit that matches
+    ``ROUND(value, -4)`` on a 100,000,000 portfolio at any starting value.
+
     ``weights`` split a year's budget among the funds of one type closing that year; they must
     be given for all funds of such a group or none (equal split), and sum to 1. ``years``
     lists the calendar years the rate table must cover (the simulator passes the horizon);
@@ -266,10 +324,12 @@ class AnnualRatePolicy:
         years: Iterable[int] | None = None,
         expected_return: float | None = None,
         draws: DrawPlans | None = None,
+        rounding_unit_usd: float | None = None,
     ) -> None:
         self.rates = coerce_rate_table(rates)
         self.carry_forward = bool(carry_forward)
         self.expected_return = None if expected_return is None else validate_expected_return(expected_return)
+        self.rounding_unit_usd = None if rounding_unit_usd is None else validate_rounding_unit(rounding_unit_usd)
         funds = list(funds)
         names = [f.name for f in funds]
         if len(set(names)) != len(names):
@@ -338,8 +398,15 @@ class AnnualRatePolicy:
                 # the fund's own year is dated by the closing; a later year by the model's own calendar
                 plan_date = balances.date if year == entitlement.policy_year else date(year, 12, 31)
             expected_value = self.expected_value(plan_date, first)
-            drawn.append(DrawnYear(year, multiplier, rate, plan_date, expected_value, funding_date,
-                                   liquid_only_usd, multiplier * rate / expected_value * liquid_only_usd))
+
+            # the year's own dollar commitment, rounded the way the spreadsheet rounds it
+            year_budget_unrounded_usd = rate / expected_value * liquid_only_usd
+            year_budget_usd = year_budget_unrounded_usd
+            if self.rounding_unit_usd is not None:
+                year_budget_usd = round_like_excel(year_budget_unrounded_usd, self.rounding_unit_usd)
+
+            drawn.append(DrawnYear(year, multiplier, rate, plan_date, expected_value, funding_date, liquid_only_usd,
+                                   year_budget_unrounded_usd, year_budget_usd, multiplier * year_budget_usd))
         return drawn
 
     def _budgets_usd(self, fund_name: str, balances: SizingBalances) -> tuple[float, float]:

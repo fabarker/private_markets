@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from numbers import Real
 from typing import Any, Mapping
 
-from ..policy import validate_expected_return
+from ..policy import validate_expected_return, validate_rounding_unit
 
 FX_QUOTES = ("base_per_usd", "usd_per_base")
 LIQUID_KINDS = ("levels", "returns")
@@ -38,6 +38,11 @@ class SimulationSpec:
     without it such a year is not used. ``draws`` states the schedule years a fund collects
     outright, as ``{fund name: {calendar year: multiplier}}``, overriding the repository's own
     draw plans; naming any fund of a type switches carry-forward off for that type.
+    ``commitment_rounding_unit_usd`` rounds each year's dollar commitment to the nearest multiple
+    of that many dollars, halves away from zero, as Excel's ROUND does; 10_000 is
+    ``ROUND(value, -4)``. ``pmsim.commitment_rounding_unit(starting_value)`` gives the unit with
+    that precision for any starting value, and ``WorkbookRepository.simulation_spec`` applies it
+    by default. None rounds nothing.
     ``expected_return`` is the yearly return X the pacing schedule was built on, as a decimal: the schedule is divided by the pacing model's
     expected liquid value — 1 on the first commitment date, growing at X — to become a share
     of the liquid value. Given here it overrides the repository's expected_returns table;
@@ -54,6 +59,7 @@ class SimulationSpec:
     commitment_rates: Any = None
     expected_return: float | None = None
     draws: Mapping[str, Mapping[int, float]] | None = None
+    commitment_rounding_unit_usd: float | None = None
     weights: Mapping[str, float] | None = None
     carry_forward: bool = False
     calls_are_negative: bool = True
@@ -75,3 +81,5 @@ class SimulationSpec:
             raise ValueError("inception_date only applies when liquid_kind is 'returns'")
         if self.expected_return is not None:
             validate_expected_return(self.expected_return)
+        if self.commitment_rounding_unit_usd is not None:
+            validate_rounding_unit(self.commitment_rounding_unit_usd, label="commitment_rounding_unit_usd")

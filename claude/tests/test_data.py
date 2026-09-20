@@ -325,3 +325,21 @@ def test_a_drawn_plan_reaches_the_policy_and_doubles_the_commitment():
     assert doubled.commitments.loc[a, "drawn_years"] == "2027x2"
     b = (pd.Timestamp("2027-06-30"), "B")  # B's plan is its own year at 1: unchanged
     assert doubled.commitments.loc[b, "commitment_usd"] == pytest.approx(plain.commitments.loc[b, "commitment_usd"])
+
+
+# ---------------------------------------------------------------- rounding
+def test_the_spec_carries_the_rounding_unit_to_the_policy():
+    fund_spec, fund_market, market, rates = tables()
+    plain = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates), SPEC)
+    assert plain.spec.commitment_rounding_unit_usd is None and plain.policy.rounding_unit_usd is None  # off unless asked for
+
+    rounded_spec = SimulationSpec(**{**vars(SPEC), "commitment_rounding_unit_usd": 50_000})
+    rounded = Orchestrator(FrameRepository(fund_spec, fund_market, market, rates), rounded_spec)
+    assert rounded.policy.rounding_unit_usd == 50_000.0
+    commitments = rounded.run().commitments["commitment_usd"]
+    # each fund's own-year budget is rounded to 50,000 dollars, then split 60/40
+    assert commitments.tolist() == pytest.approx([0.6 * 150_000, 0.4 * 150_000])
+    assert commitments.tolist() != pytest.approx(plain.run().commitments["commitment_usd"].tolist())
+
+    with pytest.raises(ValueError, match="commitment_rounding_unit_usd must be a positive number of dollars"):
+        SimulationSpec(**{**vars(SPEC), "commitment_rounding_unit_usd": -1})

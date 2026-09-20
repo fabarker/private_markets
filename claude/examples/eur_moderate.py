@@ -1,4 +1,4 @@
-"""Run the EUR Moderate profile of the portfolio workbook from 100 US dollars.
+"""Run the EUR Moderate profile of the portfolio workbook from 100,000,000 euros.
 
 Made to be run and debugged straight from PyCharm: open this file, set WORKBOOK below to
 your workbook, put a breakpoint anywhere in run(), and press Debug. It also works from a
@@ -11,9 +11,16 @@ If WORKBOOK does not exist, a sample workbook in the same layout is generated
 next to it and used instead, so the script runs on a fresh checkout — the notice printed
 at the top says which file was used.
 
-The EUR portfolio's balance is kept in euros, so the 100 dollars are converted at the first
-available EURUSD rate — the rate the engine also carries at the inception date, one month
-before the first Liquid return; the script prints that conversion.
+The EUR portfolio's balance is kept in euros. With START_IN_BASE_CURRENCY = True, START_VALUE
+is read as euros and used as it is. Set it to False to read START_VALUE as US dollars
+instead: they are then converted at the first available EURUSD rate — the rate the engine
+also carries at the inception date, one month before the first Liquid return — and the
+script prints that conversion.
+
+Commitments are rounded the way the spreadsheet rounds them. Each year's dollar commitment
+goes to the nearest multiple of START_VALUE / 10,000, halves away from zero: from
+100,000,000 that is the nearest 10,000, Excel's ROUND(value, -4), and any other starting
+value gets the same relative precision.
 """
 import sys
 from pathlib import Path
@@ -25,14 +32,17 @@ if str(ROOT) not in sys.path:
 
 import pandas as pd  # noqa: E402
 
+from pmsim import commitment_rounding_unit  # noqa: E402
 from pmsim.data import Orchestrator, WorkbookRepository  # noqa: E402
 
 # ---- settings: edit these, then Run / Debug this file -------------------------------------------
 WORKBOOK = ROOT / "data" / "portfolio.xlsx"   # your workbook; a sample is generated here if it is missing
 OUTPUT_DIR = None                             # e.g. ROOT / "data" / "out" to also write the result tables as CSV
 CURRENCY, RISK = "EUR", "Moderate"            # the profile: a Liquid column "<CURRENCY> <RISK>" and Commitments rows
-START_USD = 100.0                             # starting balance, in dollars ...
-START_IN_BASE_CURRENCY = False                # ... or True to read START_USD as euros and skip the conversion
+START_VALUE = 100_000_000.0                   # the starting balance ...
+START_IN_BASE_CURRENCY = True                 # ... True: in euros, used as it is. False: in dollars, converted at the first rate
+ROUND_COMMITMENTS = True                      # round each year's dollar commitment like Excel's ROUND(value, -4) on 100,000,000:
+                                              # to the nearest START_VALUE / 10,000 dollars, halves away from zero. False: no rounding
 CARRY_FORWARD = True                          # a year with no fund of a type is still sized (its rate × that year-end's
                                               # balance) and the dollars wait for the next fund of the type; False: not used
 # --------------------------------------------------------------------------------------------------
@@ -57,8 +67,8 @@ def starting_balance(repository: WorkbookRepository, start_usd: float) -> tuple[
     return float(base), float(rate), rate_date
 
 
-def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_currency: bool = START_IN_BASE_CURRENCY,
-        carry_forward: bool = CARRY_FORWARD, draws=None):
+def run(path, start_value: float = START_VALUE, out_dir=None, *, start_in_base_currency: bool = START_IN_BASE_CURRENCY,
+        carry_forward: bool = CARRY_FORWARD, draws=None, round_commitments: bool = ROUND_COMMITMENTS):
     """Load the workbook, build the engine's inputs step by step, run, and report.
 
     Each step is its own local variable so a breakpoint shows one thing at a time:
@@ -69,13 +79,26 @@ def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_curre
     repository = WorkbookRepository(path, CURRENCY, RISK)                       # 1. read every sheet, pick the profile
 
     if start_in_base_currency:                                                  # 2. the starting balance in euros
-        initial_value, rate, rate_date = float(start_usd), float("nan"), None
+        initial_value, rate, rate_date = float(start_value), float("nan"), None
     else:
-        initial_value, rate, rate_date = starting_balance(repository, start_usd)
+        initial_value, rate, rate_date = starting_balance(repository, start_value)
+
+    # The rounding unit comes from the number typed as START_VALUE, whichever currency it is
+    # read in: 100,000,000 rounds commitments to the nearest 10,000 dollars.
+    rounding_unit_usd = None
+    if round_commitments:
+        rounding_unit_usd = commitment_rounding_unit(start_value)
+
+    settings = {
+        "carry_forward": carry_forward,
+        "commitment_rounding_unit_usd": rounding_unit_usd,
+    }
 
     # draws=None leaves the Spec sheet's Draws column in charge; pass {} to ignore it and
     # let carry_forward decide the years instead.
-    settings = {"carry_forward": carry_forward} | ({} if draws is None else {"draws": draws})
+    if draws is not None:
+        settings["draws"] = draws
+
     spec = repository.simulation_spec(initial_value, **settings)                # 3. currency, series, fx quote, expected return
     orchestrator = Orchestrator(repository, spec)
 
@@ -85,13 +108,13 @@ def run(path, start_usd: float = START_USD, out_dir=None, *, start_in_base_curre
 
     result = orchestrator.run()                                                 # 7. the period loop
 
-    report(repository, orchestrator, result, start_usd, initial_value, rate, rate_date, start_in_base_currency)
+    report(repository, orchestrator, result, start_value, initial_value, rate, rate_date, start_in_base_currency)
     if out_dir is not None:
         write_csvs(orchestrator, result, Path(out_dir))
     return orchestrator, result
 
 
-def report(repository, orchestrator, result, start_usd, initial_value, rate, rate_date, start_in_base_currency):
+def report(repository, orchestrator, result, start_value, initial_value, rate, rate_date, start_in_base_currency):
     inception = orchestrator.portfolio.first_date  # one period before the first Liquid return
     print(f"Workbook: {repository.path}")
     print(f"Sheets:   {repository.sheet_names}")
@@ -100,7 +123,7 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, rat
     if start_in_base_currency:
         print(f"\nStarting balance: {CURRENCY} {initial_value:,.2f} at inception {inception}")
     else:
-        print(f"\nStarting balance: USD {start_usd:,.2f} = {CURRENCY} {initial_value:,.4f} "
+        print(f"\nStarting balance: USD {start_value:,.2f} = {CURRENCY} {initial_value:,.4f} "
               f"at {repository.fx_column} {rate:.4f} (first available rate, {rate_date.date()}), held at inception {inception}")
 
     print(f"\nExpected return X for {repository.profile}: {orchestrator.expected_return:.2%} a year (from the workbook's expected-returns sheet). "
@@ -117,7 +140,12 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, rat
     if result.shortfall is not None:
         print(f"  {result.shortfall}")
     carry = "on" if orchestrator.spec.carry_forward else "off"
-    print(f"\nCommitments, sized in USD on the liquid-only value (sizing_base_usd); carry-forward {carry}.")
+    rounding_unit_usd = orchestrator.spec.commitment_rounding_unit_usd
+    if rounding_unit_usd is None:
+        rounding = "not rounded"
+    else:
+        rounding = f"each year's commitment rounded to the nearest {rounding_unit_usd:,.10g} dollars, halves away from zero"
+    print(f"\nCommitments, sized in USD on the liquid-only value (sizing_base_usd); carry-forward {carry}; {rounding}.")
     print("  own_year_usd = own_year_rate / expected_value × sizing_base_usd · commitment_usd = weight × (own_year_usd + other_years_usd)")
     print(result.commitments[["policy_year", "sizing_base_usd", "own_year_rate", "expected_value", "own_year_usd",
                               "drawn_years", "other_years_usd", "weight", "commitment_usd", "usd_rate", "commitment_base"]])
@@ -130,8 +158,8 @@ def report(repository, orchestrator, result, start_usd, initial_value, rate, rat
         forward = result.draws[result.draws["plan_date"] > result.draws["funding_date"]]
         print(f"  {len(result.draws)} drawn years behind {len(result.commitments)} commitments; "
               f"{len(forward)} of them a year the run had not reached, funded at the closing instead.")
-        print(result.draws[["multiplier", "rate", "plan_date", "expected_value", "funding_date",
-                            "liquid_only_usd", "commitment_usd", "commitment_base"]])
+        print(result.draws[["multiplier", "rate", "plan_date", "expected_value", "funding_date", "liquid_only_usd",
+                            "year_budget_unrounded_usd", "year_budget_usd", "commitment_usd", "commitment_base"]])
     unclaimed = {t: years for t, years in orchestrator.policy.unclaimed_schedule_years().items() if years}
     for fund_type, years in unclaimed.items():
         print(f"  {fund_type}: no fund draws {years} — that budget goes unspent.")

@@ -8,6 +8,7 @@ import pytest
 pytest.importorskip("openpyxl")
 
 from examples.profile_workbook import FUNDS, LIQUID_SPEC, sample_tables, write_sample_workbook  # noqa: E402
+from pmsim import round_like_excel  # noqa: E402
 from pmsim.data import (  # noqa: E402
     Orchestrator,
     SheetLayout,
@@ -167,16 +168,20 @@ def test_usd_conservative_runs_end_to_end(workbook):
     level = orchestrator.portfolio.liquid_levels.loc["2010-12-31"]  # a USD profile: the liquid-only value is the levels
     assert pem2011["policy_year"] == 2010 and pem2011["own_year_rate"] == 0.022  # relative year 1 of the schedule
     assert pem2011["expected_value"] == 1.0 and pem2011["other_years_usd"] == 0  # the first commitment: the model is worth 1 here
-    assert pem2011["sizing_base"] == pytest.approx(level) and pem2011["commitment_usd"] == pytest.approx(0.022 * level)
+    # from 1,000,000 the commitments are rounded to the nearest 100: ROUND(value, -4) on 100,000,000, scaled
+    assert orchestrator.spec.commitment_rounding_unit_usd == 100.0
+    assert pem2011["sizing_base"] == pytest.approx(level)
+    assert pem2011["commitment_usd"] == round_like_excel(0.022 * level, 100.0)
     assert orchestrator.simulator.first_commitment_date == date(2010, 12, 31) and orchestrator.expected_return == 0.054
 
-    # the sample's schedule grows at X and is then divided by X, so every commitment is the same share of the value
-    rate_of = c.reset_index().groupby("fund_type")["rate"]
-    np.testing.assert_allclose(rate_of.get_group("BUYOUT"), 0.022, rtol=1e-4)  # a buyout fund draws its own year alone
-    # each secondaries fund draws several years, so its rate is that many times the 0.8% share.
-    # SEC_VIII, SEC_IX and SEC_X draw three years apiece, all funded on their closing day.
-    for name in ("SEC_VIII", "SEC_IX", "SEC_X"):
-        assert c.xs(name, level="fund")["rate"].iloc[0] == pytest.approx(3 * 0.008, rel=1e-3)
+    # the sample's schedule grows at X and is then divided by X, so before rounding every drawn
+    # year is the same share of the value that funds it: 2.2% for buyout, 0.8% for secondaries
+    draws = result.draws.reset_index()
+    share = draws["year_budget_unrounded_usd"] / draws["liquid_only_usd"]
+    np.testing.assert_allclose(share[draws["fund_type"] == "BUYOUT"], 0.022, rtol=1e-4)
+    np.testing.assert_allclose(share[draws["fund_type"] == "SECONDARIES"], 0.008, rtol=1e-4)
+    # and rounding moves each of them by half a unit at most
+    assert ((draws["year_budget_usd"] - draws["year_budget_unrounded_usd"]).abs() <= 50.0).all()
     pem2012 = c.loc[(pd.Timestamp("2011-12-31"), "PEM2012")]  # same date as SEC_VI, different type: no weights needed
     assert pem2012["own_year_rate"] == pytest.approx(0.022 * 1.054) and pem2012["expected_value"] == pytest.approx(1.054)
     # SEC_VI's plan is years 1-4: 2010 funded at its own year end, 2011-2013 at the closing
@@ -203,9 +208,26 @@ def test_eur_conservative_translates_at_the_inverted_rate(workbook):
     check_identities(result)
 
 
+def test_eur_moderate_script_defaults_to_a_hundred_million_euros_with_rounded_commitments(workbook):
+    from examples import eur_moderate
+    assert eur_moderate.START_VALUE == 100_000_000 and eur_moderate.START_IN_BASE_CURRENCY is True
+    orchestrator, result = eur_moderate.run(workbook)
+    assert result.base_currency == "EUR" and result.status == "completed"
+    assert result.periods["liquid_open"].iloc[0] == 100_000_000.0  # euros, used as they are: no conversion
+    # ROUND(value, -4): every year's commitment, and so every fund's, is a whole number of 10,000 dollars
+    assert orchestrator.spec.commitment_rounding_unit_usd == 10_000.0
+    assert (result.draws["year_budget_usd"] % 10_000 == 0).all()
+    assert (result.commitments["commitment_usd"] % 10_000 == 0).all()
+    sec_ix = result.draws.xs("SEC_IX", level="fund").iloc[0]  # 12x3: three times one rounded year, not the rounding of three
+    assert sec_ix["commitment_usd"] == 3 * round_like_excel(sec_ix["year_budget_unrounded_usd"], 10_000.0)
+    check_identities(result)
+
+
 def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(workbook, tmp_path, capsys):
     from examples import eur_moderate
-    orchestrator, result = eur_moderate.run(workbook, start_usd=100.0, out_dir=tmp_path / "out")
+    # the draw-plan arithmetic below is exact only before rounding, so rounding is switched off here
+    from_dollars = dict(start_value=100.0, start_in_base_currency=False, round_commitments=False)
+    orchestrator, result = eur_moderate.run(workbook, out_dir=tmp_path / "out", **from_dollars)
     eurusd = sample_tables()["FX"].loc["2009-04-30", "EURUSD"]
     assert orchestrator.repository.profile == "EUR Moderate"
     assert orchestrator.spec.initial_value == pytest.approx(100.0 / eurusd)
@@ -228,19 +250,20 @@ def test_eur_moderate_script_starts_from_dollars_converted_at_the_first_rate(wor
     # with the plans switched off, the script's carry-forward switch decides the years again:
     # no secondaries fund closes in 2010, so SEC_VI collects that year's budget and no more
     assert orchestrator.spec.carry_forward is True
-    _, carried = eur_moderate.run(workbook, start_usd=100.0, draws={})
+    _, carried = eur_moderate.run(workbook, draws={}, **from_dollars)
     row = carried.commitments.loc[(pd.Timestamp("2011-12-31"), "SEC_VI")]
     assert row["drawn_years"] == "2010, 2011"
     assert row["commitment_usd"] == pytest.approx(0.011 * balance_at_end_of_2010 + 0.011 * row["sizing_base_usd"], rel=1e-3)
-    _, without = eur_moderate.run(workbook, start_usd=100.0, carry_forward=False, draws={})
+    _, without = eur_moderate.run(workbook, carry_forward=False, draws={}, **from_dollars)
     assert without.commitments.loc[(pd.Timestamp("2011-12-31"), "SEC_VI"), "commitment_usd"] == \
         pytest.approx(0.011 * row["sizing_base_usd"], rel=1e-3)
     assert {p.name for p in (tmp_path / "out").iterdir()} == {
         "periods.csv", "funds.csv", "commitments.csv", "draws.csv", "map_events_to_observations.csv",
         "fund_summary.csv", "tracked_values.csv", "liquid_only_comparison.csv", "public_market_equivalent.csv"}
     assert "Starting balance: USD 100.00 = EUR" in capsys.readouterr().out
-    _, in_euros = eur_moderate.run(workbook, start_usd=100.0, start_in_base_currency=True)
+    _, in_euros = eur_moderate.run(workbook, start_value=100.0, start_in_base_currency=True)
     assert in_euros.periods["liquid_open"].iloc[0] == 100.0
+    assert (in_euros.draws["year_budget_usd"].mul(100).round(6) % 1 == 0).all()  # from 100: whole cents, ROUND(value, 2)
     check_identities(result)
 
 
@@ -385,7 +408,8 @@ def test_a_workbook_without_a_draws_column_leaves_every_fund_on_its_default_year
 
 
 def test_the_secondaries_draw_four_vintages_then_three_times_one_year(workbook):
-    orchestrator = load_profile_workbook(workbook, "USD", "Conservative", 100.0)
+    # exact shares are asserted below, so nothing is rounded here; the rounding has its own tests
+    orchestrator = load_profile_workbook(workbook, "USD", "Conservative", 100.0, commitment_rounding_unit_usd=None)
     result = orchestrator.run()
     c = result.commitments.reset_index().set_index("fund")
     secondaries = c[c["fund_type"] == "SECONDARIES"]
@@ -418,3 +442,35 @@ def test_every_drawn_year_is_funded_from_a_date_no_later_than_the_closing(workbo
     # the dollars of a fund's drawn years add up to its commitment
     totals = draws.groupby(["date", "fund"])["commitment_usd"].sum().reindex(result.commitments.index)
     np.testing.assert_allclose(totals, result.commitments["commitment_usd"])
+
+
+# ------------------------------------------------------ rounding the commitments
+def test_the_workbook_rounds_commitments_like_excel_round_at_any_starting_value(workbook):
+    """ROUND(value, -4) on 100,000,000, and the same relative precision everywhere else."""
+    repository = WorkbookRepository(workbook, "USD", "Conservative")
+    assert repository.simulation_spec(100_000_000).commitment_rounding_unit_usd == 10_000.0  # ROUND(value, -4)
+    assert repository.simulation_spec(1_000_000).commitment_rounding_unit_usd == 100.0       # ROUND(value, -2)
+    assert repository.simulation_spec(100).commitment_rounding_unit_usd == 0.01              # ROUND(value, 2)
+    assert repository.simulation_spec(100, commitment_rounding_unit_usd=None).commitment_rounding_unit_usd is None
+
+    large = run_profile_workbook(workbook, "USD", "Conservative", 100_000_000)
+    small = run_profile_workbook(workbook, "USD", "Conservative", 100)
+    assert (large.draws["year_budget_usd"] % 10_000 == 0).all() and (large.commitments["commitment_usd"] % 10_000 == 0).all()
+    # the same relative precision: the run from 100 is the run from 100,000,000 divided by a million, rounding included
+    np.testing.assert_allclose(small.commitments["commitment_usd"] * 1_000_000, large.commitments["commitment_usd"])
+    np.testing.assert_allclose(small.periods["total_close"] * 1_000_000, large.periods["total_close"])
+    check_identities(large)
+
+
+def test_each_drawn_year_is_rounded_before_its_multiplier_and_the_years_are_then_added(workbook):
+    rounded = run_profile_workbook(workbook, "USD", "Conservative", 100_000_000)
+    exact = run_profile_workbook(workbook, "USD", "Conservative", 100_000_000, commitment_rounding_unit_usd=None)
+    draws = rounded.draws
+    # every year's budget is the Excel rounding of the unrounded one, which is what the unrounded run computes
+    np.testing.assert_allclose(draws["year_budget_unrounded_usd"], exact.draws["year_budget_usd"])
+    expected = [round_like_excel(value, 10_000.0) for value in draws["year_budget_unrounded_usd"]]
+    assert draws["year_budget_usd"].tolist() == expected
+    assert draws["commitment_usd"].tolist() == (draws["multiplier"] * draws["year_budget_usd"]).tolist()
+    # SEC_VI draws four years: four rounded amounts added, which need not be the rounding of their sum
+    sec_vi = draws.xs("SEC_VI", level="fund")
+    assert len(sec_vi) == 4 and rounded.commitments.xs("SEC_VI", level="fund")["commitment_usd"].iloc[0] == sec_vi["year_budget_usd"].sum()

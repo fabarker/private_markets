@@ -4,7 +4,8 @@ from datetime import date
 
 import pytest
 
-from pmsim import AnnualRatePolicy, Entitlement, Fund, SizingBalances, YearEndBalance
+from pmsim import (AnnualRatePolicy, Entitlement, Fund, SizingBalances, YearEndBalance,
+                   commitment_rounding_unit, round_like_excel)
 
 BALANCES = SizingBalances(t=3, date=date(2029, 3, 31), liquid_only_usd=1_000_000.0, liquid_account_usd=900_000.0,
                           private_nav_usd=250_000.0)
@@ -327,3 +328,69 @@ def test_funds_closing_together_may_draw_the_same_years_and_split_them():
     at_closing = balances(date(2028, 12, 31), 1_000_000.0, first_commitment_date=SEED)
     # 4% of the liquid value between them, split by weight
     assert policy.size_commitments([a, b], at_closing) == {"A": pytest.approx(30_000.0), "B": pytest.approx(10_000.0)}
+
+
+# ---------------------------------------------------------------- rounding
+@pytest.mark.parametrize("value, unit, expected", [
+    (2_344_999.99, 10_000, 2_340_000.0),   # ROUND(value, -4)
+    (2_345_000.00, 10_000, 2_350_000.0),   # a half goes away from zero ...
+    (25_000, 10_000, 30_000.0),            # ... where Python's round() would give 20,000
+    (5_000, 10_000, 10_000.0),             # ... and 0
+    (4_999.99, 10_000, 0.0),
+    (-25_000, 10_000, -30_000.0),          # away from zero on both sides
+    (2.675, 0.01, 2.68),                   # ROUND(value, 2): 2.675 is a hair below the half in binary
+    (1.005, 0.01, 1.01),
+    (0.125, 0.01, 0.13),
+    (12_345.678, 100, 12_300.0),           # ROUND(value, -2)
+    (70_000, 10_000, 70_000.0),            # a multiple stays where it is
+])
+def test_rounding_follows_excels_round(value, unit, expected):
+    assert round_like_excel(value, unit) == expected
+
+
+def test_the_rounding_unit_keeps_the_relative_precision_of_round_minus_four_on_a_hundred_million():
+    assert commitment_rounding_unit(100_000_000) == 10_000.0
+    assert commitment_rounding_unit(1_000_000) == 100.0
+    assert commitment_rounding_unit(100) == 0.01
+    assert commitment_rounding_unit(250_000_000) == 25_000.0  # proportional, not only powers of ten
+    for bad in (0, -5, float("nan"), float("inf"), True, "100"):
+        with pytest.raises(ValueError, match="starting_value must be a positive number"):
+            commitment_rounding_unit(bad)
+
+
+def test_each_drawn_year_is_rounded_before_its_multiplier_and_weight():
+    a, b = fund("A", closing="2028-12-31"), fund("B", closing="2028-12-31")
+    plan = {2028: 3.0}
+    policy = AnnualRatePolicy({"BUYOUT": {2028: 0.02}}, [a, b], weights={"A": 0.75, "B": 0.25},
+                              draws={"A": plan, "B": plan}, rounding_unit_usd=10_000)
+    at_closing = balances(date(2028, 12, 31), 1_234_567.0)
+    # the year's commitment is 24,691.34 → 20,000; three of those is 60,000; then the split by weight
+    assert policy.size_commitments([a, b], at_closing) == {"A": 45_000.0, "B": 15_000.0}
+    drawn = policy.drawn_years("A", at_closing)[0]
+    assert drawn.year_budget_unrounded_usd == pytest.approx(24_691.34) and drawn.year_budget_usd == 20_000.0
+    assert drawn.commitment_usd == 60_000.0
+    # rounding the tripled amount instead would have given 70,000
+    assert round_like_excel(3 * drawn.year_budget_unrounded_usd, 10_000) == 70_000.0
+
+
+def test_carried_years_are_rounded_one_year_at_a_time():
+    late = fund("L", closing="2029-03-01")
+    policy = AnnualRatePolicy(RATES, [late], carry_forward=True, rounding_unit_usd=30_000)
+    # 2027: 100,000 → 90,000 · 2028: 100,000 → 90,000 · 2029: 150,000 → 150,000
+    assert policy.size_commitments([late], AT_C) == {"L": 330_000.0}
+    explained = policy.explain_commitment("L", AT_C)
+    assert explained["own_year_usd"] == 150_000.0 and explained["other_years_usd"] == 180_000.0
+
+
+def test_without_a_rounding_unit_nothing_is_rounded():
+    a = fund("A")
+    policy = AnnualRatePolicy({"BUYOUT": {2027: 0.1}}, [a])
+    drawn = policy.drawn_years("A", balances(date(2027, 3, 31), 1_234_567.89))[0]
+    assert policy.rounding_unit_usd is None
+    assert drawn.year_budget_usd == drawn.year_budget_unrounded_usd == pytest.approx(123_456.789)
+
+
+@pytest.mark.parametrize("unit", [0, -10_000, float("nan"), float("inf"), True, "10000"])
+def test_a_rounding_unit_must_be_a_positive_number_of_dollars(unit):
+    with pytest.raises(ValueError, match="rounding_unit_usd must be a positive number of dollars"):
+        AnnualRatePolicy({"BUYOUT": {2027: 0.1}}, [fund("A")], rounding_unit_usd=unit)

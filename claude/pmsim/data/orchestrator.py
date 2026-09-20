@@ -199,7 +199,8 @@ class Orchestrator:
         return AnnualRatePolicy(self.portfolio.commitment_rates, self.funds, self.spec.weights,
                                 carry_forward=self.spec.carry_forward,
                                 years=range(first_year, self.portfolio.last_date.year + 1),
-                                expected_return=self.expected_return, draws=self.draw_plans)
+                                expected_return=self.expected_return, draws=self.draw_plans,
+                                rounding_unit_usd=self.spec.commitment_rounding_unit_usd)
 
     @cached_property
     def simulator(self) -> Simulator:

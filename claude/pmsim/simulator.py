@@ -56,7 +56,8 @@ COMMITMENT_COLUMNS = [
 ]
 DRAW_COLUMNS = [  # one row per schedule year a fund draws: the audit trail behind its commitment
     "fund_type", "policy_year", "multiplier", "rate", "plan_date", "expected_value",
-    "funding_date", "liquid_only_usd", "commitment_usd", "usd_rate", "commitment_base",
+    "funding_date", "liquid_only_usd", "year_budget_unrounded_usd", "year_budget_usd",
+    "commitment_usd", "usd_rate", "commitment_base",
 ]
 EVENT_COLUMNS = ["observation_date", "period", "unit_call", "unit_distribution", "unit_nav_mark"]
 _TEXT_COLUMNS = {"fund", "fund_type", "drawn_years"}
@@ -113,8 +114,9 @@ class SimulationResult:
     ``commitment_usd = weight × (own_year_usd + other_years_usd)``, and ``drawn_years`` naming
     every schedule year that went into it. ``draws`` (index: date, fund, year) breaks each
     commitment down one drawn year at a time — its rate, the two dates behind it (``plan_date``
-    normalises the rate, ``funding_date`` supplies the liquid value) and the dollars it
-    contributed, which sum to the fund's ``commitment_usd``. ``shortfall`` names the first
+    normalises the rate, ``funding_date`` supplies the liquid value), the year's dollar
+    commitment as computed and as rounded (``year_budget_unrounded_usd``, ``year_budget_usd``)
+    and the dollars it contributed, which sum to the fund's ``commitment_usd``. ``shortfall`` names the first
     failed observation, or is ``None``. ``funds_beyond_horizon`` lists funds whose closing falls
     after the last observation; they are never committed.
     """
@@ -492,6 +494,8 @@ class Simulator:
             "multiplier": drawn.multiplier, "rate": drawn.rate,
             "plan_date": pd.Timestamp(drawn.plan_date), "expected_value": drawn.expected_value,
             "funding_date": pd.Timestamp(drawn.funding_date), "liquid_only_usd": drawn.liquid_only_usd,
+            # the year's own dollar commitment, as computed and then as rounded
+            "year_budget_unrounded_usd": drawn.year_budget_unrounded_usd, "year_budget_usd": drawn.year_budget_usd,
             # the fund's weight is applied here, so these dollars add up to its commitment
             "commitment_usd": weight * drawn.commitment_usd,
             "usd_rate": rate, "commitment_base": weight * drawn.commitment_usd * rate,

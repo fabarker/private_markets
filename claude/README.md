@@ -200,8 +200,10 @@ other_years_usd)`. `rate` is always `commitment_usd / sizing_base_usd`.
 `draws` (index `date`, `fund`, `year`): one row per schedule year a fund drew, which is the
 audit trail behind its commitment — `fund_type`, `policy_year`, `multiplier`, `rate`, then
 the two dates and what each supplies (`plan_date` and `expected_value` normalise the rate;
-`funding_date` and `liquid_only_usd` supply the value), then `commitment_usd` with the
-fund's weight already applied, `usd_rate` and `commitment_base`. A fund's rows sum to its
+`funding_date` and `liquid_only_usd` supply the value), the year's dollar commitment as
+computed and as rounded (`year_budget_unrounded_usd`, `year_budget_usd`), then
+`commitment_usd` — multiplier × the rounded budget, with the fund's weight already applied —
+`usd_rate` and `commitment_base`. A fund's rows sum to its
 `commitment_usd`, and a row whose `plan_date` is later than its `funding_date` is a year the
 run had not reached when the fund closed. Empty for a policy that cannot break a commitment
 down.
@@ -266,7 +268,7 @@ money out negative) is exported for use on its own.
 ## Policy
 
 `AnnualRatePolicy(rates, funds, weights=None, carry_forward=False, years=None,
-expected_return=None, draws=None)` turns the rate table into a dollar budget per year and
+expected_return=None, draws=None, rounding_unit_usd=None)` turns the rate table into a dollar budget per year and
 fund type — `share × the liquid-only value in USD` — collected by the funds that **draw**
 those years. By default a fund draws its own closing year, sized at the closing observation.
 Weights split a year's budget among the funds of one type closing that year; give them for
@@ -348,6 +350,27 @@ expected value instead would commit `(1 + X)^years ahead` too much. For a fund t
 only its own year and earlier ones the two dates coincide, so carry-forward's numbers are
 unchanged. `result.draws` shows both dates per drawn year, and
 `policy.unclaimed_schedule_years()` names the years, per fund type, that no fund draws.
+
+**Rounding.** With `rounding_unit_usd`, each drawn year's dollar commitment is rounded to the
+nearest multiple of the unit, halves away from zero — Excel's `ROUND`, which Python's own
+`round` is not (`round` sends 25,000 to 20,000; Excel and `round_like_excel` send it to
+30,000). `rounding_unit_usd=10_000` is `ROUND(value, -4)`. A year is rounded *before* its
+multiplier and the fund's weight are applied, so a fund drawing `1-4` collects four rounded
+amounts and one drawing `12x3` collects three times one rounded amount.
+
+```text
+commitment_rounding_unit(starting_value) = starting_value / 10,000
+    100,000,000 → 10,000   ROUND(value, -4)
+      1,000,000 → 100      ROUND(value, -2)
+            100 → 0.01     ROUND(value, 2)
+```
+
+The unit is proportional to the starting value, so every starting value gets the relative
+precision `ROUND(value, -4)` gives 100,000,000, and a run from 100 is the run from
+100,000,000 divided by a million, rounding included. `WorkbookRepository.simulation_spec`
+applies that unit by default; pass `commitment_rounding_unit_usd=None` (or another unit) to
+change it. `AnnualRatePolicy` and `SimulationSpec` built by hand round nothing unless asked.
+`examples/eur_moderate.py` has `ROUND_COMMITMENTS = True` at the top.
 
 Any object with `size_commitments(cohort, balances) -> {fund name: US-dollar amount}` is a
 policy. The `SizingBalances` it receives are in US dollars only, so a fixed dollar ticket, a

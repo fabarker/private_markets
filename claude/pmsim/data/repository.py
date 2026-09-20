@@ -39,6 +39,7 @@ from typing import Any, Mapping, Protocol
 import pandas as pd
 
 from ..inputs import PRIVATE_CURRENCY
+from ..policy import commitment_rounding_unit
 from .spec import SimulationSpec
 from .tables import (
     _dates,
@@ -342,11 +343,17 @@ class WorkbookRepository:
 
     # ------------------------------------------------------------------- spec
     def simulation_spec(self, initial_value: float, **overrides: Any) -> SimulationSpec:
-        """The ``SimulationSpec`` for this profile: returns compounded from ``initial_value``, FX inverted, its expected return."""
+        """The ``SimulationSpec`` for this profile: returns compounded from ``initial_value``, FX inverted, its expected return.
+
+        Commitments are rounded as the spreadsheet rounds them: to one ten-thousandth of
+        ``initial_value``, which is ``ROUND(value, -4)`` when that is 100,000,000. Pass
+        ``commitment_rounding_unit_usd`` to choose another unit, or None to round nothing.
+        """
         settings: dict[str, Any] = dict(
             base_currency=self.currency, liquid_series=self.liquid_column, liquid_kind="returns",
             initial_value=initial_value, fx_series=self.fx_column, fx_quote=self.fx_quote,
             expected_return=self.expected_return,
+            commitment_rounding_unit_usd=commitment_rounding_unit(initial_value),
         )
         settings.update(overrides)
         return SimulationSpec(**settings)

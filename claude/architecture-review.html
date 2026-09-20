@@ -1,0 +1,1250 @@
+<title>pmsim Architecture Review</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;1,400&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --ground: #F5F7F5;
+    --surface: #FFFFFF;
+    --ink: #1A222B;
+    --muted: #5C6873;
+    --line: #D6DCD8;
+    --line-strong: #AEB8B2;
+    --code-bg: #ECF0EC;
+    --liquid: #0E6B66;
+    --liquid-soft: #DDEDEA;
+    --private: #A3621A;
+    --private-soft: #F4E6D4;
+    --engine: #3B4A5A;
+    --engine-soft: #E3E8ED;
+    --bad: #A63A2E;
+    --bad-soft: #F6E1DD;
+    --display: "IBM Plex Sans Condensed", "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
+    --body: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    --mono: "IBM Plex Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #121719; --surface: #1A2124; --ink: #E4E8E6; --muted: #98A4A8;
+      --line: #2B3437; --line-strong: #46535A; --code-bg: #1E272A;
+      --liquid: #4DB8AE; --liquid-soft: #173330; --private: #DBA35A; --private-soft: #3A2A16;
+      --engine: #A9B9C8; --engine-soft: #262F37; --bad: #E07A6C; --bad-soft: #3A1F1B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #121719; --surface: #1A2124; --ink: #E4E8E6; --muted: #98A4A8;
+    --line: #2B3437; --line-strong: #46535A; --code-bg: #1E272A;
+    --liquid: #4DB8AE; --liquid-soft: #173330; --private: #DBA35A; --private-soft: #3A2A16;
+    --engine: #A9B9C8; --engine-soft: #262F37; --bad: #E07A6C; --bad-soft: #3A1F1B;
+  }
+
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  @media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+  body {
+    margin: 0; background: var(--ground); color: var(--ink);
+    font-family: var(--body); font-size: 16px; line-height: 1.55;
+    padding-block: 0 96px; padding-inline: 24px;
+  }
+  a { color: inherit; }
+  a:focus-visible { outline: 2px solid var(--liquid); outline-offset: 2px; }
+  .page { max-width: 1120px; margin: 0 auto; }
+
+  header.top { padding-block: 56px 40px; border-bottom: 1px solid var(--line-strong); }
+  .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 18px; }
+  header.top h1 { font-family: var(--display); font-weight: 600; font-size: clamp(36px, 5.6vw, 58px); line-height: 1.03; letter-spacing: -.01em; margin: 0 0 20px; text-wrap: balance; max-width: 20ch; }
+  header.top .lede { font-size: 19px; line-height: 1.5; max-width: 64ch; margin: 0 0 12px; }
+  .keyfacts { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 26px 0 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 13px; color: var(--muted); }
+  .keyfacts b { color: var(--ink); font-weight: 500; }
+
+  .layout { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; }
+  nav.toc { position: sticky; top: 24px; align-self: start; padding-top: 40px; font-size: 13px; max-height: calc(100vh - 24px); overflow-y: auto; }
+  nav.toc ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+  nav.toc a { text-decoration: none; color: var(--muted); }
+  nav.toc a:hover { color: var(--ink); }
+  nav.toc .n { font-family: var(--mono); font-size: 11px; display: inline-block; width: 22px; }
+  nav.toc .toc-label { font-family: var(--mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); margin: 0 0 12px; }
+  main { min-width: 0; }
+  @media (max-width: 900px) {
+    .layout { grid-template-columns: minmax(0, 1fr); gap: 0; }
+    nav.toc { position: static; padding-top: 28px; max-height: none; }
+    nav.toc ol { grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); }
+  }
+
+  main > section { padding-top: 48px; }
+  main > section + section { border-top: 1px solid var(--line); margin-top: 48px; }
+  h2 { font-family: var(--display); font-weight: 600; font-size: 31px; line-height: 1.1; margin: 0 0 8px; text-wrap: balance; }
+  h3 { font-family: var(--display); font-weight: 600; font-size: 22px; line-height: 1.18; margin: 34px 0 10px; text-wrap: balance; }
+  h4 { font-family: var(--body); font-weight: 500; font-size: 16px; line-height: 1.3; margin: 0 0 6px; }
+  .kicker { color: var(--muted); margin: 0 0 22px; max-width: 64ch; }
+  p, li { max-width: 68ch; }
+  p { margin: 0 0 14px; }
+  ul, ol { margin: 0 0 16px; padding-left: 22px; }
+  li { margin-bottom: 6px; }
+  li::marker { color: var(--muted); }
+  code { font-family: var(--mono); font-size: .9em; background: var(--code-bg); padding: 1px 5px; border-radius: 3px; }
+  pre { font-family: var(--mono); font-size: 13px; line-height: 1.6; background: var(--code-bg); border: 1px solid var(--line); padding: 14px 16px; margin: 10px 0 16px; overflow-x: auto; max-width: none; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  pre .c { color: var(--muted); }
+  pre .k { color: var(--liquid); }
+  pre .w { color: var(--private); }
+
+  /* a reference into the code: file and line */
+  .ref { font-family: var(--mono); font-size: 12px; color: var(--engine); background: var(--engine-soft); padding: 1px 6px; border-radius: 3px; white-space: nowrap; }
+
+  .tag { display: inline-block; font-family: var(--mono); font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase; padding: 2px 7px; line-height: 1.5; white-space: nowrap; border: 1px solid transparent; vertical-align: 1px; }
+  .tag.inherent { background: var(--engine-soft); color: var(--engine); }
+  .tag.incidental { background: var(--private-soft); color: var(--private); }
+  .tag.explicit { background: var(--liquid-soft); color: var(--liquid); }
+  .tag.implicit { background: var(--bad-soft); color: var(--bad); }
+  .tag.keep { background: var(--liquid); color: var(--ground); }
+  .tag.but { border-color: var(--liquid); color: var(--liquid); }
+  .tag.marginal { border-color: var(--private); color: var(--private); }
+  .tag.question { background: var(--private); color: var(--ground); }
+
+  .tablewrap { overflow-x: auto; margin: 12px 0 20px; border: 1px solid var(--line); background: var(--surface); }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  caption { caption-side: top; text-align: left; font-family: var(--mono); font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); padding: 9px 12px 8px; border-bottom: 1px solid var(--line); }
+  th, td { padding: 9px 12px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+  th { font-family: var(--mono); font-weight: 500; font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); background: var(--ground); white-space: nowrap; }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td.mono { font-family: var(--mono); font-size: 13px; }
+  td.nowrap { white-space: nowrap; }
+  td p:last-child { margin-bottom: 0; }
+  tr.total td { font-weight: 500; border-top: 1px solid var(--line-strong); }
+  tr.group td { background: var(--ground); font-family: var(--mono); font-size: 11.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding-block: 7px; }
+
+  /* the one lifted block: the bottom line */
+  .verdict { border: 1px solid var(--liquid); background: var(--liquid-soft); padding: 22px 26px 10px; margin: 8px 0 8px; }
+  .verdict h2 { font-size: 25px; margin-bottom: 12px; }
+  .verdict code { background: var(--surface); }
+  .note { border-left: 3px solid var(--private); background: var(--private-soft); padding: 14px 18px 2px; margin: 16px 0; }
+  .note code { background: var(--surface); }
+  .note .lab { font-family: var(--mono); font-size: 11px; letter-spacing: .07em; text-transform: uppercase; color: var(--private); display: block; margin-bottom: 5px; }
+
+  /* the system in one picture: bands handing work downwards */
+  .bands { display: grid; gap: 0; margin: 18px 0 8px; }
+  .band { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 16px; padding: 14px 0; border-top: 1px solid var(--line); align-items: start; }
+  .band:last-child { border-bottom: 1px solid var(--line); }
+  .band .where { font-family: var(--mono); font-size: 11.5px; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); padding-top: 6px; }
+  .band .where small { display: block; text-transform: none; letter-spacing: 0; font-size: 11.5px; margin-top: 3px; }
+  .boxes { display: flex; flex-wrap: wrap; gap: 8px; }
+  .box { border: 1px solid var(--line-strong); background: var(--surface); padding: 7px 11px; font-size: 13.5px; line-height: 1.35; max-width: 100%; }
+  .box b { font-family: var(--mono); font-weight: 500; font-size: 13px; display: block; }
+  .box span { color: var(--muted); font-size: 12.5px; }
+  .box.record { border-style: dashed; }
+  .box.core { border-color: var(--liquid); box-shadow: inset 3px 0 0 var(--liquid); }
+  .box.doubt { border-color: var(--private); box-shadow: inset 3px 0 0 var(--private); }
+  .hands { grid-column: 2; font-family: var(--mono); font-size: 12px; color: var(--muted); padding-top: 8px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 10px 0 0; padding: 0; list-style: none; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+  .legend li { margin: 0; display: flex; align-items: center; gap: 8px; max-width: none; }
+  .legend i { width: 22px; height: 14px; display: inline-block; border: 1px solid var(--line-strong); background: var(--surface); }
+  .legend i.core { border-color: var(--liquid); box-shadow: inset 3px 0 0 var(--liquid); }
+  .legend i.doubt { border-color: var(--private); box-shadow: inset 3px 0 0 var(--private); }
+  .legend i.record { border-style: dashed; }
+  @media (max-width: 620px) { .band { grid-template-columns: minmax(0, 1fr); gap: 8px; } .hands { grid-column: 1; } }
+
+  /* findings, separated by rules rather than boxed */
+  .finding { padding-top: 30px; margin-top: 30px; border-top: 1px solid var(--line); }
+  .finding.first { border-top: none; margin-top: 0; padding-top: 6px; }
+  .finding-head { display: grid; grid-template-columns: 40px minmax(0, 1fr); column-gap: 12px; row-gap: 6px; margin-bottom: 12px; }
+  .finding-head .rank { font-family: var(--display); font-weight: 600; font-size: 30px; line-height: 1; color: var(--muted); grid-row: 1 / span 2; }
+  .finding-head h3 { margin: 0; max-width: 34ch; }
+  .finding-head .tags { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; max-width: none; }
+
+  /* the execution path */
+  .phase { font-family: var(--mono); font-size: 12px; letter-spacing: .07em; text-transform: uppercase; color: var(--ground); background: var(--engine); display: inline-block; padding: 3px 10px; margin: 30px 0 4px; }
+  ol.walk { list-style: none; margin: 0; padding: 0; counter-reset: step; border-left: 2px solid var(--line-strong); }
+  ol.walk > li { counter-increment: step; position: relative; padding: 16px 0 8px 26px; margin: 0; max-width: none; }
+  ol.walk > li::before { content: counter(step); position: absolute; left: -13px; top: 16px; width: 24px; height: 24px; border-radius: 50%; background: var(--surface); border: 2px solid var(--line-strong); font-family: var(--mono); font-size: 11.5px; line-height: 20px; text-align: center; color: var(--muted); }
+  ol.walk > li.deep::before { border-color: var(--liquid); color: var(--liquid); }
+  ol.walk .refs { display: flex; flex-wrap: wrap; gap: 5px 6px; margin: 0 0 8px; max-width: none; }
+  ol.walk dl { display: grid; grid-template-columns: 78px minmax(0, 1fr); gap: 6px 14px; margin: 0 0 6px; }
+  ol.walk dt { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding-top: 4px; }
+  ol.walk dd { margin: 0; min-width: 0; max-width: 66ch; }
+  @media (max-width: 620px) { ol.walk dl { grid-template-columns: minmax(0, 1fr); gap: 0; } ol.walk dd { margin-bottom: 8px; } }
+
+  .opts { display: grid; gap: 0; margin: 14px 0 8px; }
+  .opt { padding: 22px 0 10px; border-top: 1px solid var(--line); }
+  .opt:last-child { border-bottom: 1px solid var(--line); }
+  .opt h3 { margin: 0 0 8px; }
+  .opt dl { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 8px 16px; margin: 0 0 10px; }
+  .opt dt { font-family: var(--mono); font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); padding-top: 4px; }
+  .opt dd { margin: 0; min-width: 0; max-width: 64ch; }
+  @media (max-width: 620px) { .opt dl { grid-template-columns: minmax(0, 1fr); gap: 0; } .opt dd { margin-bottom: 8px; } }
+
+  footer.end { margin-top: 56px; padding-top: 22px; border-top: 1px solid var(--line-strong); font-size: 14px; color: var(--muted); }
+</style>
+
+<div class="page">
+<header class="top">
+  <p class="eyebrow">pmsim · architectural review · commit 4bba41f</p>
+  <h1>Is this more complex than it needs to be?</h1>
+  <p class="lede">Somewhat — but not because of the number of classes, and I'd argue against consolidation as the
+  main lever. Half of the twenty-two classes are plain records with no behaviour. What makes the system hard to
+  step through is that decisions are taken in places the loop never visits, a single setting crosses four layers
+  to reach the one method that uses it, and the third of the code that <em>is</em> the model is not marked off from
+  the two thirds that guard and report on it.</p>
+  <p class="lede">I wrote this code, so treat what follows as a second opinion from someone with an interest. I
+  have tried to check each claim against the code or by experiment rather than from memory, and several of the
+  findings are about decisions of mine that I now think were wrong.</p>
+  <p class="lede" style="font-size:16px; border-left:3px solid var(--private); padding-left:14px;"><b>One thing has
+  changed since this was written.</b> The review calls <code>SizingBalances</code> the wall that makes look-ahead
+  impossible, and counts that as the design's best guarantee (§4, §5, §6 step D2, §7). You have since decided that a
+  year drawn after a fund's closing must be priced on its own year-end value, with hindsight. The wall still stands
+  for carry-forward; for draw plans there is now a deliberate, named door in it —
+  <code>SizingBalances.future_year_ends</code>, read by one branch of <code>drawn_years()</code>, with every such row
+  marked <code>looks_ahead</code>. The argument in §5 against folding the policy into the simulator is weaker for
+  it, though I would still keep them apart: a door you can see is better than no wall. Line references below are
+  to commit <code>4bba41f</code>, before that change.</p>
+  <ul class="keyfacts">
+    <li>classes · <b>22, of which 11 are plain records</b></li>
+    <li>lines · <b>4,117</b></li>
+    <li>code that is the model · <b>about a third</b></li>
+    <li>layers one setting crosses · <b>4</b></li>
+    <li>times one closing is priced · <b>3</b></li>
+  </ul>
+</header>
+
+<div class="layout">
+<nav class="toc">
+  <p class="toc-label">Contents</p>
+  <ol>
+    <li><a href="#read"><span class="n">1</span>My read, in short</a></li>
+    <li><a href="#picture"><span class="n">2</span>The system in one picture</a></li>
+    <li><a href="#sources"><span class="n">3</span>Where the difficulty comes from</a></li>
+    <li><a href="#ledger"><span class="n">4</span>Every class, judged</a></li>
+    <li><a href="#cost"><span class="n">5</span>What consolidation would cost</a></li>
+    <li><a href="#walk"><span class="n">6</span>The execution path, walked</a></li>
+    <li><a href="#assumptions"><span class="n">7</span>The assumptions, in one table</a></li>
+    <li><a href="#alternatives"><span class="n">8</span>Alternatives to consolidation</a></li>
+    <li><a href="#other"><span class="n">9</span>Other architectural concerns</a></li>
+    <li><a href="#unknown"><span class="n">10</span>What I can't see</a></li>
+    <li><a href="#bottom"><span class="n">11</span>If it were mine</a></li>
+  </ol>
+</nav>
+
+<main>
+
+<section id="read">
+  <div class="verdict">
+    <h2>My read, in short</h2>
+    <p><b>The class count is a symptom you can see, not the cause you feel.</b> Merging classes would reduce the
+    number of nouns and leave every one of the problems below in place — and two of the merges that look most
+    natural would remove the clearest boundary the design has.</p>
+    <ul>
+      <li><b>The loop is easy; what happened before the loop is not.</b> By the time you step into
+      <code>Simulator.run()</code>, which years each fund collects, how each fund's NAV evolves and what the portfolio
+      is worth in dollars on every date have already been settled in constructors. The loop reads well because the
+      thinking was done elsewhere.</li>
+      <li><b>A policy option is one idea and seven files.</b> Rounding is about forty lines of logic. Adding it
+      touched <code>policy</code>, <code>spec</code>, <code>repository</code>, <code>orchestrator</code>,
+      <code>simulator</code>, <code>__init__</code> and the script, and it has a different default at three of those
+      layers.</li>
+      <li><b>The simulator and the policy are joined by one declared method and four undeclared ones.</b> The
+      simulator asks the policy the same question three times per closing, through <code>getattr</code>.</li>
+      <li><b>The model is 626 code lines of 1,866.</b> Every assumption about private markets lives in roughly
+      forty functions across ten files. Nothing tells you which forty.</li>
+      <li><b>Some of what is there is residue.</b> Fields nobody reads, a stated reason for the step order that
+      stopped being true three commits ago, generality your workbook never uses.</li>
+    </ul>
+    <p>I also found two assumptions by experiment that I did not know the system was making (§7). One of them
+    means that removing a single buyout fund from the <code>Spec</code> sheet changes every other fund's
+    commitment by about 6%.</p>
+  </div>
+</section>
+
+<section id="picture">
+  <h2>2 · The system in one picture</h2>
+  <p class="kicker">Six bands, each handing something to the one below. Read top to bottom; that is also the order things execute in.</p>
+
+  <div class="bands">
+    <div class="band">
+      <div class="where">Entry<small>examples/</small></div>
+      <div class="boxes">
+        <div class="box"><b>eur_moderate.run()</b><span>settings block, seven numbered steps</span></div>
+        <div class="box doubt"><b>starting_balance()</b><span>converts the start at the first FX rate — model logic living in a script</span></div>
+      </div>
+      <div class="hands">↓ a path, a profile, a starting value, four switches</div>
+    </div>
+    <div class="band">
+      <div class="where">Data layer<small>pmsim/data/ · 1,687 lines</small></div>
+      <div class="boxes">
+        <div class="box"><b>WorkbookRepository</b><span>six sheets, one profile; also builds the spec</span></div>
+        <div class="box doubt"><b>SheetLayout</b><span>six sheet names</span></div>
+        <div class="box"><b>tables.py</b><span>column aliases, cell readers, the Draws grammar</span></div>
+        <div class="box doubt"><b>SimulationSpec</b><span>16 settings, four kinds</span></div>
+        <div class="box doubt"><b>Orchestrator</b><span>seven lazy properties</span></div>
+        <div class="box record"><b>DataRepository</b><span>protocol</span></div>
+        <div class="box"><b>FrameRepository</b><span>tests; the future database's shape</span></div>
+      </div>
+      <div class="hands">↓ a list of Fund, one Portfolio, one AnnualRatePolicy</div>
+    </div>
+    <div class="band">
+      <div class="where">Inputs<small>inputs.py</small></div>
+      <div class="boxes">
+        <div class="box"><b>Fund</b><span>type, closing date, unit calls / distributions / marks in USD</span></div>
+        <div class="box"><b>Portfolio</b><span>base currency, liquid levels, USD rate — and the rate table, as a courier</span></div>
+      </div>
+      <div class="hands">↓ validated, frozen, still dated</div>
+    </div>
+    <div class="band">
+      <div class="where">Prepared once<small>before the loop</small></div>
+      <div class="boxes">
+        <div class="box"><b>Timeline</b><span>dates → period numbers; one pooling rule</span></div>
+        <div class="box core"><b>Fund.align_history()</b><span>pools events, rolls NAV forward</span></div>
+        <div class="box record"><b>AlignedFundHistory</b><span>three arrays + closing period</span></div>
+        <div class="box core"><b>AnnualRatePolicy.__init__</b><span>settles which years each fund draws</span></div>
+        <div class="box record"><b>Entitlement</b><span>per fund: weight, years × multipliers</span></div>
+        <div class="box core"><b>Simulator.__init__</b><span>returns, FX, liquid-only USD, year ends, pacing seed date</span></div>
+      </div>
+      <div class="hands">↓ arrays indexed by period; no dates from here on</div>
+    </div>
+    <div class="band">
+      <div class="where">The loop<small>simulator.py:373</small></div>
+      <div class="boxes">
+        <div class="box core"><b>Simulator.run()</b><span>six steps per observation</span></div>
+        <div class="box doubt"><b>LiquidAccount</b><span>a float with three verbs</span></div>
+        <div class="box"><b>Commitment</b><span>unit history × dollars</span></div>
+        <div class="box"><b>CommitmentBook</b><span>a list with exact sums</span></div>
+        <div class="box record"><b>SizingBalances</b><span>what the policy may see — the look-ahead wall</span></div>
+        <div class="box record"><b>YearEndBalance</b></div>
+        <div class="box record"><b>CommitmentPolicy</b><span>protocol, one method</span></div>
+        <div class="box core"><b>AnnualRatePolicy.drawn_years()</b><span>prices each year; rounds</span></div>
+        <div class="box record"><b>DrawnYear</b><span>the audit row</span></div>
+      </div>
+      <div class="hands">↓ lists of row dictionaries</div>
+    </div>
+    <div class="band">
+      <div class="where">Out<small>simulator.py · benchmark.py</small></div>
+      <div class="boxes">
+        <div class="box record"><b>SimulationResult</b><span>periods, funds, commitments, draws</span></div>
+        <div class="box record"><b>Shortfall</b></div>
+        <div class="box"><b>benchmark.py</b><span>functions over the tables: liquid-only, KS-PME, IRR, direct alpha</span></div>
+      </div>
+    </div>
+  </div>
+  <ul class="legend">
+    <li><i class="core"></i> where modelling assumptions live</li>
+    <li><i class="doubt"></i> questioned in §4</li>
+    <li><i class="record"></i> a record or protocol: fields, no logic</li>
+  </ul>
+
+  <h3>The dependency direction is sound</h3>
+  <p>The import graph is acyclic and points one way: <code>dates → timeline → inputs → state, policy → simulator</code>,
+  and <code>data/</code> imports the core, never the reverse. <code>benchmark</code> imports nothing from the package
+  at all. That is worth saying plainly, because it is the property that makes any of the changes discussed below
+  cheap: nothing here is tangled.</p>
+  <p>Two small blemishes. <code>inputs.py</code> imports <code>timeline</code>, because <code>Fund.align_history()</code>
+  returns an <code>AlignedFundHistory</code> — so the module described as “what the fund knows” also knows about the
+  engine's grid. And <code>data/tables.py</code> and <code>data/spec.py</code> reach into <code>policy.py</code> for
+  two validators, which is a leaf module depending on the heart of the engine for a four-line function.</p>
+</section>
+
+<section id="sources">
+  <h2>3 · Where the difficulty actually comes from</h2>
+  <p class="kicker">Eight sources, roughly in order of how much I think each costs you at a breakpoint. Each is marked as
+  inherent to the problem or incidental to how I structured the solution.</p>
+
+  <div class="finding first">
+    <div class="finding-head">
+      <span class="rank">1</span>
+      <h3>The decisions are made before the loop starts</h3>
+      <p class="tags"><span class="tag inherent">mostly inherent</span></p>
+    </div>
+    <p>The design rule was “dates become periods, once”: everything dated is converted to arrays before
+    <code>run()</code>, and the loop works on integers. It is why <code>run()</code> is 120 readable lines. The cost is
+    that the loop <em>consumes</em> conclusions rather than reaching them:</p>
+    <ul>
+      <li><code>commitment.nav_at(t)</code> returns a number whose whole story — pooling, mark-replaces-NAV, the floor
+      at zero — was written by <span class="ref">inputs.py:132</span> during <code>Simulator.__init__</code>.</li>
+      <li><code>entitlement.draws</code> arrives in <span class="ref">policy.py:541</span> ready-made. Why SEC_VI collects
+      2010–2013 was settled by <span class="ref">policy.py:335</span>, inside a constructor, triggered by a lazy property.</li>
+      <li><code>liquid_only_usd[t]</code> — the single number every commitment is sized on — is one line,
+      <span class="ref">simulator.py:245</span>, and is complete for all 214 periods before period 0 runs.</li>
+    </ul>
+    <p>I think this trade is right, and I would not undo it: the alternative is a loop that parses dates and walks
+    event lists, which is how the original function you started from read. But it means the honest reading order is
+    <em>not</em> “start at <code>run()</code>”. It is the four preparation functions first, then the loop. Nothing in
+    the package tells you that.</p>
+  </div>
+
+  <div class="finding">
+    <div class="finding-head">
+      <span class="rank">2</span>
+      <h3>One setting crosses four layers, with a default at each</h3>
+      <p class="tags"><span class="tag incidental">incidental</span> <span class="tag incidental">gets worse as it grows</span></p>
+    </div>
+    <p>Every sizing option is consumed in exactly one place, <code>AnnualRatePolicy</code>. To get there it is
+    declared four times:</p>
+    <div class="tablewrap">
+      <table>
+        <caption>Where each sizing option is declared, and its default at that layer</caption>
+        <thead>
+          <tr><th>Option</th><th>Script constant</th><th>simulation_spec()</th><th>SimulationSpec</th><th>AnnualRatePolicy</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="mono">carry_forward</td><td><code>True</code></td><td>passes it on</td><td><code>False</code></td><td><code>False</code></td></tr>
+          <tr><td class="mono">rounding unit</td><td><code>True</code> → <code>START_VALUE</code> ÷ 10,000</td><td><b>on</b>: <code>initial_value</code> ÷ 10,000</td><td><code>None</code></td><td><code>None</code></td></tr>
+          <tr><td class="mono">expected_return</td><td>—</td><td>from <code>Liquid Spec</code></td><td><code>None</code></td><td><code>None</code> = rates are shares</td></tr>
+          <tr><td class="mono">draws</td><td><code>None</code> = use the sheet</td><td>—</td><td><code>None</code></td><td><code>None</code></td></tr>
+          <tr><td class="mono">weights</td><td>—</td><td>—</td><td><code>None</code></td><td>equal split</td></tr>
+          <tr><td class="mono">commitment_rates</td><td>—</td><td>—</td><td><code>None</code> = ask the repository</td><td>required</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>So “is rounding on?” has three answers depending on which door you came in by: on through the workbook, off
+    through <code>SimulationSpec</code>, off through <code>Simulator(portfolio, funds)</code>. To know what a run did,
+    you have to know its entry point.</p>
+    <p>The commit history shows what this costs going forward. The last two features were each a single idea:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Feature</th><th>Where the logic lives</th><th class="num">Package files touched</th><th class="num">Example files</th></tr></thead>
+        <tbody>
+          <tr><td>Draw plans <span class="ref">acfb5c9</span></td><td><code>policy.py</code>, plus the cell grammar in <code>tables.py</code></td><td class="num">7</td><td class="num">3</td></tr>
+          <tr><td>Rounding <span class="ref">70e672e</span></td><td><code>policy.py</code></td><td class="num">6</td><td class="num">1</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>That is the pattern usually called shotgun surgery, and it is the finding I would weight most heavily for
+    “how will this hold up as it grows”. The next option you ask for will cost the same seven files.</p>
+  </div>
+
+  <div class="finding">
+    <div class="finding-head">
+      <span class="rank">3</span>
+      <h3>The simulator and the policy: one declared method, four side doors</h3>
+      <p class="tags"><span class="tag incidental">incidental</span> <span class="tag implicit">one latent crash</span></p>
+    </div>
+    <p>The design note says “policy is a plug”, and <code>CommitmentPolicy</code> declares a single method,
+    <code>size_commitments</code>. What the simulator actually does:</p>
+<pre><code><span class="c"># simulator.py</span>
+524   sized = self.policy.size_commitments(cohort, balances)          <span class="c"># the declared contract</span>
+359   expected_return = <span class="w">getattr</span>(self.policy, "expected_return", None)  <span class="c"># side door 1</span>
+611   explain = <span class="w">getattr</span>(self.policy, "explain_commitment", None)       <span class="c"># side door 2</span>
+631   drawn_years = <span class="w">getattr</span>(self.policy, "drawn_years", None)          <span class="c"># side door 3</span>
+635   weight = self.policy<span class="w">.entitlements</span>[fund.name].weight              <span class="c"># side door 4 — not guarded</span></code></pre>
+    <p>Line 635 is a real defect: <code>_draw_rows</code> checks politely that the policy has
+    <code>drawn_years</code> and then assumes it also has <code>entitlements</code>. A policy with one and not the other
+    crashes mid-run. Nothing does that today — which is the point: the “plug” has exactly one shape that fits.</p>
+    <p>The second cost is at the breakpoint. For every fund at every closing, <code>drawn_years()</code> runs three
+    times — once under <code>size_commitments</code>, once under <code>explain_commitment</code>, once under
+    <code>_draw_rows</code> — each time recomputing the same plan dates, expected values and roundings. It is
+    harmless for speed. But when you are stepping and land in <span class="ref">policy.py:541</span> for the third
+    time with the same fund, the natural thought is “why am I here again, and is it the same answer?” It is, but
+    the structure gives you no way to know that.</p>
+  </div>
+
+  <div class="finding">
+    <div class="finding-head">
+      <span class="rank">4</span>
+      <h3>The repository describes its data to a spec, which hands it to an orchestrator, which asks the repository</h3>
+      <p class="tags"><span class="tag incidental">incidental</span> <span class="tag inherent">partly bought by the database plan</span></p>
+    </div>
+    <p><code>WorkbookRepository</code> knows its profile: it knows the liquid column is <code>"EUR Moderate"</code>, that
+    the FX column is <code>EURUSD</code> and quoted dollars-per-euro. Rather than hand over a liquid series and a
+    dollar rate, it writes those facts into a <code>SimulationSpec</code>
+    (<span class="ref">repository.py:503</span>), and the orchestrator then asks the same repository for a generic
+    <code>market_data</code> table and looks the columns up by the names the repository just gave it
+    (<span class="ref">orchestrator.py:196</span>). It is a round trip through a general-purpose interface.</p>
+    <p>The same shape repeats for the expected return, which is resolved twice by two different matching rules: by
+    <em>profile</em> in <span class="ref">repository.py:490</span>, and by <em>liquid series name</em> in
+    <span class="ref">orchestrator.py:268</span>. On the workbook path the second is never reached, because the spec
+    always arrives with the first already filled in.</p>
+    <p>The reason is legitimate: you told me the data will come from a database, so the protocol is shaped like a
+    <em>source</em> (tables of series) and not like the <em>engine</em> (a liquid path, a dollar rate). Whether that
+    is right depends on something I can't see — see §10.</p>
+  </div>
+
+  <div class="finding">
+    <div class="finding-head">
+      <span class="rank">5</span>
+      <h3>The model is a third of the code, and unmarked</h3>
+      <p class="tags"><span class="tag inherent">the amount is inherent</span> <span class="tag incidental">the mixing is not</span></p>
+    </div>
+    <p>I classified every function as <em>model</em> (it embodies an assumption about time, cash, valuation,
+    currency or sizing), <em>reporting</em> (it builds rows and tables) or <em>guard rails and assembly</em>
+    (validation, column matching, wiring), and counted code lines, excluding docstrings, comments and blanks:</p>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>File</th><th class="num">Lines</th><th class="num">Model</th><th class="num">Reporting</th><th class="num">Guard rails + assembly</th></tr></thead>
+        <tbody>
+          <tr><td class="mono">simulator.py</td><td class="num">732</td><td class="num">121</td><td class="num">155</td><td class="num">88</td></tr>
+          <tr><td class="mono">policy.py</td><td class="num">656</td><td class="num">106</td><td class="num">39</td><td class="num">120</td></tr>
+          <tr><td class="mono">benchmark.py</td><td class="num">221</td><td class="num">90</td><td class="num">0</td><td class="num">3</td></tr>
+          <tr><td class="mono">data/repository.py</td><td class="num">529</td><td class="num">86</td><td class="num">2</td><td class="num">174</td></tr>
+          <tr><td class="mono">data/orchestrator.py</td><td class="num">427</td><td class="num">77</td><td class="num">39</td><td class="num">112</td></tr>
+          <tr><td class="mono">data/tables.py</td><td class="num">549</td><td class="num">47</td><td class="num">0</td><td class="num">250</td></tr>
+          <tr><td class="mono">inputs.py</td><td class="num">345</td><td class="num">40</td><td class="num">11</td><td class="num">114</td></tr>
+          <tr><td class="mono">state.py</td><td class="num">109</td><td class="num">29</td><td class="num">0</td><td class="num">6</td></tr>
+          <tr><td class="mono">dates.py</td><td class="num">169</td><td class="num">17</td><td class="num">0</td><td class="num">65</td></tr>
+          <tr><td class="mono">timeline.py</td><td class="num">138</td><td class="num">13</td><td class="num">0</td><td class="num">39</td></tr>
+          <tr><td class="mono">data/spec.py</td><td class="num">117</td><td class="num">0</td><td class="num">0</td><td class="num">23</td></tr>
+          <tr class="total"><td>package</td><td class="num">4,117</td><td class="num">626 · 34%</td><td class="num">246 · 13%</td><td class="num">994 · 53%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>The guard rails are not waste. Your data arrives from a hand-edited workbook, and “row 47 of Flows has a
+    blank Scale” is worth a great deal more than a <code>KeyError</code> four frames deep. That half is inherent to
+    the job.</p>
+    <p>What is incidental is that the two halves are interleaved, so a reader hunting for assumptions must step
+    through — or over — a validator for nearly every model line. Your stated goal is to understand <em>every
+    assumption and piece of logic</em>. That is a goal about 626 lines. At the moment you have to read 1,866 to
+    find them.</p>
+  </div>
+
+  <div class="finding">
+    <div class="finding-head">
+      <span class="rank">6</span>
+      <h3>Words that mean two or three things</h3>
+      <p class="tags"><span class="tag incidental">incidental</span></p>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Word</th><th>Meanings in the code</th></tr></thead>
+        <tbody>
+          <tr><td class="mono nowrap">rate</td><td>(1) the exchange rate — the local <code>rate</code> throughout <code>run()</code>;
+          (2) the schedule's commitment rate — <code>DrawnYear.rate</code>, <code>policy.rates</code>;
+          (3) the commitment as a share of what it was sized on — the <code>rate</code> <em>column</em> of the
+          commitments table. <span class="ref">simulator.py:575</span> has all three in one function: a parameter
+          called <code>rate</code> (FX) is used to fill a column called <code>usd_rate</code>, next to a column called
+          <code>rate</code> that is something else.</td></tr>
+          <tr><td class="mono nowrap">draws</td><td>(1) the plans you <em>stated</em> — <code>policy.draws</code>, <code>spec.draws</code>;
+          (2) the years each fund <em>ends up with</em> after carry-forward is resolved — <code>Entitlement.draws</code>. Same
+          type, same name, different thing: only funds with a <code>Draws</code> cell appear in the first; every fund
+          appears in the second.</td></tr>
+          <tr><td class="mono nowrap">year</td><td>Years since inception on the sheets and in the <code>Draws</code> grammar; calendar years
+          everywhere in the engine. The conversion happens in two places in <code>repository.py</code>. A bare
+          <code>int</code> carries neither meaning.</td></tr>
+          <tr><td class="mono nowrap">usd_rate · fx</td><td>Base currency per dollar. Neither name says which way round — and the
+          workbook's <code>EURUSD</code> is the other way, inverted at <span class="ref">orchestrator.py:223</span>. I
+          did name the method <code>_base_currency_per_usd()</code>; the variable it fills is still <code>self.fx</code>.</td></tr>
+          <tr><td class="mono nowrap">Entitlement</td><td>My word, not yours or the domain's. You say “what the fund draws”.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="finding">
+    <div class="finding-head">
+      <span class="rank">7</span>
+      <h3>Residue from designs that have since changed</h3>
+      <p class="tags"><span class="tag incidental">incidental</span></p>
+    </div>
+    <p>The system has been through several sizing rules in a few days — on the account, then in dollars, then on
+    the liquid-only path. Each left something behind:</p>
+    <ul>
+      <li><b><code>SizingBalances</code> carries four members no production code reads</b>: <code>t</code>,
+      <code>liquid_account_usd</code>, <code>private_nav_usd</code> and <code>total_usd</code>. They date from when
+      commitments were sized on the account. Only tests read them now. The loop still computes them
+      (<span class="ref">simulator.py:411</span>) and a reader has to work out for themselves that they go nowhere.</li>
+      <li><b>The stated reason for the step order is no longer true.</b> <code>run()</code>'s docstring says
+      “commitments are sized before the cohort's own distributions arrive”. That mattered when sizing looked at the
+      account balance. Sizing now looks only at <code>liquid_only_usd</code> and the year ends, which no flow ever
+      touches — so step 4 could sit anywhere in the period and produce identical commitments. The order still matters
+      for <em>cash</em>; it no longer matters for <em>sizing</em>, and the comment says it does.</li>
+      <li><b>Generality the workbook never uses.</b> Long-format market data; long- <em>and</em> wide-format rate
+      tables; <code>Call</code> and <code>Distribution</code> row kinds (your sheet writes only <code>Flow</code> and
+      <code>NAV</code>); <code>calls_are_negative=False</code>; <code>USDEUR</code>-style columns;
+      <code>SheetLayout</code> with non-default names. All exercised only by tests. Each is small; together they are
+      a good part of why <code>tables.py</code> is 549 lines.</li>
+      <li><code>CommitmentBook.__len__</code> has no caller.</li>
+    </ul>
+  </div>
+
+  <div class="finding">
+    <div class="finding-head">
+      <span class="rank">8</span>
+      <h3>Assembly happens in an order nobody wrote down</h3>
+      <p class="tags"><span class="tag incidental">incidental</span></p>
+    </div>
+    <p><code>Orchestrator</code> has seven <code>cached_property</code> members. Calling <code>.run()</code> touches
+    <code>.simulator</code>, which touches <code>.portfolio</code>, <code>.funds</code> and <code>.policy</code>, which
+    touch <code>.commitment_rates</code>, <code>.expected_return</code> and <code>.draw_plans</code> — in whatever order
+    Python evaluates the arguments. In the debugger that is a call stack that deepens sideways, and an error
+    surfaces wherever the first touch happened to be. Your script works around it by touching
+    <code>funds</code>, <code>portfolio</code>, <code>policy</code> in sequence on purpose
+    (<span class="ref">eur_moderate.py:105</span>) — which is the script compensating for the class.</p>
+  </div>
+</section>
+
+<section id="ledger">
+  <h2>4 · Every class, judged</h2>
+  <p class="kicker">Does it earn its existence? Twenty-two verdicts, with the reasoning.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Class</th><th>Verdict</th><th>Reasoning</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="3">Inputs and the grid</td></tr>
+        <tr><td class="mono nowrap">Fund</td><td class="nowrap"><span class="tag but">earns it, but</span></td>
+          <td>A validated, frozen input with a real invariant: nothing dated before the closing, gross magnitudes only.
+          <b>But</b> <code>align_history()</code> — the most assumption-dense function in the package — lives on it, in a
+          module described as “what the fund knows”. It is engine logic; it is not where you would look.</td></tr>
+        <tr><td class="mono nowrap">Portfolio</td><td class="nowrap"><span class="tag but">earns it, but</span></td>
+          <td>Same. <b>But</b> it carries <code>commitment_rates</code> purely as a courier. It never reads them; both
+          consumers take them straight back out (<span class="ref">orchestrator.py:331</span>,
+          <span class="ref">simulator.py:256</span>). The schedule's other half, the expected return, travels by a
+          different route entirely — and the code itself says one is meaningless without the other.</td></tr>
+        <tr><td class="mono nowrap">Timeline</td><td class="nowrap"><span class="tag keep">earns it</span></td>
+          <td>One rule for every frequency mismatch, in one place. The clearest single idea in the design.</td></tr>
+        <tr><td class="mono nowrap">AlignedFundHistory</td><td class="nowrap"><span class="tag keep">earns it</span></td>
+          <td>A record: three read-only arrays and a closing period. It is the boundary between “dated” and “indexed”.</td></tr>
+
+        <tr class="group"><td colspan="3">State during a run</td></tr>
+        <tr><td class="mono nowrap">LiquidAccount</td><td class="nowrap"><span class="tag marginal">marginal</span></td>
+          <td>One float and three verbs. It carries the whole returns array in order to index it once per period.
+          <code>withdraw()</code> does two things: debits, and reports a shortfall. Stepping into it costs three jumps per
+          period and tells you nothing the loop's comments don't. The strongest case in the package for inlining.</td></tr>
+        <tr><td class="mono nowrap">Commitment</td><td class="nowrap"><span class="tag keep">earns it</span></td>
+          <td>Where a unit history meets a dollar amount. That multiplication is a core idea and deserves a name.</td></tr>
+        <tr><td class="mono nowrap">CommitmentBook</td><td class="nowrap"><span class="tag marginal">marginal, cheap</span></td>
+          <td>A list with three exact sums and a filter. It buys <code>run()</code> its prose —
+          <code>book.calls_in_period(t)</code> — for 29 lines. I'd leave it; I wouldn't defend it hard.</td></tr>
+
+        <tr class="group"><td colspan="3">Sizing</td></tr>
+        <tr><td class="mono nowrap">SizingBalances</td><td class="nowrap"><span class="tag but">earns it, but</span></td>
+          <td><b>The most important class in the design.</b> It is the wall that stops a commitment being sized on a
+          balance the investor could not have known: the policy can see only what is put in here, and
+          <span class="ref">simulator.py:502</span> puts in completed years only. <b>But</b> four of its seven members
+          are residue (§3.7).</td></tr>
+        <tr><td class="mono nowrap">YearEndBalance</td><td class="nowrap"><span class="tag keep">earns it</span></td>
+          <td>Two fields. A named pair is clearer than a tuple, and the date matters as much as the value.</td></tr>
+        <tr><td class="mono nowrap">CommitmentPolicy</td><td class="nowrap"><span class="tag question">depends</span></td>
+          <td>A protocol with one method, one real implementation and four undeclared extras (§3.3). Either it should
+          declare what the simulator really uses, or it should go. Which depends on whether a second policy will
+          ever exist — §10.</td></tr>
+        <tr><td class="mono nowrap">Entitlement</td><td class="nowrap"><span class="tag but">earns it, misnamed</span></td>
+          <td>Carry-forward needs to see every fund of a type in year order, so “which years” is naturally settled once,
+          up front, and has to be stored somewhere. The record is right; the name is mine, and <code>draws</code>
+          collides (§3.6).</td></tr>
+        <tr><td class="mono nowrap">DrawnYear</td><td class="nowrap"><span class="tag keep">earns it</span></td>
+          <td>The audit row: both dates, the rate, the value before and after rounding. It is what makes a commitment
+          checkable against your spreadsheet.</td></tr>
+        <tr><td class="mono nowrap">AnnualRatePolicy</td><td class="nowrap"><span class="tag keep">earns it</span></td>
+          <td>This <em>is</em> the pacing logic. 264 lines, 106 of them model.</td></tr>
+
+        <tr class="group"><td colspan="3">The loop and its output</td></tr>
+        <tr><td class="mono nowrap">Simulator</td><td class="nowrap"><span class="tag but">earns it, but</span></td>
+          <td>Owns the one loop. <b>But</b> of its 364 code lines, 155 build rows for tables. The class is
+          half engine, half report writer, and the second half is what makes it 732 lines long.</td></tr>
+        <tr><td class="mono nowrap">SimulationResult</td><td class="nowrap"><span class="tag keep">earns it</span></td>
+          <td>Four tables and a verdict, with convenience views.</td></tr>
+        <tr><td class="mono nowrap">Shortfall</td><td class="nowrap"><span class="tag keep">earns it</span></td>
+          <td>A record of the one way a run can fail.</td></tr>
+
+        <tr class="group"><td colspan="3">Data layer</td></tr>
+        <tr><td class="mono nowrap">WorkbookRepository</td><td class="nowrap"><span class="tag but">earns it, but</span></td>
+          <td>Reading six hand-edited sheets is a real job and it is contained here. <b>But</b> it also builds the spec, and
+          as of last week it decides that commitments are rounded (<span class="ref">repository.py:521</span>). That is
+          a modelling decision sitting in the data-access layer, and I put it there.</td></tr>
+        <tr><td class="mono nowrap">SimulationSpec</td><td class="nowrap"><span class="tag but">earns it, but</span></td>
+          <td>Sixteen fields of four different kinds: <em>which</em> series, <em>how to read</em> them, <em>how to size</em>,
+          <em>how to run</em>. On the workbook path the first two kinds are derived by the repository and merely
+          transported. It is a settings bag that has become the junction every feature is routed through.</td></tr>
+        <tr><td class="mono nowrap">Orchestrator</td><td class="nowrap"><span class="tag marginal">a function in a class</span></td>
+          <td>It has no state of its own and one job: repository + spec → simulator. The class form exists so that the
+          intermediate objects can be inspected — which <em>is</em> valuable to you — but it delivers that through lazy
+          properties whose order is implicit (§3.8).</td></tr>
+        <tr><td class="mono nowrap">DataRepository</td><td class="nowrap"><span class="tag question">depends</span></td>
+          <td>Justified by your stated plan to move to a database; not speculative. But its own consumer doesn't trust it:
+          <code>draw_plans</code> is declared in the protocol and then fetched with <code>getattr</code> “in case it isn't
+          there” (<span class="ref">orchestrator.py:303</span>).</td></tr>
+        <tr><td class="mono nowrap">FrameRepository</td><td class="nowrap"><span class="tag question">depends</span></td>
+          <td>Used only by tests today. It is a placeholder for the database adapter's shape. If the database arrives in
+          this shape it was worth it; if not, it was scaffolding.</td></tr>
+        <tr><td class="mono nowrap">SheetLayout</td><td class="nowrap"><span class="tag marginal">marginal</span></td>
+          <td>Six sheet names. Never given a non-default value outside tests. Its one real use — tolerating
+          <code>Liquid Spec</code> / <code>Return Spec</code> — is a tuple that could live in the repository.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p><b>The tally:</b> thirteen earn their place outright or with a caveat about what they carry; three are marginal;
+  three depend on things I can't see; and the caveats are almost all about <em>responsibilities in the wrong
+  place</em>, not about classes that shouldn't exist. That is the pattern I'd draw your attention to. The nouns are
+  mostly right. Some of the verbs are attached to the wrong noun.</p>
+</section>
+
+<section id="cost">
+  <h2>5 · What consolidation would cost</h2>
+  <p class="kicker">Five merges that suggest themselves, and what each would do to a reader.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Merge</th><th>Effect on comprehension</th><th>My view</th></tr></thead>
+      <tbody>
+        <tr><td><code>LiquidAccount</code> → a float in <code>run()</code></td>
+          <td>Three fewer jumps per period. The loop shows <code>liquid_pnl = balance × return</code> where it happens.
+          You lose named verbs; the step comments already supply them.</td>
+          <td><b>Helps</b>, mildly. The one merge I'd call a clear win.</td></tr>
+        <tr><td><code>SheetLayout</code> → constants on the repository</td>
+          <td>One fewer noun; nothing else changes.</td><td><b>Helps</b>, trivially.</td></tr>
+        <tr><td><code>Commitment</code> + <code>CommitmentBook</code></td>
+          <td>You'd get one class that is both a thing and a collection of that thing. The per-fund rows in the
+          <code>funds</code> table need the individual commitment.</td><td><b>Hurts.</b></td></tr>
+        <tr><td>The four sizing records → fewer</td>
+          <td>They are small <em>because</em> each is one idea: a year end, what the policy may see, what a fund is due,
+          what a year came to. Merged, you get a wide record with fields that are meaningful only some of the time —
+          which is harder to read at a breakpoint, not easier.</td><td><b>Hurts.</b></td></tr>
+        <tr><td><code>AnnualRatePolicy</code> → into <code>Simulator</code></td>
+          <td>The tempting one, since there is only one policy. Sizing would become linear in the debugger with no
+          protocol and no <code>getattr</code>. But you would lose <code>SizingBalances</code> as a wall: inside the
+          simulator, <code>self._year_ends</code> holds <em>every</em> year including future ones, and nothing but
+          discipline would stop sizing code from reading it. Today the policy <em>cannot</em> look ahead, by
+          construction.</td><td><b>Hurts</b> — it trades the design's best guarantee for convenience. Narrow the
+          interface instead (§8).</td></tr>
+        <tr><td><code>Repository</code> + <code>Orchestrator</code> + <code>Spec</code></td>
+          <td>One object that opens Excel, interprets sheets, holds settings, builds inputs and runs the engine. About
+          1,000 lines, and untestable without a workbook.</td><td><b>Hurts badly.</b> The problem here is the
+          <em>routing</em> between the three, not that there are three.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Add it up and honest consolidation takes you from 22 classes to about 20. It would not touch findings 1, 2, 3, 4, 5,
+  6 or 8. That is the core of my disagreement with the instinct: <b>the lever is small and it is attached to the
+  wrong thing.</b></p>
+  <p>There is a version of the instinct I do agree with. It is not “fewer classes” but “fewer <em>places</em>”: fewer
+  layers a setting passes through, fewer times a question is asked, fewer files that hold a piece of one idea.
+  That is what §8 is about.</p>
+</section>
+
+<section id="walk">
+  <h2>6 · The execution path, walked</h2>
+  <p class="kicker">From <code>python examples/eur_moderate.py</code> to a result. At each step: what is decided, and what is
+  assumed — marked <span class="tag explicit">stated</span> where the code or a docstring says so, and
+  <span class="tag implicit">implicit</span> where you would have to infer it.</p>
+
+  <span class="phase">A · Read the workbook</span>
+  <ol class="walk">
+    <li>
+      <h4>Open every sheet</h4>
+      <p class="refs"><span class="ref">eur_moderate.py:70</span> <span class="ref">repository.py:254</span></p>
+      <dl>
+        <dt>Decides</dt><dd>Nothing yet. All six sheets are read at once into a dictionary of raw frames.</dd>
+        <dt>Assumes</dt><dd><span class="tag implicit">implicit</span> Nothing is validated here. Each sheet is checked
+        the first time something asks for it, so a bad <code>Flows</code> row surfaces later, from inside
+        <code>Orchestrator.funds</code>, not at load.</dd>
+      </dl>
+    </li>
+    <li>
+      <h4>Settle the starting balance</h4>
+      <p class="refs"><span class="ref">eur_moderate.py:81</span> <span class="ref">eur_moderate.py:54</span></p>
+      <dl>
+        <dt>Decides</dt><dd>With <code>START_IN_BASE_CURRENCY</code>, the typed number is euros. Otherwise it is dollars,
+        converted at the first FX rate on or before the first Liquid date.</dd>
+        <dt>Assumes</dt><dd><span class="tag implicit">implicit</span> That conversion rule is modelling logic, and it lives
+        in an example script. Anyone driving the package another way gets no conversion at all.</dd>
+      </dl>
+    </li>
+    <li>
+      <h4>Describe the profile as a spec</h4>
+      <p class="refs"><span class="ref">repository.py:503</span> <span class="ref">:342</span> <span class="ref">:356</span> <span class="ref">:490</span></p>
+      <dl>
+        <dt>Decides</dt><dd>Liquid column = <code>"EUR Moderate"</code>; FX column = <code>EURUSD</code>, quoted
+        <code>usd_per_base</code>; liquid data are <em>returns</em>; X = the profile's row of <code>Liquid Spec</code>;
+        rounding unit = starting value ÷ 10,000.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> A column named <code>&lt;CCY&gt;USD</code> is dollars per
+        unit of currency. <span class="tag implicit">implicit</span> The rounding unit comes from the <em>base-currency</em>
+        number but is applied to <em>dollar</em> commitments. Your script overrides it with the typed value, which is the
+        same number only when the start is in base currency.</dd>
+      </dl>
+    </li>
+  </ol>
+
+  <span class="phase">B · Assemble the inputs</span>
+  <ol class="walk">
+    <li>
+      <h4>Flows → each fund's unit history</h4>
+      <p class="refs"><span class="ref">orchestrator.py:244</span> <span class="ref">:145</span> <span class="ref">:113</span> <span class="ref">inputs.py:62</span></p>
+      <dl>
+        <dt>Decides</dt><dd><code>unit = Value ÷ Scale</code>. A negative <code>Flow</code> is a call, a positive one a
+        distribution; <code>NAV</code> rows are marks.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> Nothing is dated before the closing; two calls on a day
+        are added; two marks on a day are an error. <span class="tag implicit">implicit</span> A flow of exactly zero is
+        dropped without comment. A fund in <code>Spec</code> with no <code>Flows</code> rows is accepted silently as a
+        future closing.</dd>
+      </dl>
+    </li>
+    <li>
+      <h4>Returns → levels, and the day before the first return</h4>
+      <p class="refs"><span class="ref">orchestrator.py:313</span> <span class="ref">:196</span> <span class="ref">:60</span> <span class="ref">:33</span></p>
+      <dl>
+        <dt>Decides</dt><dd><code>level[t] = level[t−1] × (1 + r[t])</code>, starting from the starting value on an
+        <em>inferred</em> inception date: one period before the first return, rolled back to a business day.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> The frequency can be inferred, which needs three regular
+        dates. <span class="tag implicit">implicit</span> The simulator will shortly turn these levels <em>back</em> into
+        returns (<span class="ref">simulator.py:321</span>). Returns → levels → returns is a round trip; it exists because
+        <code>Portfolio</code> is defined in levels.</dd>
+      </dl>
+    </li>
+    <li>
+      <h4>The price of a dollar</h4>
+      <p class="refs"><span class="ref">orchestrator.py:223</span> <span class="ref">:95</span></p>
+      <dl>
+        <dt>Decides</dt><dd><code>EURUSD</code> is inverted to euros per dollar. If the FX series starts after the inception
+        date, its first rate is copied back onto that date.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> That copied rate is a fabrication, and the docstring says
+        so: it only labels a row on which nothing is converted. True as long as no fund closes on the inception date.</dd>
+      </dl>
+    </li>
+    <li>
+      <h4>Years since inception → calendar years</h4>
+      <p class="refs"><span class="ref">repository.py:186</span> <span class="ref">:391</span> <span class="ref">:441</span></p>
+      <dl>
+        <dt>Decides</dt><dd>Relative year <i>k</i> = inception year + <i>k</i>, for the schedule and for the
+        <code>Draws</code> cells.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> Inception year is the year of the first Liquid
+        <em>return</em>. <span class="tag implicit">implicit</span> That is not always the year of the inferred inception
+        <em>date</em> one period earlier: returns starting in January put the inception date in the previous December.
+        There is a test for it; there is nothing in the names that warns you.</dd>
+      </dl>
+    </li>
+    <li class="deep">
+      <h4>Settle which years every fund collects</h4>
+      <p class="refs"><span class="ref">orchestrator.py:317</span> <span class="ref">policy.py:441</span> <span class="ref">:241</span> <span class="ref">:278</span> <span class="ref">:335</span></p>
+      <dl>
+        <dt>Decides</dt><dd><b>This is where the sizing structure is fixed</b>, before the run and out of sight of the loop.
+        For each fund type, walk the years: a year with a closing hands its funds their plan, or their own year plus
+        whatever waited; a year without one waits, if carry-forward is on.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> A plan on any fund of a type switches carry-forward off
+        for the whole type (<span class="ref">policy.py:364</span>). A year with a zero rate never waits.
+        <span class="tag implicit">implicit</span> A fund's “year” is the year of its closing <em>date</em>, even if
+        pooling lands it on an observation in the following year.</dd>
+      </dl>
+    </li>
+  </ol>
+
+  <span class="phase">C · Prepare the run · Simulator.__init__</span>
+  <ol class="walk">
+    <li>
+      <h4>The grid, the returns, the rate</h4>
+      <p class="refs"><span class="ref">simulator.py:215</span> <span class="ref">:321</span> <span class="ref">:329</span> <span class="ref">timeline.py:79</span></p>
+      <dl>
+        <dt>Decides</dt><dd>Observations = the liquid index's dates. Return = level ratio − 1, zero in the first period. FX
+        at each observation = the last rate on or before it.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> A rate is a state, so it carries forward; an event is not,
+        so it pools forward. <span class="tag implicit">implicit</span> A stale rate carries forward indefinitely without
+        complaint.</dd>
+      </dl>
+    </li>
+    <li>
+      <h4>What commitments will be sized on</h4>
+      <p class="refs"><span class="ref">simulator.py:245</span></p>
+      <dl>
+        <dt>Decides</dt><dd><code>liquid_only_usd = levels ÷ fx</code>, for every observation at once.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> No private flow ever touches this path — so every
+        commitment of the whole run is determined before period 0. The loop adds nothing to sizing but the clock.</dd>
+      </dl>
+    </li>
+    <li class="deep">
+      <h4>Lay every fund's history onto the grid</h4>
+      <p class="refs"><span class="ref">simulator.py:250</span> <span class="ref">inputs.py:132</span> <span class="ref">:161</span> <span class="ref">:177</span></p>
+      <dl>
+        <dt>Decides</dt><dd><b>The most assumption-dense function in the package.</b> An event on any day pools onto the first
+        observation on or after it. Unit NAV is rebuilt from zero: a mark <em>replaces</em> the running value; with no
+        mark, a call adds and a distribution subtracts.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> A mark already includes that day's flows. Events after the
+        last observation are ignored. A running NAV below zero is a data error. <span class="tag implicit">implicit</span>
+        Between marks the NAV earns nothing — it is cash-adjusted only. A call on the 3rd is paid at month end, and
+        <em>converted</em> at the month-end rate. The NAV floor at zero (<span class="ref">:177</span>) silently absorbs
+        anything within tolerance.</dd>
+      </dl>
+    </li>
+    <li>
+      <h4>When the pacing model's clock starts</h4>
+      <p class="refs"><span class="ref">simulator.py:279</span></p>
+      <dl>
+        <dt>Decides</dt><dd><code>first_commitment_date</code> = the observation of the earliest closing <em>among the funds
+        present, of any type</em>. The model's liquid value is 1 on that day.</dd>
+        <dt>Assumes</dt><dd><span class="tag implicit">implicit</span> That the earliest fund in your <code>Spec</code> closes at
+        the end of relative year 1. The schedule's clock is tied to the <em>inception year</em>; this clock is tied to
+        the <em>fund list</em>. They agree only while that holds — see §7.</dd>
+      </dl>
+    </li>
+    <li>
+      <h4>Year ends, and the expected path</h4>
+      <p class="refs"><span class="ref">simulator.py:337</span> <span class="ref">:354</span></p>
+      <dl>
+        <dt>Decides</dt><dd>The liquid-only dollar value at each calendar year's last observation — for <em>every</em> year,
+        future ones included. And the tracked “expected liquid” path.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> Future year ends exist here and are filtered out later, at
+        the wall. <span class="tag implicit">implicit</span> The tracked expected path starts its clock at
+        <em>inception</em>; the policy's expected value starts its clock at the <em>first commitment</em>. Same X, two
+        clocks — so tracked value 2 is <em>not</em> the number the policy divides by.</dd>
+      </dl>
+    </li>
+  </ol>
+
+  <span class="phase">D · The loop · once per observation</span>
+  <ol class="walk">
+    <li>
+      <h4>Open, earn, receive</h4>
+      <p class="refs"><span class="ref">simulator.py:397</span> <span class="ref">:401</span> <span class="ref">:404</span></p>
+      <dl>
+        <dt>Decides</dt><dd>The return is applied to the <em>opening</em> balance. Then distributions from existing funds are
+        banked, at this observation's rate.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> The order is the cash convention.
+        <span class="tag implicit">implicit</span> Every flow happens at the period's end: money received during a month
+        earns nothing that month, and money called during it earned the whole month first.</dd>
+      </dl>
+    </li>
+    <li>
+      <h4>Commit to the funds closing today</h4>
+      <p class="refs"><span class="ref">simulator.py:408</span> <span class="ref">:495</span> <span class="ref">:502</span> <span class="ref">:515</span></p>
+      <dl>
+        <dt>Decides</dt><dd>Build the policy's view — <b>completed calendar years only</b> — ask it for dollars, check the
+        answer, book the commitments. A commitment moves no cash.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> <code>year &lt; day.year</code> is the whole guarantee
+        against look-ahead. <span class="tag implicit">implicit</span> This step's position no longer affects sizing at
+        all (§3.7); the docstring still says it does.</dd>
+      </dl>
+    </li>
+    <li>
+      <h4>Pay</h4>
+      <p class="refs"><span class="ref">simulator.py:423</span> <span class="ref">state.py:36</span></p>
+      <dl>
+        <dt>Decides</dt><dd>The new funds' own distributions are banked, then every call is paid. Distributions arrive
+        before calls, so a distribution can fund a call in the same period.</dd>
+        <dt>Assumes</dt><dd><span class="tag implicit">implicit</span> With <code>stop_on_shortfall=False</code> the balance
+        goes negative and <em>keeps compounding at the portfolio's return</em> — an overdraft whose interest rate is
+        the liquid return. I checked: −100 becomes −110 then −121 on two 10% periods.</dd>
+      </dl>
+    </li>
+    <li>
+      <h4>Value and record</h4>
+      <p class="refs"><span class="ref">simulator.py:433</span> <span class="ref">:477</span></p>
+      <dl>
+        <dt>Decides</dt><dd>Private NAV in base currency; the FX translation on the opening book; a row of 18 values; a
+        row per live fund. Stop if the account could not meet the calls.</dd>
+        <dt>Assumes</dt><dd><span class="tag explicit">stated</span> <code>private_valuation_pnl</code> is a residual — close
+        minus open minus calls plus distributions — so it silently contains the FX translation as well.</dd>
+      </dl>
+    </li>
+  </ol>
+
+  <span class="phase">E · Inside step D2 · pricing one closing</span>
+  <p>The deepest call chain in the system, and the one most worth stepping through once with a fund that reaches
+  forward, such as SEC_VI:</p>
+<pre><code>Simulator.run                         simulator.py:373
+└─ _size_commitments                  simulator.py:515     <span class="c">checks the policy's answer</span>
+   └─ policy.size_commitments         policy.py:616        <span class="c">weight × (own year + other years)</span>
+      └─ _budgets_usd                 policy.py:606
+         └─ <span class="k">drawn_years</span>               policy.py:541        <span class="c">for each year the fund draws:</span>
+            ├─ 1  funding date and plan date   :557       <span class="c">past year → its own year end; else → the closing</span>
+            │     └─ year_end_on_or_before     :92        <span class="c">falls back to an earlier year if none observed</span>
+            ├─ 2  rate ÷ expected value × liquid-only USD  :579
+            │     └─ expected_value            :499       <span class="c">(1 + X) ** years since the first commitment</span>
+            │        └─ years_between          dates.py:66 <span class="c">counted in anniversaries</span>
+            ├─ 3  round_like_excel             :203       <span class="c">halves away from zero, in decimal</span>
+            └─ 4  × multiplier                 :588
+
+<span class="w">then the same chain twice more, for reporting:</span>
+   _commitment_row → explain_commitment → _budgets_usd → drawn_years     simulator.py:575
+   _draw_rows                                          → drawn_years     simulator.py:624</code></pre>
+  <p>Three modelling assumptions sit in that chain that are easy to step past. A fund's <b>own</b> year is sized on
+  the <em>closing</em> observation, while a carried year is sized on its <em>year end</em> — identical for your
+  31 December closings, different for a fund closing in June. A year after the closing is dated to
+  <b>31 December</b> of that year on the model's calendar, whatever the grid. And each year is rounded
+  <b>before</b> its multiplier, so <code>12x3</code> is three rounded amounts, not one rounded total.</p>
+
+  <span class="phase">F · Report</span>
+  <ol class="walk">
+    <li>
+      <h4>Rows → tables → benchmarks</h4>
+      <p class="refs"><span class="ref">simulator.py:81</span> <span class="ref">benchmark.py:49</span> <span class="ref">:171</span></p>
+      <dl>
+        <dt>Decides</dt><dd>Four tables with fixed columns. The liquid-only comparison and the PME measures are computed
+        afterwards, from the tables alone.</dd>
+        <dt>Assumes</dt><dd><span class="tag implicit">implicit</span> The tables are the interface: <code>benchmark.py</code>
+        finds its inputs by column name. IRR uses ACT/365 while the pacing model counts years in anniversaries — two
+        day-count conventions in one system, each reasonable where it is.</dd>
+      </dl>
+    </li>
+  </ol>
+</section>
+
+<section id="assumptions">
+  <h2>7 · The assumptions, in one table</h2>
+  <p class="kicker">Everything the system takes for granted, gathered from the walk. The right-hand column is the one to read.</p>
+
+  <div class="note">
+    <span class="lab">Two I found by experiment</span>
+    <p><b>The pacing clock belongs to the fund list.</b> I removed one buyout fund, PEM2011 — the first to close — and
+    re-ran. <code>first_commitment_date</code> moved from 31 Dec 2010 to 31 Dec 2011, and every <em>other</em> fund's
+    commitment rose by a year's growth: SEC_VII from 3,810,000 to 4,040,000 (+6.0%), PEM2016 from 2,670,000 to
+    2,820,000 (+5.6%). The schedule is keyed to the inception year; its divisor is keyed to whichever fund happens to
+    close first. They agree in your workbook. Nothing enforces that they do.</p>
+    <p><b>An overdraft is charged the portfolio's return.</b> Described in D3 above. It only matters with
+    <code>stop_on_shortfall=False</code>, but in that mode it is a financing assumption nobody chose.</p>
+  </div>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Assumption</th><th>Where</th><th>Stated?</th><th>What follows from it</th></tr></thead>
+      <tbody>
+        <tr class="group"><td colspan="4">Time</td></tr>
+        <tr><td>An event pools onto the first observation on or after it</td><td><span class="ref">timeline.py:65</span></td><td><span class="tag explicit">stated</span></td><td>Calls are paid up to a period late, distributions received up to a period late. Both are converted at the later date's rate.</td></tr>
+        <tr><td>An exchange rate carries forward; it never pools</td><td><span class="ref">timeline.py:79</span></td><td><span class="tag explicit">stated</span></td><td>A stale rate is used for as long as no newer one appears, without warning.</td></tr>
+        <tr><td>Inception is one inferred period before the first return</td><td><span class="ref">orchestrator.py:33</span></td><td><span class="tag explicit">stated</span></td><td>The first row of every table is a date that is in no sheet.</td></tr>
+        <tr><td>Relative year 0 is the year of the first <em>return</em></td><td><span class="ref">repository.py:391</span></td><td><span class="tag explicit">stated</span></td><td>It can differ from the year of the inception <em>date</em>.</td></tr>
+        <tr><td>A year is counted in anniversaries; IRR in ACT/365</td><td><span class="ref">dates.py:66</span> <span class="ref">benchmark.py:24</span></td><td><span class="tag implicit">implicit</span></td><td>Two day-count conventions. Each is right for its purpose; nothing says there are two.</td></tr>
+
+        <tr class="group"><td colspan="4">Cash</td></tr>
+        <tr><td>Return is earned on the opening balance; all flows happen at period end</td><td><span class="ref">simulator.py:401</span></td><td><span class="tag implicit">half stated</span></td><td>The order is stated. That it implies end-of-period flows is not.</td></tr>
+        <tr><td>Distributions land before calls are paid</td><td><span class="ref">simulator.py:404</span> <span class="ref">:423</span></td><td><span class="tag explicit">stated</span></td><td>A distribution can fund a call in the same period. Favourable to the investor.</td></tr>
+        <tr><td>A commitment moves no cash</td><td><span class="ref">simulator.py:408</span></td><td><span class="tag explicit">stated</span></td><td>No reserve is held against unfunded commitments.</td></tr>
+        <tr><td>A negative balance compounds at the liquid return</td><td><span class="ref">state.py:24</span></td><td><span class="tag implicit">implicit</span></td><td>An overdraft rate nobody chose. Only with <code>stop_on_shortfall=False</code>.</td></tr>
+
+        <tr class="group"><td colspan="4">Valuation</td></tr>
+        <tr><td>A NAV mark replaces the running value and already includes that day's flows</td><td><span class="ref">inputs.py:161</span></td><td><span class="tag explicit">stated</span></td><td>On a day with a mark and a flow, the flow does not move the NAV.</td></tr>
+        <tr><td>Between marks, NAV moves only by cash</td><td><span class="ref">inputs.py:164</span></td><td><span class="tag implicit">implicit</span></td><td>No return accrues between marks; NAV steps at each mark.</td></tr>
+        <tr><td>NAV is floored at zero</td><td><span class="ref">inputs.py:177</span></td><td><span class="tag implicit">implicit</span></td><td>Tiny negatives vanish; larger ones are an error.</td></tr>
+        <tr><td>Private NAV is carried at its mark</td><td><span class="ref">benchmark.py</span></td><td><span class="tag explicit">stated</span></td><td>Part of “value added” is unrealised.</td></tr>
+
+        <tr class="group"><td colspan="4">Currency</td></tr>
+        <tr><td>Everything private is in dollars; conversion happens only at the account and at reports</td><td><span class="ref">simulator.py</span></td><td><span class="tag explicit">stated</span></td><td>One boundary. This is clean.</td></tr>
+        <tr><td><code>&lt;CCY&gt;USD</code> means dollars per unit of currency</td><td><span class="ref">repository.py:356</span></td><td><span class="tag explicit">stated</span></td><td>Inverted once, at <span class="ref">orchestrator.py:223</span>.</td></tr>
+        <tr><td>The first FX rate is copied back to the inception date</td><td><span class="ref">orchestrator.py:95</span></td><td><span class="tag explicit">stated</span></td><td>Harmless unless a fund closes on the inception date.</td></tr>
+        <tr><td><code>private_valuation_pnl</code> is a residual</td><td><span class="ref">simulator.py:465</span></td><td><span class="tag implicit">implicit</span></td><td>It contains <code>fx_translation</code>; the two columns overlap rather than add.</td></tr>
+
+        <tr class="group"><td colspan="4">Sizing</td></tr>
+        <tr><td>Sized on the liquid-only path, in dollars</td><td><span class="ref">simulator.py:245</span></td><td><span class="tag explicit">stated</span></td><td>Every commitment is known before the run starts.</td></tr>
+        <tr><td>Only completed calendar years are visible to the policy</td><td><span class="ref">simulator.py:502</span></td><td><span class="tag explicit">stated</span></td><td>The no-look-ahead guarantee.</td></tr>
+        <tr><td>The pacing model is worth 1 on the earliest closing among the funds present</td><td><span class="ref">simulator.py:279</span></td><td><span class="tag implicit">implicit</span></td><td>Remove the first fund and every commitment changes by a year's growth.</td></tr>
+        <tr><td>A fund's own year is sized at its closing; a carried year at its year end</td><td><span class="ref">policy.py:558</span></td><td><span class="tag explicit">stated</span></td><td>The same for 31 December closings; different for any other.</td></tr>
+        <tr><td>A future year is dated 31 December on the model's calendar</td><td><span class="ref">policy.py:577</span></td><td><span class="tag explicit">stated</span></td><td>Independent of the grid.</td></tr>
+        <tr><td>Each year is rounded before its multiplier and the weight</td><td><span class="ref">policy.py:583</span></td><td><span class="tag explicit">stated</span></td><td>With fractional weights a commitment need not be a multiple of the unit.</td></tr>
+        <tr><td>A fund's year is its closing <em>date's</em> year</td><td><span class="ref">inputs.py:108</span></td><td><span class="tag implicit">implicit</span></td><td>Even when pooling lands the closing in the next year.</td></tr>
+        <tr><td>Tracked “expected liquid” and the policy's divisor use different clocks</td><td><span class="ref">simulator.py:354</span> <span class="ref">policy.py:499</span></td><td><span class="tag implicit">implicit</span></td><td>1.0966 against 1.0000 on 31 Dec 2010 in the sample.</td></tr>
+
+        <tr class="group"><td colspan="4">Data</td></tr>
+        <tr><td>A negative Flow is a call</td><td><span class="ref">orchestrator.py:113</span></td><td><span class="tag explicit">stated</span></td><td>Reversible with a switch nothing uses.</td></tr>
+        <tr><td>A fund closing beyond the horizon is never committed</td><td><span class="ref">simulator.py:266</span></td><td><span class="tag explicit">stated</span></td><td>Reported in the result, not raised.</td></tr>
+        <tr><td><code>Simulator(portfolio, funds)</code> with no policy reads the rates as shares</td><td><span class="ref">simulator.py:256</span></td><td><span class="tag implicit">implicit</span></td><td>A different model from the workbook path, from the same class, silently.</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section id="alternatives">
+  <h2>8 · Alternatives to consolidation</h2>
+  <p class="kicker">Ways of attacking the actual sources. These are options with their costs, not a plan; several depend on §10.</p>
+
+  <div class="opts">
+    <div class="opt">
+      <h3>Mark the model</h3>
+      <dl>
+        <dt>Addresses</dt><dd>§3.5, §3.1</dd>
+        <dt>The idea</dt><dd>A reading map: the forty-odd functions that hold an assumption, in the order they execute, with
+        the assumption each one makes. Section 6 above is a first draft of it. It could live as a document, or in the
+        code as a consistent marker in those docstrings.</dd>
+        <dt>Buys</dt><dd>It shrinks what you must understand from 1,866 code lines to 626 without changing one. It is the
+        only option here that addresses your stated goal directly.</dd>
+        <dt>Costs</dt><dd>It rots unless kept up. A marker in the code rots less than a document beside it.</dd>
+      </dl>
+    </div>
+
+    <div class="opt">
+      <h3>Ask the policy once, and get the whole answer</h3>
+      <dl>
+        <dt>Addresses</dt><dd>§3.3</dd>
+        <dt>The idea</dt><dd>One call per closing that returns, per fund, the dollars <em>and</em> the drawn years behind
+        them. The simulator writes its commitment row and its draw rows from that one object.</dd>
+        <dt>Buys</dt><dd>Removes three <code>getattr</code> calls, the unguarded <code>entitlements</code> access, and two of
+        the three computations. Stepping through a closing becomes one descent, not three. The protocol becomes honest.</dd>
+        <dt>Costs</dt><dd>A custom policy has to return the richer object, or a bare number gets wrapped for it. Small.</dd>
+      </dl>
+    </div>
+
+    <div class="opt">
+      <h3>Give the sizing options one home</h3>
+      <dl>
+        <dt>Addresses</dt><dd>§3.2 — the one I weight most</dd>
+        <dt>The idea</dt><dd>The six sizing options travel as one object from wherever they are chosen to the policy,
+        instead of as six separate fields restated at each layer. One set of defaults, in one place.</dd>
+        <dt>Buys</dt><dd>The next option is a change to <code>policy.py</code> and that object. “Is rounding on?” has one
+        answer.</dd>
+        <dt>Costs</dt><dd>It is a breaking change to <code>SimulationSpec</code>'s shape and to your script. And it forces a
+        decision I have been avoiding: what <em>is</em> the default for rounding and carry-forward? That is yours to
+        make, not mine.</dd>
+      </dl>
+    </div>
+
+    <div class="opt">
+      <h3>Assemble in a written order</h3>
+      <dl>
+        <dt>Addresses</dt><dd>§3.8</dd>
+        <dt>The idea</dt><dd>Replace seven lazy properties with one routine of numbered steps — funds, rates, expected return,
+        draw plans, portfolio, policy, simulator — in the style of <code>run()</code>, keeping each result inspectable.</dd>
+        <dt>Buys</dt><dd>The order is on the page. Errors surface at a predictable step. Your script stops needing to touch
+        properties in sequence to get a sane debugging experience.</dd>
+        <dt>Costs</dt><dd>Assembly becomes eager: a bad <code>Flows</code> row fails construction rather than first use. I
+        think that is better, but some tests rely on the lazy behaviour.</dd>
+      </dl>
+    </div>
+
+    <div class="opt">
+      <h3>Shape the repository like the engine, not like the source</h3>
+      <dl>
+        <dt>Addresses</dt><dd>§3.4</dd>
+        <dt>The idea</dt><dd>The repository hands over what the engine needs — a liquid return series in base currency, the
+        price of a dollar, the schedule with its X, the funds — instead of generic tables plus a description of how to
+        read them.</dd>
+        <dt>Buys</dt><dd><code>SimulationSpec</code> loses about six fields; <code>build_portfolio</code> loses half its
+        branches; the double lookup of X disappears; the round trip goes.</dd>
+        <dt>Costs</dt><dd>Each future source must do its own selection. Whether that is a cost or a benefit depends entirely
+        on the database — §10. I would not do this before knowing.</dd>
+      </dl>
+    </div>
+
+    <div class="opt">
+      <h3>Rename what means two things; delete what means nothing</h3>
+      <dl>
+        <dt>Addresses</dt><dd>§3.6, §3.7</dd>
+        <dt>The idea</dt><dd><code>base_per_usd</code> for the exchange rate; distinct names for stated and resolved draws; a
+        word of yours for <code>Entitlement</code>. Remove the four dead members of <code>SizingBalances</code>, correct
+        the <code>run()</code> docstring, drop <code>__len__</code>.</dd>
+        <dt>Buys</dt><dd>Cheap, and each one removes a small false trail.</dd>
+        <dt>Costs</dt><dd>Renaming the <code>rate</code> <em>column</em> changes your CSVs. Removing the dead fields closes a
+        door for a policy that sizes on total wealth — which you told me you don't want, but it is your call.</dd>
+      </dl>
+    </div>
+
+    <div class="opt">
+      <h3>Tie the pacing clock to the schedule</h3>
+      <dl>
+        <dt>Addresses</dt><dd>§7, first finding</dd>
+        <dt>The idea</dt><dd>Define “the model is worth 1” by the schedule's own calendar — the end of relative year 1 — or
+        state the seed date explicitly, instead of inferring it from whichever fund closes first.</dd>
+        <dt>Buys</dt><dd>Editing the fund list stops moving every commitment.</dd>
+        <dt>Costs</dt><dd>This is a modelling question before it is a code question, and you know the pacing model; I don't.
+        It may be that “first commitment” is exactly what the model means, in which case the current behaviour is
+        right and only needs saying out loud.</dd>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section id="other">
+  <h2>9 · Other architectural concerns</h2>
+  <p class="kicker">Things you didn't ask about that I think matter for how this evolves.</p>
+
+  <h3>The result tables are the real interface, and they are held together by strings</h3>
+  <p><code>benchmark.py</code>, the examples, your CSVs and 272 tests all find things by column name. The rows are
+  built as dictionaries in one place and the column lists are declared in another, and
+  <span class="ref">simulator.py:81</span> reconciles them silently: a key that is not in the declared list is
+  <em>dropped</em>, and a declared column with no key becomes <code>NaN</code>. I checked. A typo in a row key
+  produces a column of NaNs and no error. This is also why last week's rename of four columns rippled through
+  thirty-four test lines.</p>
+
+  <h3>Three front doors, three sets of defaults</h3>
+  <p><code>Simulator(portfolio, funds)</code>, <code>Orchestrator(FrameRepository(…), spec)</code> and
+  <code>load_profile_workbook(…)</code> build the same engine with different sizing behaviour (§3.2). The first is
+  the most dangerous because it is the most convenient: <code>examples/basic.py</code> uses it, and it gives you a
+  model in which the rate table means something different.</p>
+
+  <h3>Model logic in an example</h3>
+  <p><code>starting_balance()</code> decides how a dollar starting value becomes euros. It is in
+  <span class="ref">eur_moderate.py:54</span>. If that rule matters — and with
+  <code>START_IN_BASE_CURRENCY = False</code> it sets the scale of the entire run — it belongs in the package,
+  tested.</p>
+
+  <h3>The simulator is half report writer</h3>
+  <p>155 of <code>Simulator</code>'s 364 code lines build rows. It is why the class is 732 lines, and it is why
+  “step through the engine” means stepping past <code>_fund_rows</code> on every observation. The engine and its
+  bookkeeping are separable, and the bookkeeping is the larger half.</p>
+
+  <h3>The same small thing, written several times</h3>
+  <p>“Is this a real, finite number and not a bool” appears in <code>policy.py</code>, <code>spec.py</code> and
+  <code>simulator.py</code>. “Find the entry whose canonical name matches” appears four times across
+  <code>repository.py</code> and <code>orchestrator.py</code>. The rate table is coerced and validated twice, once by
+  <code>Portfolio</code> and again by the policy. None is a bug. Each is a place where a fix will one day be applied
+  to one copy.</p>
+
+  <h3>What is genuinely strong</h3>
+  <p>I don't want the list above to mislead. The dependency graph is clean. The inputs are immutable. There is one
+  loop, and one boundary where currency is applied. The look-ahead guarantee is structural and not a convention.
+  And the tests are unusual in a good way: accounting identities are asserted on every run, and last week's
+  restyling was verified by diffing 181 output tables at 17 significant digits. That last property is what makes
+  everything in §8 safe to attempt. You can change structure here and <em>know</em> whether behaviour moved.</p>
+
+  <h3>What I would not worry about</h3>
+  <p><b>Performance.</b> 214 observations, 19 funds, Python loops: the run takes a fraction of a second, and the
+  triple pricing in §3.3 is a reading problem, not a speed problem. That changes completely if you ever want
+  Monte Carlo over return paths — see below.</p>
+</section>
+
+<section id="unknown">
+  <h2>10 · What I can't see from the code</h2>
+  <p class="kicker">Five things that would change my answers. For each: what it decides.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Question</th><th>If yes</th><th>If no</th></tr></thead>
+      <tbody>
+        <tr><td><b>Will there ever be a second sizing policy?</b> A different pacing approach, a comparison run, a
+        rule from another team.</td>
+          <td>Keep the protocol, and make it honest: declare the richer return value (§8).</td>
+          <td>Drop <code>CommitmentPolicy</code>. Call <code>AnnualRatePolicy</code> directly. Keep <code>SizingBalances</code> as
+          the wall regardless.</td></tr>
+        <tr><td><b>What shape will the database deliver?</b> Generic series tables, or portfolio-specific views?</td>
+          <td><em>Generic tables:</em> today's source-shaped protocol, and the long-format readers, are right and
+          <code>FrameRepository</code> was worth building.</td>
+          <td><em>Portfolio views:</em> reshape the protocol around the engine; a good part of <code>tables.py</code> and
+          <code>SimulationSpec</code> can go.</td></tr>
+        <tr><td><b>Does your real workbook use any of the unused generality?</b> Long sheets, <code>Call</code> rows,
+        <code>USDEUR</code> columns, renamed sheets.</td>
+          <td>Keep those paths.</td><td>They are a few hundred lines you never need to read.</td></tr>
+        <tr><td><b>Will anyone else read or change this?</b></td>
+          <td>The reading map and the single home for settings matter more; conventions need writing down.</td>
+          <td>Optimise purely for your own step-through. The spaced-out style and inspectable intermediates are already
+          doing that.</td></tr>
+        <tr><td><b>Will you want many runs — scenarios, Monte Carlo, a sweep over X?</b></td>
+          <td>The prepare-once design is exactly right and should be pushed further: most of
+          <code>Simulator.__init__</code> need not repeat per path. Row-dictionary reporting would become the
+          bottleneck.</td>
+          <td>Ignore performance entirely.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>One more that is not a yes/no: <b>what is <code>chatgpt/</code> for?</b> If you are comparing the two
+  implementations to choose one, then the comparison that matters is not class count but how many places you have
+  to look to answer “why is this commitment this number?”. In this package the answer is one table,
+  <code>result.draws</code>. I would hold the other to the same test.</p>
+</section>
+
+<section id="bottom">
+  <h2>11 · If it were mine</h2>
+  <p class="kicker">You asked for thinking, not a plan. This is only where my own judgment lands, so you can argue with it.</p>
+
+  <p>I would not consolidate classes, beyond inlining <code>LiquidAccount</code> if stepping into it annoys you. I
+  think the instinct is pointing at something real and naming it wrongly. What you are feeling is not that there
+  are too many <em>things</em>; it is that to follow one idea — a setting, a commitment, an assumption — you have
+  to visit too many <em>places</em>, and that nothing tells you which places matter.</p>
+
+  <p>So I would start with the thing that costs nothing and answers your actual goal: <b>mark the model</b>, and
+  use §6 and §7 as its first draft. Walk it once in the debugger with SEC_VI. If, having done that, the system
+  feels comprehensible, then the structure was adequate and the map was what was missing.</p>
+
+  <p>If it still feels like too much, the two structural changes I believe in are <b>asking the policy once</b> and
+  <b>giving the sizing options one home</b>. The first makes a closing a single descent in the debugger. The second
+  is what stops the next feature costing seven files — and it is the one I'd regret not doing if this keeps
+  growing at the rate it has this week.</p>
+
+  <p>And separately from architecture altogether: <b>decide what seeds the pacing clock</b>. That one is not about
+  comprehension. It is a number in your results that depends on something you would not expect it to depend on,
+  and you should either choose it or fix it.</p>
+</section>
+
+<footer class="end">
+  pmsim architectural review · written against commit <code>4bba41f</code> · line references are to that commit.
+  Line counts and the model / guard-rail split were measured from the syntax tree; the two experiments in §7 were
+  run on the sample workbook, USD Conservative from 100,000,000. No code was changed in producing this review.
+</footer>
+
+</main>
+</div>
+</div>
